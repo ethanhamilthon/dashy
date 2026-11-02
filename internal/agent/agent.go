@@ -23,7 +23,7 @@ import (
 	"dashy/internal/shell"
 )
 
-const bashToolDescription = `Run a command in system Bash (/bin/bash --noprofile --norc).
+const BashToolDescription = `Run a command in system Bash (/bin/bash --noprofile --norc).
 Each call starts a fresh process in the project directory; variables, functions,
 aliases and the working directory do not persist between calls. There is no TTY
 and stdin is empty. Programs run from PATH with the user's permissions.
@@ -32,7 +32,36 @@ Result: {output, exit_code}. Stdout and stderr are merged.
 timeout: seconds, null = 120, maximum 600. A timeout (exit 124) or cancellation
 (exit 130) kills the whole process group.
 max_output: bytes kept, null = 8192, 0 = no truncation. When output is cut, the
-middle is removed and the first and last halves are kept.`
+middle is removed and the first and last halves are kept.
+Prefer filtering: rg, grep, head, tail, sed -n, wc. Create files with a quoted heredoc.
+Background processes do not outlive the call; for long work redirect output to a
+file and run ` + "`dashy notify`" + ` when it finishes.
+This shell is not a sandbox. Do not do destructive things unless asked.
+
+You are running inside dashy, a minimal coding-agent harness. Your instructions are
+the AGENTS.md files you were given as the system prompt (~/.dashy/AGENTS.md, then
+the project's AGENTS.md or the file chosen with --config). A ` + "```dashy" + ` fenced block
+in those files was already run when the session started; its output is part of
+the prompt. Run ` + "`dashy --help`" + ` for the full reference.
+
+dashy commands you can run from the shell:
+- dashy -p "TASK" [--config FILE] [--no-global]
+    Run an independent sub-agent and print only its final answer to stdout
+    (progress goes to stderr; exit code is non-zero if it failed). It does not
+    see this conversation, so put everything it needs into TASK. Use --config
+    to give it a different AGENTS.md (a different role) and --no-global to drop
+    ~/.dashy/AGENTS.md. Text piped to stdin is appended to TASK.
+- dashy notify TEXT...
+    Send a message to this session. An idle session starts a turn; a busy one
+    receives it as a steering message. Needs DASHY_ENDPOINT (set in this shell).
+- dashy view PATH...
+    Attach PNG/JPEG images to your next model request (up to four).
+- dashy --help
+    Reference for flags, AGENTS.md and the dashy block.
+
+Every call has DASHY_SESSION_ID and DASHY_ENDPOINT set.`
+
+const bashToolDescription = BashToolDescription
 
 var codeField = regexp.MustCompile(`"command"\s*:\s*"`)
 

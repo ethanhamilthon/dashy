@@ -1,0 +1,65 @@
+dashy - minimal AI coding agent (TUI and one-shot mode)
+
+USAGE
+  dashy [--config FILE|-c FILE] [--no-global] [--resume ID]
+  dashy -p "TASK" [--config FILE] [--no-global] [--resume ID]
+  dashy notify [-s ID] TEXT...
+  dashy view [-s ID] PATH...
+  dashy version
+  dashy --help | -h | help
+
+FLAGS & COMMANDS
+  -p "TASK"       Run a single task in one-shot mode and exit. Final assistant text
+                  goes to stdout, progress to stderr. Piped stdin appends to TASK.
+  --config, -c    Path to local AGENTS.md instructions (replaces ./AGENTS.md).
+  --no-global     Skip loading global instructions from $DASHY_HOME/AGENTS.md.
+  --resume ID     Resume an existing session by ID from the project session store.
+  -s ID           Target session ID for notify/view (defaults to $DASHY_ENDPOINT).
+  --help, -h      Show this help reference.
+  notify          Send text or piped stdin to a running session as user/steering input.
+  view            Queue PNG/JPEG images for the session's next model request.
+  version         Print the dashy version.
+
+SYSTEM PROMPT (AGENTS.md)
+  The system prompt is assembled from AGENTS.md files:
+  1. $DASHY_HOME/AGENTS.md (default ~/.dashy/AGENTS.md; skipped with --no-global)
+  2. Local file: --config FILE if given, otherwise ./AGENTS.md (missing is fine)
+  Each file is added under a '# <absolute path>' header, separated by a blank line.
+  The prompt is assembled once lazily before the first model request and frozen
+  for the entire session.
+
+DASHY BLOCKS
+  Fenced code blocks in AGENTS.md with info string 'dashy' (```dashy) execute sequentially
+  using 'bash -c' in the project directory when the prompt is assembled.
+  - Execution limits: 30 s timeout, 64 KiB stdout+stderr limit.
+  - On failure, replaced by '[dashy block failed: <reason>]' with a stderr tail.
+  - Output replaces the block verbatim (trailing newline trimmed).
+  - Environment passed to blocks: DASHY_MODE, DASHY_SOURCE, DASHY_SESSION_ID, DASHY_HOME.
+  - Blocks run only once per session at initial prompt assembly.
+
+ENVIRONMENT VARIABLES
+  DASHY_HOME        Base directory for dashy state and settings (default: ~/.dashy).
+  DASHY_SESSION_ID  ID of active session; exported to bash tool and dashy blocks.
+  DASHY_ENDPOINT    Unix socket path of active session; exported to bash tool.
+  DASHY_MODE        Execution mode in dashy blocks: 'tui' or 'print'.
+  DASHY_SOURCE      Assembly source in dashy blocks: 'startup', 'new', or 'resume'.
+
+SUB-AGENT RECIPES
+  Sub-agents run via 'dashy -p' from the bash tool or terminal:
+  - Role-specific reviewer (custom prompt without global instructions):
+      dashy -p "Review diff against main" --config .dashy/reviewer.md --no-global
+  - Parallel background tasks with wait:
+      dashy -p "Task A" > a.out 2> a.err &
+      dashy -p "Task B" > b.out 2> b.err &
+      wait
+  - Long background task notifying caller on completion:
+      (make test > test.log 2>&1; dashy notify "Tests completed with status $?") &
+
+FILES
+  $DASHY_HOME/settings.json              Providers, models, reasoning and compact settings.
+  $DASHY_HOME/projects/<hash>/<id>.jsonl LLM history items and <id>.lock flock.
+  $DASHY_HOME/attachments/               Saved images from clipboard paste or dashy view.
+  $DASHY_HOME/run/<id>.sock              Unix domain socket for IPC notify/view commands.
+
+TERMINAL STATUS
+  In TUI mode, dashy emits OSC 7501 program status reports (state, app, title, msg).
