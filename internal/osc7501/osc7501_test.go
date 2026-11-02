@@ -157,6 +157,19 @@ func TestBurstEndingIdleNeverDeliversStaleWorking(t *testing.T) {
 	}
 }
 
+// Close replaces a working report still queued in the coalescing interval: when the
+// last report sent was idle, the final idle state is the last thing written.
+func TestCloseDropsQueuedWorkingReport(t *testing.T) {
+	out := &syncBuffer{}
+	r := New(out, true)
+	r.HandleEvent(control.Event{Kind: "session"})
+	r.HandleEvent(control.Event{Kind: "started", Operation: "turn", Text: "task"})
+	r.Close()
+	if n := strings.Count(out.String(), "\x1b]7501;"); n != 1 || strings.Contains(out.String(), "state=working") {
+		t.Fatalf("close wrote %d reports, last %q", n, out.String())
+	}
+}
+
 // A burst ending in done reports done (the latest state), once.
 func TestBurstDeliversLatestState(t *testing.T) {
 	out := &syncBuffer{}

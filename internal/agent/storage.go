@@ -79,7 +79,6 @@ func (a *Agent) createSession() error {
 type SessionSummary struct {
 	ID    string
 	Title string
-	Model string
 	Mod   time.Time
 }
 
@@ -114,7 +113,7 @@ func (a *Agent) Sessions() ([]SessionSummary, error) {
 	return sessions, nil
 }
 
-// sessionSummary reads the title and model of a session file. The title is the
+// sessionSummary reads the title of a session file. The title is the
 // custom title if there is one, else the first line of the first user message.
 func sessionSummary(path string) SessionSummary {
 	var summary SessionSummary

@@ -126,43 +126,62 @@ func (a *Agent) Notifications() []string {
 	}
 }
 
-// imageSlots is the allowance of new images per model request. It is shared by
-// dashy view, composer submissions and steering; an image holds a slot until it
-// is in the history (or was returned to the composer unsent).
+// imageSlots counts the images of the next model request. An image is reserved from
+// admission (composer, steering, dashy view) until it is in the history, and committed
+// from then until a model request carrying the history is sent. Both count against
+// MaxPendingImages, so admissions made while a request is in flight or waiting to be
+// sent cannot push the next request past the limit.
 type imageSlots struct {
-	mu sync.Mutex
-	n  int
+	mu        sync.Mutex
+	reserved  int // admitted, not yet in the history
+	committed int // in the history, not yet carried by a model request
 }
 
 // MaxPendingImages is how many new images one model request may carry.
 const MaxPendingImages = 4
 
-// ReserveImages takes n slots, or reports false when they would exceed MaxPendingImages.
+// ReserveImages admits n images, or reports false when they would exceed MaxPendingImages.
 func (a *Agent) ReserveImages(n int) bool {
 	a.slots.mu.Lock()
 	defer a.slots.mu.Unlock()
-	if a.slots.n+n > MaxPendingImages {
+	if a.slots.reserved+a.slots.committed+n > MaxPendingImages {
 		return false
 	}
-	a.slots.n += n
+	a.slots.reserved += n
 	return true
 }
 
-// ReleaseImages returns n slots.
+// ReleaseImages drops n admitted images that will not reach the history (returned unsent or recalled).
 func (a *Agent) ReleaseImages(n int) {
 	a.slots.mu.Lock()
 	defer a.slots.mu.Unlock()
-	a.slots.n = max(0, a.slots.n-n)
+	a.slots.reserved = max(0, a.slots.reserved-n)
+}
+
+// commitImages moves n admitted images into the history, where they wait for the next request.
+func (a *Agent) commitImages(n int) {
+	a.slots.mu.Lock()
+	defer a.slots.mu.Unlock()
+	a.slots.reserved = max(0, a.slots.reserved-n)
+	a.slots.committed += n
+}
+
+// sentImages runs when a request carrying the history is dispatched: the images
+// in the history are no longer new for the requests that follow.
+func (a *Agent) sentImages() {
+	a.slots.mu.Lock()
+	defer a.slots.mu.Unlock()
+	a.slots.committed = 0
 }
 
 // PendingImages counts the images that the next model request will carry.
 func (a *Agent) PendingImages() int {
 	a.slots.mu.Lock()
 	defer a.slots.mu.Unlock()
-	return a.slots.n
+	return a.slots.reserved + a.slots.committed
 }
 
-// viewed drains images queued by dashy view and releases their slots.
+// viewed drains images queued by dashy view and commits them to the history.
 func (a *Agent) viewed() []shell.Image {
 	var images []shell.Image
 	for {
@@ -170,7 +189,7 @@ func (a *Agent) viewed() []shell.Image {
 		case image := <-a.views:
 			images = append(images, image)
 		default:
-			a.ReleaseImages(len(images))
+			a.commitImages(len(images))
 			return images
 		}
 	}

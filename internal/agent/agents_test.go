@@ -93,20 +93,23 @@ func TestBlockTimeoutIsAFailure(t *testing.T) {
 	}
 }
 
-// Stdout keeps its prefix within the combined 64 KiB budget; stderr keeps only a short tail.
+// Stdout and stderr share the 64 KiB budget and keep the start of the output. Stdout
+// below the limit is kept exactly; a longer one is cut at the limit.
 func TestBlockOutputBudget(t *testing.T) {
 	a := newTestAgent(t, &fakeProvider{}, Options{})
-	out, err := a.runBlock(context.Background(), "head -c 200000 /dev/zero | tr '\\0' a", "tui", "startup")
-	if err != nil || len(out) != blockOutput-blockStderrTail {
-		t.Fatalf("stdout kept %d bytes, err %v", len(out), err)
+	ctx := context.Background()
+	exact, err := a.runBlock(ctx, "head -c 63488 /dev/zero | tr '\\0' a", "tui", "startup")
+	if err != nil || exact != strings.Repeat("a", 62*1024) {
+		t.Fatalf("62 KiB of stdout: kept %d bytes, err %v", len(exact), err)
 	}
-	failed, err := a.runBlock(context.Background(), "head -c 100000 /dev/zero | tr '\\0' a; echo boom >&2; exit 1", "tui", "startup")
-	if err != nil || failed != "[dashy block failed: exit status 1]\nboom" {
-		t.Fatalf("failure after the capture limit: %q %v", failed, err)
+	cut, err := a.runBlock(ctx, "head -c 200000 /dev/zero | tr '\\0' a", "tui", "startup")
+	if err != nil || len(cut) != blockOutput {
+		t.Fatalf("stdout over the limit kept %d bytes, err %v", len(cut), err)
 	}
-	many := "for i in $(seq 1 40); do echo line$i >&2; done; exit 2"
-	failed, _ = a.runBlock(context.Background(), many, "tui", "startup")
-	if !strings.HasSuffix(failed, "line36\nline37\nline38\nline39\nline40") || strings.Count(failed, "\n") > blockTailLines {
+	// The failure text keeps only the stderr tail, even after the budget is used up.
+	many := "head -c 100000 /dev/zero | tr '\\0' a; for i in $(seq 1 40); do echo line$i >&2; done; exit 2"
+	failed, _ := a.runBlock(ctx, many, "tui", "startup")
+	if !strings.HasSuffix(failed, "line36\nline37\nline38\nline39\nline40") || strings.Count(failed, "\n") != blockTailLines {
 		t.Fatalf("stderr tail = %q", failed)
 	}
 }

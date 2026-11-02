@@ -5,12 +5,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -161,9 +167,95 @@ func TestCommandGrammar(t *testing.T) {
 	}
 }
 
-// The help text names every flag and every DASHY_* variable the code uses.
+// Flag-like literals and DASHY_* names in the sources of this module.
+var (
+	dashedFlag   = regexp.MustCompile(`^--?[a-z][a-z-]*=?$`)
+	variableName = regexp.MustCompile(`DASHY_[A-Z][A-Z_]*`)
+)
+
+// sourceFlagsAndVariables reads the non-test Go sources of the module. Flags are the
+// names given to flag definitions in this package (StringVar, BoolVar, Var, Func) and
+// the dashed flag literals of this package (such as "--help"); variables are the
+// DASHY_* names in any string literal. Nothing here is maintained by hand.
+func sourceFlagsAndVariables(t *testing.T) (flags, variables map[string]bool) {
+	t.Helper()
+	flags, variables = map[string]bool{}, map[string]bool{}
+	fset := token.NewFileSet()
+	err := filepath.WalkDir("../..", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if path != "../.." && strings.HasPrefix(d.Name(), ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			return err
+		}
+		inCLI := filepath.Base(filepath.Dir(path)) == "cli"
+		ast.Inspect(file, func(n ast.Node) bool {
+			switch n := n.(type) {
+			case *ast.BasicLit:
+				value, err := strconv.Unquote(n.Value)
+				if n.Kind != token.STRING || err != nil {
+					return true
+				}
+				for _, v := range variableName.FindAllString(value, -1) {
+					variables[v] = true
+				}
+				if inCLI && dashedFlag.MatchString(value) {
+					flags[strings.TrimLeft(strings.TrimSuffix(value, "="), "-")] = true
+				}
+			case *ast.CallExpr:
+				sel, ok := n.Fun.(*ast.SelectorExpr)
+				if !inCLI || !ok || len(n.Args) < 2 {
+					return true
+				}
+				index := 1
+				if sel.Sel.Name == "Func" {
+					index = 0
+				} else if !strings.HasSuffix(sel.Sel.Name, "Var") {
+					return true
+				}
+				if lit, ok := n.Args[index].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+					if name, err := strconv.Unquote(lit.Value); err == nil {
+						flags[name] = true
+					}
+				}
+			}
+			return true
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return flags, variables
+}
+
+// The help text names every flag the code defines and every DASHY_* variable the code uses.
+// Both sets come from the sources, so an undocumented addition fails this test.
 func TestHelpNamesEveryFlagAndVariable(t *testing.T) {
-	for _, name := range []string{"--config", "-c", "--no-global", "--resume", "-p", "-s", "DASHY_HOME", "DASHY_SESSION_ID", "DASHY_ENDPOINT", "DASHY_MODE", "DASHY_SOURCE"} {
+	flags, variables := sourceFlagsAndVariables(t)
+	if len(flags) < 8 || len(variables) < 5 {
+		t.Fatalf("source scan found %d flags and %d variables; the scanner is broken", len(flags), len(variables))
+	}
+	for name := range flags {
+		flag := "--" + name
+		if len(name) == 1 {
+			flag = "-" + name
+		}
+		if !strings.Contains(helpText, flag) {
+			t.Errorf("help does not mention flag %s", flag)
+		}
+	}
+	for name := range variables {
 		if !strings.Contains(helpText, name) {
 			t.Errorf("help does not mention %s", name)
 		}

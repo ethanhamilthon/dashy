@@ -193,6 +193,7 @@ func (r *Reporter) Close() {
 		return
 	}
 	r.state, r.msg = "idle", ""
+	r.pending = nil // the final state replaces whatever was queued, even when it is not sent
 	if data, err := Encode(r.state, r.title, r.msg); err == nil && !bytes.Equal(data, r.last) {
 		r.pending = data
 	}

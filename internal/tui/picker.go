@@ -19,6 +19,14 @@ const (
 	pickerSetup    = "setup" // provider prompts after "Add provider"
 )
 
+// Action rows of the pickers. Provider and model rows have none, so their names can be anything.
+const (
+	actionAdd         = "add"
+	actionReasoning   = "reasoning"
+	actionAutoCompact = "autocompact"
+	actionLines       = "lines"
+)
+
 // modelChoices carries the result of listing models for the settings picker.
 type modelChoices struct {
 	generation int
@@ -43,7 +51,7 @@ func (m *model) openPicker(kind string) tea.Cmd {
 			m.menu = append(m.menu, command{name: name, description: "Provider"})
 		}
 		sort.Slice(m.menu, func(i, j int) bool { return m.menu[i].name < m.menu[j].name })
-		m.menu = append(m.menu, command{name: "Add", icon: "+", description: "Create provider", label: "+ Add provider"})
+		m.menu = append(m.menu, command{name: "Add", icon: "+", description: "Create provider", label: "+ Add provider", action: actionAdd})
 		return nil
 	}
 	m.effort = 0
@@ -70,10 +78,10 @@ func (m *model) openPicker(kind string) tea.Cmd {
 func (m *model) rebuildSettingsMenu() {
 	s := m.ctl.Settings()
 	m.menu = []command{
-		{name: "Reasoning summary", icon: "*", label: "Reasoning summary: " + onOff(s.ReasoningSummary)},
-		{name: "Auto compact", icon: "*", label: "Auto compact: " + onOff(s.AutoCompact)},
-		{name: "Show lines", icon: "*", label: "Show lines: " + s.ShowLines},
-		{name: "Add provider", icon: "+", description: "Create provider", label: "+ Add provider"},
+		{name: "Reasoning summary", icon: "*", label: "Reasoning summary: " + onOff(s.ReasoningSummary), action: actionReasoning},
+		{name: "Auto compact", icon: "*", label: "Auto compact: " + onOff(s.AutoCompact), action: actionAutoCompact},
+		{name: "Show lines", icon: "*", label: "Show lines: " + s.ShowLines, action: actionLines},
+		{name: "Add provider", icon: "+", description: "Create provider", label: "+ Add provider", action: actionAdd},
 	}
 	for _, c := range m.pickerModels {
 		m.menu = append(m.menu, command{name: c.Model, description: c.Provider, label: c.Model + "  " + c.Provider})
@@ -153,7 +161,7 @@ func (m model) pickerEnter() (tea.Model, tea.Cmd, bool) {
 		return m, nil, true
 	}
 	chosen := matches[m.selected%len(matches)]
-	if chosen.name == "Add" || chosen.name == "Add provider" {
+	if chosen.action == actionAdd {
 		m.menuKind = pickerSetup
 		m.menu = nil
 		m.selected = 0
@@ -163,15 +171,15 @@ func (m model) pickerEnter() (tea.Model, tea.Cmd, bool) {
 		return m, nil, true
 	}
 	var toggle error
-	switch chosen.name {
-	case "Reasoning summary":
+	switch chosen.action {
+	case actionReasoning:
 		toggle = m.ctl.ToggleReasoningSummary()
-	case "Auto compact":
+	case actionAutoCompact:
 		toggle = m.ctl.ToggleAutoCompact()
-	case "Show lines":
+	case actionLines:
 		toggle = m.ctl.CycleShowLines()
 	}
-	if m.menuKind == pickerSettings && chosen.icon == "*" {
+	if chosen.action != "" {
 		m.rebuildSettingsMenu()
 		m.refresh(true)
 		if toggle != nil {

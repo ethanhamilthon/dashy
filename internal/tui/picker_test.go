@@ -98,3 +98,48 @@ func TestLoginAddsProviderWithoutShowingKey(t *testing.T) {
 		}
 	}
 }
+
+// selectModel moves the picker selection to the model row called name (not an action row).
+func selectModel(t *testing.T, m model, name string) model {
+	t.Helper()
+	for i, c := range m.completions() {
+		if c.name == name && c.action == "" {
+			m.selected = i
+			return m
+		}
+	}
+	t.Fatalf("no model row %q", name)
+	return m
+}
+
+// Provider and model names equal to action labels are ordinary choices: they never
+// open the provider setup and never change a setting.
+func TestPickerNamesThatMatchActionsAreChoices(t *testing.T) {
+	m, a := freshModel(t)
+	url := modelServer(t, `{"data":[{"id":"Reasoning summary"},{"id":"Show lines"}]}`)
+	for _, name := range []string{"Add", "Add provider"} {
+		if err := a.AddProvider(name, agent.Provider{BaseURL: url}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m = openPickerCmd(t, m, "/login")
+	m = selectRow(t, m, "Add")
+	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if a.Settings().Provider != "Add" || m.menuKind != "" {
+		t.Fatalf("provider row named Add: provider %q, picker %q", a.Settings().Provider, m.menuKind)
+	}
+	m = openPickerCmd(t, m, "/settings")
+	before := a.Settings()
+	m = selectModel(t, m, "Reasoning summary")
+	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if s := a.Settings(); s.Model != "Reasoning summary" || s.ReasoningSummary != before.ReasoningSummary {
+		t.Fatalf("model named like a setting: model %q, reasoning summary %v", s.Model, s.ReasoningSummary)
+	}
+	m = openPickerCmd(t, m, "/settings")
+	before = a.Settings()
+	m = selectModel(t, m, "Show lines")
+	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if s := a.Settings(); s.Model != "Show lines" || s.ShowLines != before.ShowLines {
+		t.Fatalf("model named Show lines: model %q, show lines %q", s.Model, s.ShowLines)
+	}
+}

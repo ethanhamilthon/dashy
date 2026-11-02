@@ -59,7 +59,9 @@ FILES
   $DASHY_HOME/settings.json              Providers, models, reasoning and compact settings.
   $DASHY_HOME/projects/<hash>/<id>.jsonl LLM history items and <id>.lock flock.
   $DASHY_HOME/attachments/               Saved images from clipboard paste or dashy view.
-  $DASHY_HOME/run/<id>.sock              Unix domain socket for IPC notify/view commands.
+  $DASHY_HOME/run/<id>.sock              Unix socket for notify/view. Paths over the macOS limit (~104 bytes)
+                                         use a 16-hex hash name; if DASHY_HOME is too long for that,
+                                         the socket is /tmp/dashy-<hash>.sock.
 
 TERMINAL STATUS
   In TUI mode, dashy emits OSC 7501 program status reports (state, app, title, msg).

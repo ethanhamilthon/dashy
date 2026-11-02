@@ -395,7 +395,7 @@ func (c *Controller) sessionsLocked() ([]SessionInfo, error) {
 	}
 	sessions := make([]SessionInfo, 0, len(summaries))
 	for _, s := range summaries {
-		sessions = append(sessions, SessionInfo{ID: s.ID, Title: s.Title, Model: s.Model, Updated: s.Mod})
+		sessions = append(sessions, SessionInfo{ID: s.ID, Title: s.Title, Updated: s.Mod})
 	}
 	return sessions, nil
 }

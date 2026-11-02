@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/base64"
 	"strings"
 	"testing"
@@ -69,5 +70,34 @@ func TestViewedImageReachesNextRequestOnce(t *testing.T) {
 	reqs := fp.requests()
 	if strings.Count(reqs[0], "input_image") != 1 || strings.Count(reqs[1], "input_image") != 1 || a.PendingImages() != 0 {
 		t.Fatalf("image counts: %d, %d, pending %d", strings.Count(reqs[0], "input_image"), strings.Count(reqs[1], "input_image"), a.PendingImages())
+	}
+}
+
+// Images are counted from admission until the request that carries them is sent.
+// Admissions made after the input is in the history but before that request is sent,
+// or while it is in flight, are measured against the same allowance.
+func TestImagesInHistoryCountUntilSent(t *testing.T) {
+	fp := &fakeProvider{reply: func(int, string) string { return textReply("ok") }}
+	a := newTestAgent(t, fp, Options{})
+	images := []shell.Image{{URL: pngURL()}, {URL: pngURL()}, {URL: pngURL()}}
+	if !a.ReserveImages(3) {
+		t.Fatal("three images refused")
+	}
+	a.commitInput(Input{Text: "look", Images: images})
+	if a.ReserveImages(2) {
+		t.Fatal("five images admitted for one request before it was sent")
+	}
+	if !a.ReserveImages(1) {
+		t.Fatal("fourth image refused")
+	}
+	if _, err := a.request(context.Background(), func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(fp.requests()[0], "input_image"); got != 3 {
+		t.Fatalf("request carried %d images", got)
+	}
+	// The fourth image is still queued for the following request: one more slot is free.
+	if a.PendingImages() != 1 || a.ReserveImages(4) || !a.ReserveImages(3) {
+		t.Fatalf("after sending: pending %d", a.PendingImages())
 	}
 }

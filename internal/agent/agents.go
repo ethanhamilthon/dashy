@@ -18,9 +18,9 @@ import (
 )
 
 const (
-	blockOutput     = 64 * 1024 // combined stdout+stderr capture budget of one dashy block
-	blockStderrTail = 4 * 1024  // the stderr part of that budget, kept as a tail
-	blockTailLines  = 5         // lines of stderr shown in a failure
+	blockOutput     = 64 * 1024 // stdout and stderr together: the start of the output is kept
+	blockStderrTail = 4 * 1024  // the last stderr bytes, kept for a failure report only
+	blockTailLines  = 5         // lines of that tail shown in a failure
 )
 
 var blockTimeout = 30 * time.Second // a variable only so tests can shorten it
@@ -86,11 +86,13 @@ func isClosingFence(line []byte, fence byte, length int) bool {
 	return count >= length && len(bytes.Trim(trimmed[count:], " \t\r")) == 0
 }
 
-// blockOutputs captures stdout as a prefix and stderr as a short tail, within one budget.
+// blockOutputs captures one block run. Stdout and stderr share the blockOutput budget
+// and keep the start of the output; the end of stderr is kept apart for failure text.
 type blockOutputs struct {
-	mu     sync.Mutex
-	stdout []byte
-	stderr []byte
+	mu      sync.Mutex
+	used    int // bytes of the budget taken by stdout and stderr
+	stdout  []byte
+	errTail []byte // last blockStderrTail bytes of stderr
 }
 
 type blockWriter struct {
@@ -102,19 +104,24 @@ func (w blockWriter) Write(p []byte) (int, error) {
 	w.o.mu.Lock()
 	defer w.o.mu.Unlock()
 	if w.stderr {
-		w.o.stderr = append(w.o.stderr, p...)
-		if len(w.o.stderr) > blockStderrTail {
-			w.o.stderr = w.o.stderr[len(w.o.stderr)-blockStderrTail:]
+		w.o.errTail = append(w.o.errTail, p...)
+		if len(w.o.errTail) > blockStderrTail {
+			w.o.errTail = w.o.errTail[len(w.o.errTail)-blockStderrTail:]
 		}
-	} else if room := blockOutput - blockStderrTail - len(w.o.stdout); room > 0 {
-		w.o.stdout = append(w.o.stdout, p[:min(len(p), room)]...)
+	}
+	n := min(len(p), blockOutput-w.o.used)
+	if n > 0 {
+		w.o.used += n
+		if !w.stderr {
+			w.o.stdout = append(w.o.stdout, p[:n]...)
+		}
 	}
 	return len(p), nil
 }
 
 // tail returns the last lines of stderr, or "" when there is none.
 func (o *blockOutputs) tail() string {
-	lines := strings.Split(strings.TrimSpace(string(o.stderr)), "\n")
+	lines := strings.Split(strings.TrimSpace(string(o.errTail)), "\n")
 	if len(lines) > blockTailLines {
 		lines = lines[len(lines)-blockTailLines:]
 	}

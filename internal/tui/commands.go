@@ -11,7 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-type command struct{ name, icon, description, label string }
+type command struct{ name, icon, description, label, action string }
 
 // commandIcons are the completion glyphs.
 var commandIcons = map[string]string{
@@ -84,9 +84,9 @@ func (m model) completions() []command {
 		}
 		prefix := strings.TrimSpace(strings.TrimPrefix(text, "/resume"))
 		lower := strings.ToLower(prefix)
-		titleWidth, modelWidth := 0, 0
+		titleWidth := 0
 		for _, s := range sessions {
-			titleWidth, modelWidth = max(titleWidth, min(len([]rune(sessionTitle(s))), 40)), max(modelWidth, len(s.Model))
+			titleWidth = max(titleWidth, min(len([]rune(sessionTitle(s))), 40))
 		}
 		var matches []command
 		for _, s := range sessions {
@@ -94,10 +94,7 @@ func (m model) completions() []command {
 			if !strings.HasPrefix(s.ID, prefix) && !strings.Contains(strings.ToLower(title), lower) {
 				continue
 			}
-			label := fmt.Sprintf("%-*s  %-*s  %s", titleWidth, title, modelWidth, s.Model, sessionTime(s.Updated))
-			if modelWidth == 0 {
-				label = fmt.Sprintf("%-*s  %s", titleWidth, title, sessionTime(s.Updated))
-			}
+			label := fmt.Sprintf("%-*s  %s", titleWidth, title, sessionTime(s.Updated))
 			matches = append(matches, command{name: "/resume " + s.ID, icon: "<", label: label})
 		}
 		return matches

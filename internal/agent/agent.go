@@ -445,6 +445,7 @@ func (a *Agent) request(ctx context.Context, emit func(Event), checkpoints ...fu
 	}
 	started := time.Now()
 	a.lastRequest = Metadata{RequestID: fmt.Sprintf("r-%d", len(a.History))}
+	a.sentImages()
 	stream := a.client.Responses.NewStreaming(ctx, payload)
 	defer stream.Close()
 	var completed []json.RawMessage

@@ -75,7 +75,6 @@ func Help(keyboard string) string {
 type SessionInfo struct {
 	ID      string
 	Title   string
-	Model   string
 	Updated time.Time
 }
 
