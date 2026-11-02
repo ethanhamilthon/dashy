@@ -40,10 +40,25 @@ func (a *Agent) SessionInfoFor(records []Record) map[string]any {
 		"provider": a.settings.Provider,
 		"effort":   a.settings.Effort,
 		"ctx_size": size,
+		"title":    a.Title(),
 	}
 }
 
 // SelectionConfig is the settings file.
+// Title returns the effective session title: the custom rename title if set,
+// else the first user message text, or "" if none.
+func (a *Agent) Title() string {
+	if a.title != "" {
+		return a.title
+	}
+	for _, r := range a.records {
+		if r.Kind == "user" && strings.TrimSpace(r.Text) != "" {
+			return strings.Join(strings.Fields(r.Text), " ")
+		}
+	}
+	return ""
+}
+
 func (a *Agent) SelectionConfig() string {
 	return a.PrimaryConfig()
 }

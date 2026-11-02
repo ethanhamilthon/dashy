@@ -114,6 +114,17 @@ func (c *Controller) Settings() (s agent.Settings) {
 	return s
 }
 
+// Title returns the current session title.
+func (c *Controller) Title() string {
+	var title string
+	c.view(func() {
+		if c.a != nil {
+			title = c.a.Title()
+		}
+	})
+	return title
+}
+
 // AttachmentsDir returns the attachments directory.
 func (c *Controller) AttachmentsDir() string {
 	return c.a.AttachmentsDir()
@@ -224,7 +235,7 @@ func (c *Controller) beginTurnLocked(input agent.Input, source string) string {
 	}
 	c.active = op
 	c.idle = make(chan struct{})
-	c.publish(Event{Kind: "started", Turn: turnID, Operation: "turn", Source: source})
+	c.publish(Event{Kind: "started", Turn: turnID, Operation: "turn", Source: source, Text: input.Text})
 	go c.runTurn(op, input)
 	return turnID
 }
@@ -236,7 +247,7 @@ func (c *Controller) beginCompactLocked(prompt string) {
 	op := &operation{id: turnID, kind: "compact", ctx: ctx, cancel: cancel, started: time.Now()}
 	c.active = op
 	c.idle = make(chan struct{})
-	c.publish(Event{Kind: "started", Turn: turnID, Operation: "compact", Source: "compact"})
+	c.publish(Event{Kind: "started", Turn: turnID, Operation: "compact", Source: "compact", Text: prompt})
 	go c.runCompact(op, prompt)
 }
 
