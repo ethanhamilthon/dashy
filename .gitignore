@@ -1,0 +1,6 @@
+/dashy
+/.dashy/
+__pycache__/
+*.pyc
+/.report/
+/dashy.toml.lock

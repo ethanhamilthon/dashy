@@ -1,0 +1,35 @@
+# Dashy default configuration
+
+provider = ""
+model = ""
+effort = ""
+reasoning_summary = "auto"
+max_context_tokens = 400000
+compact_keep_turns = 4
+max_agent_steps = 0
+max_file_bytes = 65536
+attachment_dir = ""
+system = "You are Dashy, a coding agent"
+
+[ui]
+max_code_lines = 999
+max_result_lines = 4
+max_thinking_lines = 4
+status_left = [
+  'if [ -n "$DASHY_PROVIDER" ] && [ -n "$DASHY_MODEL" ]; then echo "$DASHY_PROVIDER · $DASHY_MODEL${DASHY_EFFORT:+/$DASHY_EFFORT}"; else echo "no model selected"; fi',
+  'if [ -n "$DASHY_CTX_SIZE" ]; then if [ "$DASHY_CTX_SIZE" -ge 1000000 ]; then echo "ctx ~$(( (DASHY_CTX_SIZE + 500000) / 1000000 ))M"; elif [ "$DASHY_CTX_SIZE" -ge 1000 ]; then echo "ctx ~$(( (DASHY_CTX_SIZE + 500) / 1000 ))K"; else echo "ctx $DASHY_CTX_SIZE"; fi; else echo "ctx ?"; fi'
+]
+status_right = [
+  'if [ "$DASHY_CWD" = "$HOME" ]; then echo "~"; elif [[ "$DASHY_CWD" == "$HOME"/* ]]; then echo "~${DASHY_CWD#$HOME}"; else echo "$DASHY_CWD"; fi'
+]
+
+[shell]
+timeout = 120
+max_timeout = 600
+max_output = 8192
+
+[env]
+
+[providers]
+
+[hooks]
