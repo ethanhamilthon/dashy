@@ -155,6 +155,7 @@ func New(dir string, files ConfigFiles, target ...string) (*Agent, error) {
 		home:          config,
 		mode:          mode,
 		promptSource:  source,
+		NoSocket:      mode == "print",
 		System:        cfg.system,
 		LocalConfig:   cfg.local,
 		Sources:       cfg.sources,
@@ -535,6 +536,10 @@ func (a *Agent) request(ctx context.Context, emit func(Event), checkpoints ...fu
 
 func (a *Agent) sessionID() string {
 	return strings.TrimSuffix(filepath.Base(a.HistoryPath), ".jsonl")
+}
+
+func (a *Agent) SessionID() string {
+	return a.sessionID()
 }
 
 func (a *Agent) Start(version string) {

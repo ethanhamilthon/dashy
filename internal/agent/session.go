@@ -88,6 +88,7 @@ func (a *Agent) changeSession(id string) error {
 		home:          a.home,
 		mode:          a.mode,
 		promptSource:  source,
+		NoSocket:      a.NoSocket,
 		sessionsDir:   a.sessionsDir,
 		Shell:         a.Shell,
 		version:       a.version,
