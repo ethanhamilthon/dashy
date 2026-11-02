@@ -13,21 +13,14 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"unicode"
 )
 
-type sessionLine struct {
-	Selection *Selection      `json:"selection,omitempty"`
-	Complete  bool            `json:"complete,omitempty"`
-	Items     int             `json:"items,omitempty"`
-	Records   int             `json:"records,omitempty"`
-	Version   int             `json:"version,omitempty"`
-	CWD       string          `json:"cwd,omitempty"`
-	Title     string          `json:"title,omitempty"`
-	Item      json.RawMessage `json:"item,omitempty"`
-	Record    *Record         `json:"record,omitempty"`
-	// Literal marks a record whose empty Text is its own, never elided from a derived item.
-	Literal bool `json:"literal,omitempty"`
+type sessionMeta struct {
+	Title string `json:"title,omitempty"`
+}
+
+type sessionMetaLine struct {
+	Meta sessionMeta `json:"meta"`
 }
 
 func (a *Agent) openProject(cwd string, target ...string) error {
@@ -45,8 +38,9 @@ func (a *Agent) openProject(cwd string, target ...string) error {
 	}
 	return a.openSession(target[0])
 }
+
 func (a *Agent) openSession(id string) error {
-	if id == "" || filepath.Base(id) != id || strings.ContainsAny(id, `/\`) {
+	if id == "" || filepath.Base(id) != id || strings.ContainsAny(id, `/\\`) {
 		return fmt.Errorf("invalid session ID: %s", id)
 	}
 	path := filepath.Join(a.sessionsDir, id+".jsonl")
@@ -61,8 +55,13 @@ func (a *Agent) openSession(id string) error {
 	if err := a.acquire(); err != nil {
 		return err
 	}
-	return a.readSession()
+	if err := a.readSession(); err != nil {
+		a.release()
+		return err
+	}
+	return nil
 }
+
 func (a *Agent) createSession() error {
 	if err := os.MkdirAll(a.sessionsDir, 0700); err != nil {
 		return err
@@ -128,7 +127,7 @@ func (a *Agent) Rename(name string) error {
 	return a.Save()
 }
 
-// sessionSummary reads the model selection and the title or first user message.
+// sessionSummary reads the title (from meta or the first user message).
 func sessionSummary(path string) SessionSummary {
 	var summary SessionSummary
 	file, err := os.Open(path)
@@ -139,18 +138,23 @@ func sessionSummary(path string) SessionSummary {
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
-		var entry sessionLine
-		if json.Unmarshal(scanner.Bytes(), &entry) != nil || entry.Complete {
-			break
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 || line[0] != '{' {
+			continue
 		}
-		if entry.Selection != nil {
-			summary.Model = entry.Selection.Model
+		var metaLine struct {
+			Meta *struct {
+				Title string `json:"title"`
+			} `json:"meta"`
 		}
-		if entry.Title != "" {
-			summary.Title = entry.Title
-			return summary
+		if json.Unmarshal(line, &metaLine) == nil && metaLine.Meta != nil {
+			if metaLine.Meta.Title != "" {
+				summary.Title = metaLine.Meta.Title
+				return summary
+			}
+			continue
 		}
-		for _, r := range RecordsForItem(entry.Item) {
+		for _, r := range RecordsForItem(line) {
 			if r.Kind == "user" {
 				summary.Title = strings.Join(strings.Fields(r.Text), " ")
 				return summary
@@ -159,89 +163,73 @@ func sessionSummary(path string) SessionSummary {
 	}
 	return summary
 }
+
 func (a *Agent) sessionData() ([]byte, error) {
 	var buffer bytes.Buffer
-	encoder := json.NewEncoder(&buffer)
-	if err := encoder.Encode(sessionLine{Version: 2, CWD: a.Shell.Dir, Title: a.title, Selection: a.selection()}); err != nil {
-		return nil, err
+	if a.title != "" {
+		meta, err := json.Marshal(sessionMetaLine{
+			Meta: sessionMeta{
+				Title: a.title,
+			},
+		})
+		if err != nil {
+			return nil, err
+		}
+		buffer.Write(meta)
+		buffer.WriteByte('\n')
 	}
-	var derived []Record
 	for _, item := range a.History {
-		if err := encoder.Encode(sessionLine{Item: item}); err != nil {
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, item); err != nil {
 			return nil, err
 		}
-		derived = append(derived, RecordsForItem(item)...)
-	}
-	records := a.Records()
-	for i, record := range records {
-		literal := record.Text == ""
-		if i < len(derived) && record.Kind == derived[i].Kind && record.Text == derived[i].Text {
-			record.Text = ""
-		}
-		if err := encoder.Encode(sessionLine{Record: &record, Literal: literal}); err != nil {
-			return nil, err
-		}
-	}
-	if err := encoder.Encode(sessionLine{Complete: true, Items: len(a.History), Records: len(records)}); err != nil {
-		return nil, err
+		buffer.Write(compact.Bytes())
+		buffer.WriteByte('\n')
 	}
 	return buffer.Bytes(), nil
 }
+
 func (a *Agent) readSession() error {
 	data, err := os.ReadFile(a.HistoryPath)
 	if err != nil {
 		return err
 	}
-	if len(data) == 0 || data[len(data)-1] != '\n' {
-		return fmt.Errorf("incomplete session file: %s", a.HistoryPath)
+	lines := bytes.Split(data, []byte("\n"))
+	if len(lines) > 0 && len(lines[len(lines)-1]) == 0 {
+		lines = lines[:len(lines)-1]
 	}
-	lines := bytes.Split(bytes.TrimSuffix(data, []byte("\n")), []byte("\n"))
-	var selection *Selection
-	var title string
 	var history []json.RawMessage
-	var derived []Record
-	records := []Record{}
+	var title string
 	for i, line := range lines {
-		var entry sessionLine
-		if err = json.Unmarshal(line, &entry); err != nil {
-			return fmt.Errorf("session line %d: %w", i+1, err)
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
 		}
-		if i == 0 {
-			selection, title = entry.Selection, entry.Title
-			if entry.Version != 2 || entry.CWD != a.Shell.Dir {
-				return fmt.Errorf("unsupported session version or project mismatch")
-			}
-		} else if entry.Complete {
-			if i != len(lines)-1 || entry.Items != len(history) || entry.Records != len(records) {
-				return fmt.Errorf("session checkpoint mismatch")
-			}
-		} else if i == len(lines)-1 {
-			return fmt.Errorf("session checkpoint missing")
-		} else if entry.Item != nil {
-			history = append(history, entry.Item)
-			derived = append(derived, RecordsForItem(entry.Item)...)
-		} else if entry.Record != nil {
-			r := *entry.Record
-			if r.Text == "" && !entry.Literal && len(records) < len(derived) && r.Kind == derived[len(records)].Kind {
-				r.Text = derived[len(records)].Text
-			}
-			records = append(records, r)
-		} else {
-			return fmt.Errorf("invalid session line %d", i+1)
+		var metaLine struct {
+			Meta *struct {
+				Title string `json:"title"`
+			} `json:"meta"`
 		}
-	}
-	if len(lines) < 2 {
-		return fmt.Errorf("session checkpoint missing")
-	}
-	if selection != nil {
-		s := a.Settings()
-		s.Provider, s.Model, s.Effort = selection.Provider, selection.Model, selection.Effort
-		if err := validateSettings(s); err != nil {
-			return fmt.Errorf("session selection: %w", err)
+		if err := json.Unmarshal(line, &metaLine); err != nil || line[0] != '{' {
+			if i == len(lines)-1 {
+				// Torn last line tolerated: drop it.
+				break
+			}
+			if err != nil {
+				return fmt.Errorf("session line %d: %w", i+1, err)
+			}
+			return fmt.Errorf("session line %d: invalid JSON object", i+1)
 		}
-		a.applySettings(s)
+		if metaLine.Meta != nil {
+			if metaLine.Meta.Title != "" {
+				title = metaLine.Meta.Title
+			}
+			continue
+		}
+		history = append(history, append(json.RawMessage(nil), line...))
 	}
-	a.History, a.records, a.title = history, records, title
+	a.History = history
+	a.title = title
 	return nil
 }
 
@@ -269,13 +257,6 @@ func projectDirectory(cwd, home string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	name := strings.Map(func(r rune) rune {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' {
-			return r
-		}
-		return '-'
-	}, filepath.Base(absolute))
-	name = string([]rune(name)[:min(40, len([]rune(name)))])
 	hash := sha256.Sum256([]byte(filepath.Clean(absolute)))
-	return filepath.Join(home, "sessions", fmt.Sprintf("%s-%x", name, hash[:8])), nil
+	return filepath.Join(home, "projects", hex.EncodeToString(hash[:])), nil
 }

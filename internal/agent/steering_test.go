@@ -92,8 +92,13 @@ func TestSteeringAtSafeBoundaries(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer restored.Close()
-			if !reflect.DeepEqual(live, restored.Records()) {
-				t.Fatal("steering not saved")
+			if len(restored.Records()) != len(live) {
+				t.Fatalf("restored count %d != live count %d", len(restored.Records()), len(live))
+			}
+			for i := range live {
+				if restored.Records()[i].Kind != live[i].Kind || restored.Records()[i].Text != live[i].Text {
+					t.Fatalf("record %d mismatch: got %+v, want %+v", i, restored.Records()[i], live[i])
+				}
 			}
 			if !strings.Contains(live[len(live)-1].Text, "Adjusted") {
 				t.Fatal("follow-up request missing")

@@ -239,7 +239,11 @@ func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event), ste
 			a.History = append(a.History, raw(map[string]any{"role": "user", "content": content}))
 			emit(Event{Kind: "notice", Text: text})
 		}
+		compacted := len(a.History)
 		a.compactIfNeeded(ctx, emit)
+		if len(a.History) < compacted {
+			a.records = a.Records()
+		}
 		if e := a.Save(); e != nil {
 			return fmt.Errorf("could not save history: %w", e)
 		}
@@ -247,7 +251,6 @@ func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event), ste
 		baseRecords := append([]Record(nil), a.records...)
 		finished := map[int64]json.RawMessage{}
 		var durableHistory []json.RawMessage
-		var durableRecords []Record
 		checkpoint := func(index int64, item json.RawMessage) error {
 			finished[index] = append(json.RawMessage(nil), item...)
 			indexes := make([]int, 0, len(finished))
@@ -256,16 +259,12 @@ func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event), ste
 			}
 			sort.Ints(indexes)
 			durableHistory = append([]json.RawMessage(nil), baseHistory...)
-			durableRecords = append([]Record(nil), baseRecords...)
 			for _, i := range indexes {
 				part := finished[int64(i)]
 				durableHistory = append(durableHistory, part)
-				for _, r := range RecordsForItem(part) {
-					durableRecords = ApplyEvent(durableRecords, Event{Kind: r.Kind, Text: r.Text, ID: a.itemID(int64(i)), Final: true})
-				}
 			}
 			snapshot := *a
-			snapshot.History, snapshot.records = durableHistory, durableRecords
+			snapshot.History = durableHistory
 			if err := snapshot.Save(); err != nil {
 				return fmt.Errorf("could not save history: %w", err)
 			}
@@ -274,7 +273,7 @@ func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event), ste
 		items, e := a.requestWithRetries(ctx, emit, checkpoint)
 		if e != nil {
 			if durableHistory != nil {
-				a.History, a.records = durableHistory, durableRecords
+				a.History = durableHistory
 			} else {
 				a.records = baseRecords
 			}

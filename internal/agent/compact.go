@@ -175,15 +175,11 @@ func (a *Agent) compact(ctx context.Context, prompt, reason string) (text string
 		return "", err
 	}
 	item := raw(map[string]any{"role": "user", "content": "<compact_summary>\n" + summary + "\n</compact_summary>"})
-	// Compaction shortens only the model context. The display journal keeps every
-	// earlier record, so it is never rebuilt from the summary.
-	if a.records == nil {
-		a.records = a.Records()
-	}
-	history, records := a.History, a.records
+	history := a.History
 	a.History = append([]json.RawMessage{item}, a.History[cut:]...)
+	a.records = nil
 	if err := a.Save(); err != nil {
-		a.History, a.records = history, records
+		a.History = history
 		return "", err
 	}
 	return fmt.Sprintf("Compacted %d items into a summary; kept the last %d turns.", len(old), keep), nil

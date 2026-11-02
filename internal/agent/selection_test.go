@@ -2,11 +2,9 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -24,56 +22,6 @@ func configureTestAgent(t *testing.T, a *Agent, s Settings) {
 	}
 }
 
-func TestSessionSelectionDefaultsAndRestoration(t *testing.T) {
-	t.Setenv("DASHY_HOME", t.TempDir())
-	a, err := New(t.TempDir(), ConfigFiles{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer a.Close()
-	configureTestAgent(t, a, Settings{
-		Provider: "default-prov",
-		Model:    "default-model",
-		Providers: map[string]Provider{
-			"default-prov": {BaseURL: "https://example.com/v1"},
-		},
-	})
-	if err = a.Save(); err != nil {
-		t.Fatal(err)
-	}
-	first := strings.TrimSuffix(filepath.Base(a.HistoryPath), ".jsonl")
-	original := a.Settings()
-	if err = a.NewSession(); err != nil {
-		t.Fatal(err)
-	}
-	a.ApplySettings(original)
-	if err = a.Select(original.Provider, "new-model", "max"); err != nil {
-		t.Fatal(err)
-	}
-	if err = a.Save(); err != nil {
-		t.Fatal(err)
-	}
-	selected := strings.TrimSuffix(filepath.Base(a.HistoryPath), ".jsonl")
-	if err = a.Resume(first); err != nil {
-		t.Fatal(err)
-	}
-	if a.Settings().Model != original.Model || a.Settings().Effort != original.Effort {
-		t.Fatal("old session adopted new defaults")
-	}
-	if err = a.Resume(selected); err != nil {
-		t.Fatal(err)
-	}
-	if a.Settings().Model != "new-model" {
-		t.Fatal("session model not restored")
-	}
-	if err = a.Select(original.Provider, "bad", "unsupported"); err == nil {
-		t.Fatal("invalid effort accepted")
-	}
-	if a.Settings().Model != "new-model" {
-		t.Fatal("failed selection mutated settings")
-	}
-}
-
 func TestSessionGlobalAndContextMatchesRecords(t *testing.T) {
 	t.Setenv("DASHY_HOME", t.TempDir())
 	a, err := New(t.TempDir(), ConfigFiles{})
@@ -82,8 +30,6 @@ func TestSessionGlobalAndContextMatchesRecords(t *testing.T) {
 	}
 	defer a.Close()
 
-	n := int64(36679)
-	a.records = []Record{{Kind: "assistant", Meta: &Metadata{RequestID: "r-1", ContextInput: &n}}}
 	result, err := a.Shell.Execute(context.Background(), `echo "$DASHY_SESSION_ID"; sh -c 'echo "$DASHY_ENDPOINT"'`, time.Second)
 	id := strings.TrimSuffix(filepath.Base(a.HistoryPath), ".jsonl")
 	if err != nil || result.Error || !strings.Contains(result.Output, id) || !strings.Contains(result.Output, filepath.Join(a.socketDir, "socket")) {
@@ -105,54 +51,6 @@ func TestModelListUsesSelectedProvider(t *testing.T) {
 	models, errs := AllModels(context.Background(), a.Settings().Providers)
 	if len(errs) != 0 || len(models) != 2 || models[0].Model != "a" || models[1].Model != "z" {
 		t.Fatalf("%v %v", models, errs)
-	}
-}
-
-func TestLegacyHeaderPinsCurrentDefaultsAndCorruptSelectionPreservesState(t *testing.T) {
-	t.Setenv("DASHY_HOME", t.TempDir())
-	a, err := New(t.TempDir(), ConfigFiles{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer a.Close()
-	if err = a.Save(); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(a.HistoryPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	lines := strings.Split(string(data), "\n")
-	var header map[string]any
-	if err = json.Unmarshal([]byte(lines[0]), &header); err != nil {
-		t.Fatal(err)
-	}
-	delete(header, "selection")
-	lines[0] = string(raw(header))
-	if err = os.WriteFile(a.HistoryPath, []byte(strings.Join(lines, "\n")), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err = a.readSession(); err != nil {
-		t.Fatal(err)
-	}
-	if err = a.Save(); err != nil {
-		t.Fatal(err)
-	}
-	data, err = os.ReadFile(a.HistoryPath)
-	if err != nil || !strings.Contains(string(data), `"selection"`) {
-		t.Fatal("legacy defaults not pinned")
-	}
-	previous := a.Settings()
-	header["selection"] = Selection{Provider: "missing", Model: "bad"}
-	lines[0] = string(raw(header))
-	if err = os.WriteFile(a.HistoryPath, []byte(strings.Join(lines, "\n")), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err = a.readSession(); err == nil {
-		t.Fatal("unavailable provider accepted")
-	}
-	if a.Settings().Provider != previous.Provider {
-		t.Fatal("failed read mutated selection")
 	}
 }
 

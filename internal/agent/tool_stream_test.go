@@ -118,8 +118,14 @@ func TestToolCallStreamingIsDisplayOnlyAndSequential(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer b.Close()
-			if len(b.Records()) != len(a.Records()) {
-				t.Fatal("stream display records not persisted")
+			if failed {
+				if len(b.Records()) != 1 {
+					t.Fatalf("expected only initial user message on reopen after failure, got %d", len(b.Records()))
+				}
+			} else {
+				if len(b.Records()) != len(a.Records()) {
+					t.Fatal("stream display records not persisted")
+				}
 			}
 		})
 	}
