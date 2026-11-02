@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -47,19 +46,7 @@ func (a *Agent) ProjectFile(path string) bool {
 }
 
 func defaultSettings() Settings {
-	return Settings{
-		CompactKeepTurns: 4,
-		MaxContextTokens: 400000,
-		MaxFileBytes:     65536,
-		MaxCodeLines:     999,
-		MaxResultLines:   4,
-		MaxThinkingLines: 4,
-		ShellTimeout:     120,
-		ShellMaxTimeout:  600,
-		ShellMaxOutput:   8192,
-		ReasoningSummary: "auto",
-		Providers:        map[string]Provider{},
-	}
+	return DefaultSettings()
 }
 
 func loadConfiguration(home, dir string, files ConfigFiles) (configuration, error) {
@@ -72,14 +59,13 @@ func loadConfiguration(home, dir string, files ConfigFiles) (configuration, erro
 			return configuration{}, fmt.Errorf("config %s: %w", p, err)
 		}
 	}
-	s := defaultSettings()
-	if home != "" {
-		if data, err := os.ReadFile(filepath.Join(home, "settings.json")); err == nil {
-			_ = json.Unmarshal(data, &s)
-		}
+	primary := filepath.Join(home, "settings.json")
+	s, err := LoadSettings(primary)
+	if err != nil {
+		return configuration{}, err
 	}
 	return configuration{
 		settings: s,
-		primary:  filepath.Join(home, "settings.json"),
+		primary:  primary,
 	}, nil
 }

@@ -15,25 +15,12 @@ import (
 
 func configureTestAgent(t *testing.T, a *Agent, s Settings) {
 	t.Helper()
-	if s.ShellTimeout <= 0 {
-		s.ShellTimeout = 120
-	}
-	if s.ShellMaxTimeout <= 0 {
-		s.ShellMaxTimeout = 600
-	}
-	if s.ShellMaxOutput < 0 {
-		s.ShellMaxOutput = 8192
-	}
-	if s.CompactKeepTurns <= 0 {
-		s.CompactKeepTurns = 4
-	}
-	if s.MaxContextTokens <= 0 {
-		s.MaxContextTokens = 400000
+	if s.ShowLines == "" {
+		s.ShowLines = "short"
 	}
 	a.applySettings(s)
 	if a.home != "" {
-		data, _ := json.Marshal(s)
-		_ = os.WriteFile(filepath.Join(a.home, "settings.json"), data, 0600)
+		_ = SaveSettings(filepath.Join(a.home, "settings.json"), s)
 	}
 }
 

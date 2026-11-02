@@ -219,7 +219,7 @@ func TestReasoningSummaryCanBeDisabled(t *testing.T) {
 	}))
 	defer server.Close()
 	a := &Agent{Shell: &shell.Runner{}}
-	configureTestAgent(t, a, Settings{Provider: "p", Model: "m", ReasoningSummary: "off", Providers: map[string]Provider{"p": {BaseURL: server.URL}}})
+	configureTestAgent(t, a, Settings{Provider: "p", Model: "m", ReasoningSummary: false, Providers: map[string]Provider{"p": {BaseURL: server.URL}}})
 	if _, err := a.request(context.Background(), func(Event) {}); err != nil {
 		t.Fatal(err)
 	}

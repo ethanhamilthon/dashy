@@ -235,7 +235,7 @@ func newFileTestAgent(t *testing.T, cwd, url string, maxFileBytes int) *Agent {
 	if err != nil {
 		t.Fatal(err)
 	}
-	configureTestAgent(t, a, Settings{Provider: "p", Model: "m", MaxFileBytes: maxFileBytes, Providers: map[string]Provider{"p": {BaseURL: url}}})
+	configureTestAgent(t, a, Settings{Provider: "p", Model: "m", Providers: map[string]Provider{"p": {BaseURL: url}}})
 	t.Cleanup(func() { a.Close() })
 	return a
 }
@@ -369,7 +369,7 @@ func TestFileAttachmentSnapshotSurvivesSourceChangesAndReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer restored.Close()
-	configureTestAgent(t, restored, Settings{Provider: "p", Model: "m", MaxFileBytes: 16, Providers: map[string]Provider{"p": {BaseURL: server.URL}}})
+	configureTestAgent(t, restored, Settings{Provider: "p", Model: "m", Providers: map[string]Provider{"p": {BaseURL: server.URL}}})
 	for _, r := range restored.Records() {
 		if strings.Contains(r.Text, "xxxx") || strings.Contains(r.Text, "<file") {
 			t.Fatalf("restored display contains file body: %+v", r)

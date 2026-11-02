@@ -53,6 +53,7 @@ type model struct {
 	menu                     []command
 	effort, menuGeneration   int
 	menuCancel               context.CancelFunc
+	pickerModels             []control.ModelInfo
 	setup                    []string
 	sessions                 []control.SessionInfo
 	fileGen, fileDebounceGen int
@@ -212,7 +213,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ctl.Deliver()
 		return m, followerPulse()
 	case modelChoices:
-		if m.menuKind != "model" || v.generation != m.menuGeneration {
+		if (m.menuKind != "model" && m.menuKind != "settings") || v.generation != m.menuGeneration {
 			return m, nil
 		}
 		if v.err != nil {
@@ -224,23 +225,37 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			failed = append(failed, name+": "+err)
 		}
 		sort.Strings(failed)
-		if len(v.models) == 0 {
-			m.closePicker()
-			if len(failed) > 0 {
-				m.add("error", "Could not list models.\n"+strings.Join(failed, "\n"))
-			} else {
-				m.add("notice", "No models returned by providers.")
+		if m.menuKind == "settings" {
+			m.pickerModels = v.models
+			m.rebuildSettingsMenu()
+			if len(v.models) == 0 {
+				if len(failed) > 0 {
+					m.add("error", "Could not list models.\n"+strings.Join(failed, "\n"))
+				} else if len(m.ctl.Settings().Providers) > 0 {
+					m.add("notice", "No models returned by providers.")
+				}
+			} else if len(failed) > 0 {
+				m.add("notice", "Some providers failed to list models:\n"+strings.Join(failed, "\n"))
 			}
 		} else {
-			current := m.ctl.Settings()
-			for i, c := range v.models {
-				m.menu = append(m.menu, command{name: c.Model, description: c.Provider})
-				if c.Provider == current.Provider && c.Model == current.Model {
-					m.selected = i
+			if len(v.models) == 0 {
+				m.closePicker()
+				if len(failed) > 0 {
+					m.add("error", "Could not list models.\n"+strings.Join(failed, "\n"))
+				} else {
+					m.add("notice", "No models returned by providers.")
 				}
-			}
-			if len(failed) > 0 {
-				m.add("notice", "Some providers failed to list models:\n"+strings.Join(failed, "\n"))
+			} else {
+				current := m.ctl.Settings()
+				for i, c := range v.models {
+					m.menu = append(m.menu, command{name: c.Model, description: c.Provider})
+					if c.Provider == current.Provider && c.Model == current.Model {
+						m.selected = i
+					}
+				}
+				if len(failed) > 0 {
+					m.add("notice", "Some providers failed to list models:\n"+strings.Join(failed, "\n"))
+				}
 			}
 		}
 		m.refresh(true)

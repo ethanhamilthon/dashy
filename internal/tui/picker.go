@@ -11,7 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// modelChoices carries the result of listing models for the /model picker.
+// modelChoices carries the result of listing models for the /settings picker.
 type modelChoices struct {
 	generation int
 	models     []control.ModelInfo
@@ -36,7 +36,7 @@ func (m *model) openPicker(kind string) tea.Cmd {
 			m.menu = append(m.menu, command{name: name, description: "Provider"})
 		}
 		sort.Slice(m.menu, func(i, j int) bool { return m.menu[i].name < m.menu[j].name })
-		m.menu = append(m.menu, command{name: "Add", icon: "+", description: "Create provider"})
+		m.menu = append(m.menu, command{name: "Add", icon: "+", description: "Create provider", label: "+ Add provider"})
 		if dest := m.ctl.PrimaryConfig(); dest != "" {
 			m.add("notice", fmt.Sprintf("Credentials destination: %s", dest))
 		}
@@ -47,6 +47,10 @@ func (m *model) openPicker(kind string) tea.Cmd {
 		if e == m.ctl.Settings().Effort {
 			m.effort = i
 		}
+	}
+	if kind == "settings" {
+		m.pickerModels = nil
+		m.rebuildSettingsMenu()
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m.menuCancel = cancel
@@ -61,6 +65,37 @@ func (m *model) openPicker(kind string) tea.Cmd {
 	}
 }
 
+func (m *model) rebuildSettingsMenu() {
+	s := m.ctl.Settings()
+	m.menu = []command{
+		{name: "Reasoning summary", icon: "*", label: fmt.Sprintf("Reasoning summary: %s", boolStr(s.ReasoningSummary))},
+		{name: "Auto compact", icon: "*", label: fmt.Sprintf("Auto compact: %s", boolStr(s.AutoCompact))},
+		{name: "Show lines", icon: "*", label: fmt.Sprintf("Show lines: %s", fallback(s.ShowLines, "short"))},
+		{name: "Add provider", icon: "+", description: "Create provider", label: "+ Add provider"},
+	}
+	for _, c := range m.pickerModels {
+		cmd := command{name: c.Model, description: c.Provider, label: fmt.Sprintf("%s  %s", c.Model, c.Provider)}
+		m.menu = append(m.menu, cmd)
+		if c.Provider == s.Provider && c.Model == s.Model {
+			m.selected = len(m.menu) - 1
+		}
+	}
+}
+
+func boolStr(v bool) string {
+	if v {
+		return "on"
+	}
+	return "off"
+}
+
+func fallback(v, def string) string {
+	if v == "" {
+		return def
+	}
+	return v
+}
+
 func (m *model) closePicker() {
 	m.pasteGeneration++
 	m.pasting = false
@@ -69,6 +104,7 @@ func (m *model) closePicker() {
 		m.menuCancel = nil
 	}
 	m.menuKind, m.menu = "", nil
+	m.pickerModels = nil
 	m.setup = nil
 	m.input.Placeholder = "Ask anything, or type / for commands"
 	m.input.Reset()
@@ -82,7 +118,7 @@ func (m model) pickerKey(key tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	case "esc", "ctrl+c":
 		m.closePicker()
 	case "left", "right":
-		if m.menuKind != "model" {
+		if m.menuKind != "model" && m.menuKind != "settings" {
 			return m, nil, false
 		}
 		delta := 1
@@ -110,8 +146,9 @@ func (m model) pickerKey(key tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		if len(matches) == 0 {
 			return m, nil, true
 		}
-		choice, kind := matches[m.selected%len(matches)].name, m.menuKind
-		if kind == "login" && matches[m.selected%len(matches)].icon == "+" {
+		chosen := matches[m.selected%len(matches)]
+		choice, kind := chosen.name, m.menuKind
+		if (kind == "login" || kind == "settings") && (choice == "Add" || choice == "Add provider" || chosen.icon == "+") {
 			m.menuKind = "setup"
 			m.menu = nil
 			m.selected = 0
@@ -122,10 +159,33 @@ func (m model) pickerKey(key tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			}
 			break
 		}
+		if kind == "settings" {
+			switch choice {
+			case "Reasoning summary":
+				_, _ = m.ctl.Submit(control.Request{Type: "toggle_reasoning_summary"})
+				m.rebuildSettingsMenu()
+				m.refresh(true)
+				return m, nil, true
+			case "Auto compact":
+				_, _ = m.ctl.Submit(control.Request{Type: "toggle_auto_compact"})
+				m.rebuildSettingsMenu()
+				m.refresh(true)
+				return m, nil, true
+			case "Show lines":
+				_, _ = m.ctl.Submit(control.Request{Type: "cycle_show_lines"})
+				m.rebuildSettingsMenu()
+				m.refresh(true)
+				return m, nil, true
+			}
+		}
 		var req control.Request
-		if kind == "model" {
-			provider := matches[m.selected%len(matches)].description
-			req = control.Request{Type: "select_model", Args: map[string]string{"provider": provider, "model": choice, "effort": agent.Efforts[m.effort]}}
+		if kind == "model" || kind == "settings" {
+			provider := chosen.description
+			req = control.Request{Type: "select_model", Args: map[string]string{
+				"provider": provider,
+				"model":    choice,
+				"effort":   agent.Efforts[m.effort],
+			}}
 		} else {
 			req = control.Request{Type: "select_provider", Args: map[string]string{"name": choice}}
 		}

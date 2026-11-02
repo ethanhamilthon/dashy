@@ -14,7 +14,7 @@ import (
 type command struct{ name, icon, description, label string }
 
 // commandIcons are the completion glyphs; the names and descriptions are shared with the JSON transport.
-var commandIcons = map[string]string{"/new": "+", "/help": "?", "/quit": "->", "/resume": "<", "/rename": "#", "/compact": "=", "/model": "~", "/login": "+"}
+var commandIcons = map[string]string{"/new": "+", "/help": "?", "/quit": "->", "/resume": "<", "/rename": "#", "/compact": "=", "/settings": "*", "/login": "+"}
 
 func commandMenu() []command {
 	var menu []command
@@ -56,8 +56,8 @@ func (m model) completions() []command {
 		var matches []command
 		for _, c := range m.menu {
 			haystack := c.name
-			if m.menuKind == "model" {
-				haystack += " " + c.description
+			if m.menuKind == "model" || m.menuKind == "settings" {
+				haystack += " " + c.description + " " + c.label
 			}
 			if strings.Contains(strings.ToLower(haystack), strings.ToLower(text)) {
 				matches = append(matches, c)
@@ -173,7 +173,7 @@ func (m model) runCommand(name string) (tea.Model, tea.Cmd) {
 		}
 		m.resetCompletions()
 		return m.submit(control.Request{Type: "resume", Args: map[string]string{"session_id": verb[1]}})
-	case "/model", "/login":
+	case "/settings", "/login":
 		if m.ctl.Status().Busy {
 			return m.stop("notice", "Wait for the active turn before changing settings.")
 		}

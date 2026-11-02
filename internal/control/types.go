@@ -67,7 +67,7 @@ func fail(code, format string, args ...any) error {
 // Types lists the request types Submit accepts.
 var Types = []string{"input", "steer", "recall", "stop", "quit", "new", "resume", "sessions",
 	"rename", "history", "state", "compact", "help", "models", "providers",
-	"select_model", "select_provider", "add_provider", "command"}
+	"select_model", "select_provider", "add_provider", "toggle_reasoning_summary", "toggle_auto_compact", "cycle_show_lines", "command"}
 
 // CommandInfo describes one slash command.
 type CommandInfo struct {
@@ -82,7 +82,7 @@ var commandList = []CommandInfo{
 	{"/resume", "Resume a saved session in this project"},
 	{"/rename", "Rename this session; empty name restores the default"},
 	{"/compact", "Summarize older turns; add a prompt to guide it"},
-	{"/model", "Choose model; Left/Right changes effort"},
+	{"/settings", "Configure provider, model, reasoning, and display"},
 	{"/login", "Select or create a provider"},
 }
 

@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -61,18 +60,11 @@ func testModelConfig(t *testing.T, hold <-chan struct{}, extra string) (model, *
 		t.Fatal(err)
 	}
 	s := agent.Settings{
-		Provider:         "p",
-		Model:            "m",
-		CompactKeepTurns: 4,
-		ShellTimeout:     120,
-		ShellMaxTimeout:  600,
-		ShellMaxOutput:   8192,
+		Provider: "p",
+		Model:    "m",
 		Providers: map[string]agent.Provider{
 			"p": {BaseURL: server.URL},
 		},
-	}
-	if strings.Contains(extra, "compact_keep_turns = 1") {
-		s.CompactKeepTurns = 1
 	}
 	a.ApplySettings(s)
 	data, _ := json.Marshal(s)
@@ -131,12 +123,18 @@ func heldModel(t *testing.T, extra string) (model, *agent.Agent, func()) {
 // the summary request waits for release.
 func compactableModel(t *testing.T) (model, func()) {
 	t.Helper()
-	m, a, release := heldModel(t, "compact_keep_turns = 1\n")
+	m, a, release := heldModel(t, "")
 	a.History = append(a.History,
 		[]byte(`{"role":"user","content":"one"}`),
 		[]byte(`{"role":"assistant","content":"done one"}`),
 		[]byte(`{"role":"user","content":"two"}`),
-		[]byte(`{"role":"assistant","content":"done two"}`))
+		[]byte(`{"role":"assistant","content":"done two"}`),
+		[]byte(`{"role":"user","content":"three"}`),
+		[]byte(`{"role":"assistant","content":"done three"}`),
+		[]byte(`{"role":"user","content":"four"}`),
+		[]byte(`{"role":"assistant","content":"done four"}`),
+		[]byte(`{"role":"user","content":"five"}`),
+		[]byte(`{"role":"assistant","content":"done five"}`))
 	return m, release
 }
 

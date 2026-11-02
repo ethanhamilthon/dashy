@@ -237,7 +237,6 @@ func TestTimelineLimitsReloadAndHiddenSpacing(t *testing.T) {
 	}
 	defer a.Close()
 	m := newModel(a, "/project")
-	baseline := ansi.Strip(m.timeline())
 	for _, kind := range []string{"code", "output", "reasoning"} {
 		m.entries = append(m.entries, entry{Kind: kind, Text: "first\nsecond\nthird\nfourth\nfifth", Meta: &agent.Metadata{}})
 	}
@@ -248,10 +247,11 @@ func TestTimelineLimitsReloadAndHiddenSpacing(t *testing.T) {
 	if !strings.Contains(ansi.Strip(m.cache[0].Text), "fifth") {
 		t.Fatal("default code limit too short")
 	}
-	a.ApplySettings(agent.Settings{MaxCodeLines: 0, MaxResultLines: 0, MaxThinkingLines: 0})
+	a.ApplySettings(agent.Settings{ShowLines: "full"})
 	m.cache = nil
-	if got := ansi.Strip(m.timeline()); got != baseline {
-		t.Fatalf("hidden blocks left headings or gaps: %q", got)
+	m.timeline()
+	if !strings.Contains(ansi.Strip(m.cache[1].Text), "fifth") || !strings.Contains(ansi.Strip(m.cache[2].Text), "fifth") {
+		t.Fatal("full show_lines did not show all rows")
 	}
 	for _, e := range m.entries {
 		if !strings.Contains(e.Text, "fifth") {
@@ -304,7 +304,7 @@ func TestMinimalCommandCompletions(t *testing.T) {
 			}
 			found := false
 			for _, row := range strings.Split(view, "\n") {
-				if !strings.Contains(ansi.Strip(row), cmd.name) || strings.Contains(ansi.Strip(row), "No provider configured") {
+				if !strings.Contains(ansi.Strip(row), cmd.name) || strings.Contains(ansi.Strip(row), "No provider configured") || strings.Contains(ansi.Strip(row), "No model selected") {
 					continue
 				}
 				found = true

@@ -50,20 +50,16 @@ func (a *Agent) SelectionConfig() string {
 
 // Select updates the provider, model, and effort in settings.
 func (a *Agent) Select(provider, model, effort string) error {
-	prev := a.settings
-	next := prev
+	next := a.Settings()
 	next.Provider, next.Model, next.Effort = provider, model, effort
-	if err := validateSettings(next); err != nil {
+	if err := a.applyAndSave(next); err != nil {
 		return err
 	}
-	a.settings = next
 	if a.HasSavedSession() {
 		if err := a.Save(); err != nil {
-			a.settings = prev
 			return err
 		}
 	}
-	a.applySettings(next)
 	return nil
 }
 
@@ -134,26 +130,46 @@ func (a *Agent) AddProvider(name string, provider Provider) error {
 		next.Providers = map[string]Provider{}
 	}
 	next.Providers[name] = provider
-	if err := validateSettings(next); err != nil {
-		return err
+	return a.applyAndSave(next)
+}
+
+func (a *Agent) SetReasoningSummary(enabled bool) error {
+	next := a.Settings()
+	next.ReasoningSummary = enabled
+	return a.applyAndSave(next)
+}
+
+func (a *Agent) SetAutoCompact(enabled bool) error {
+	next := a.Settings()
+	next.AutoCompact = enabled
+	return a.applyAndSave(next)
+}
+
+func (a *Agent) CycleShowLines() error {
+	next := a.Settings()
+	switch next.ShowLines {
+	case "short":
+		next.ShowLines = "medium"
+	case "medium":
+		next.ShowLines = "full"
+	default:
+		next.ShowLines = "short"
 	}
-	a.applySettings(next)
-	return nil
+	return a.applyAndSave(next)
 }
 
 func (a *Agent) bashParameters() map[string]any {
-	timeout, maxTimeout, maxOutput := a.settings.ShellTimeout, a.settings.ShellMaxTimeout, a.settings.ShellMaxOutput
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
 			"command": map[string]any{"type": "string"},
 			"timeout": map[string]any{
 				"type":        []string{"integer", "null"},
-				"description": fmt.Sprintf("seconds, default %d, maximum %d", timeout, maxTimeout),
+				"description": fmt.Sprintf("seconds, default %d, maximum %d", DefaultShellTimeout, DefaultShellMaxTimeout),
 			},
 			"max_output": map[string]any{
 				"type":        []string{"integer", "null"},
-				"description": fmt.Sprintf("output bytes to keep, default %d (first half + last half); 0 = no truncation", maxOutput),
+				"description": fmt.Sprintf("output bytes to keep, default %d (first half + last half); 0 = no truncation", DefaultShellMaxOutput),
 			},
 		},
 		"required":             []string{"command", "timeout", "max_output"},

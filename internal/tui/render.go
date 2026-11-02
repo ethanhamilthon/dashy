@@ -160,9 +160,9 @@ func (m model) inputBlock() string {
 func (m model) setupHint() string {
 	s := m.ctl.Settings()
 	if len(s.Providers) == 0 {
-		return "No provider configured. Use /login to add a provider, then choose a model with /model."
+		return "No provider configured. Use /login to add a provider, then choose a model with /settings."
 	}
-	return "No model selected. Choose a model with /model (use /login to add more providers)."
+	return "No model selected. Choose a model with /settings (use /login to add more providers)."
 }
 
 func (m *model) timeline() string {
@@ -190,12 +190,11 @@ func (m *model) timeline() string {
 		limit := -1
 		switch e.Kind {
 		case "code":
-			limit = settings.MaxCodeLines
+			limit = settings.MaxCodeLines()
 		case "output":
-			limit = settings.MaxResultLines
+			limit = settings.MaxResultLines()
 		case "reasoning":
-			limit = settings.MaxThinkingLines
-
+			limit = settings.MaxThinkingLines()
 		}
 		if i >= len(m.cache) {
 			m.cache = append(m.cache, renderedEntry{})
@@ -229,7 +228,7 @@ func (m *model) timeline() string {
 	if count > 0 {
 		start = max(0, selected%count-rows+1)
 	}
-	if !fileMode && m.menuKind == "model" {
+	if !fileMode && (m.menuKind == "model" || m.menuKind == "settings") {
 		parts := make([]string, len(agent.Efforts))
 		for i, e := range agent.Efforts {
 			parts[i] = " " + e + " "
@@ -251,8 +250,14 @@ func (m *model) timeline() string {
 		} else {
 			cmd := matches[i]
 			row = fmt.Sprintf("%s%-2s %-9s %s", marker, cmd.icon, cmd.name, cmd.description)
-			if m.menuKind == "model" {
-				row = marker + cmd.name + "  " + cmd.description
+			if m.menuKind == "model" || m.menuKind == "settings" {
+				if cmd.label != "" {
+					row = marker + cmd.label
+				} else if cmd.description != "" {
+					row = marker + cmd.name + "  " + cmd.description
+				} else {
+					row = marker + cmd.name
+				}
 			} else if cmd.label != "" {
 				row = marker + cmd.icon + " " + cmd.label
 			}

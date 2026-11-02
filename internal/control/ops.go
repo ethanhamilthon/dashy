@@ -114,6 +114,12 @@ func (c *Controller) dispatchLocked(req Request) (Response, error) {
 		return c.selectProvider(req.Args["name"])
 	case "add_provider":
 		return c.addProvider(req.Args)
+	case "toggle_reasoning_summary":
+		return c.toggleReasoningSummary()
+	case "toggle_auto_compact":
+		return c.toggleAutoCompact()
+	case "cycle_show_lines":
+		return c.cycleShowLines()
 	}
 	return Response{}, fail("invalid", "unknown request type %q", req.Type)
 }
@@ -134,7 +140,7 @@ func commandRequest(req Request) (Request, error) {
 		return Request{Type: "rename", Args: map[string]string{"title": args["title"]}}, nil
 	case "/compact":
 		return Request{Type: "compact", Text: args["prompt"]}, nil
-	case "/model":
+	case "/settings":
 		if args["provider"] != "" || args["model"] != "" {
 			return Request{Type: "select_model", Args: args}, nil
 		}
@@ -375,9 +381,9 @@ func (c *Controller) addProvider(args map[string]string) (Response, error) {
 		return Response{}, fail("failed", "%s", redact(err.Error(), secrets...))
 	}
 	dest := c.a.PrimaryConfig()
-	text := "Provider created. Choose a model with /model."
+	text := "Provider created. Choose a model with /settings."
 	if dest != "" {
-		text = "Provider created in " + dest + ". Choose a model with /model."
+		text = "Provider created in " + dest + ". Choose a model with /settings."
 	}
 	c.publish(Event{Kind: "notice", Text: text})
 	return Response{Status: "ok", Data: ProviderSaved{Name: name, Destination: dest, ProjectConfig: c.projectConfigLocked(dest)}}, nil
@@ -407,4 +413,38 @@ func sanitizeURL(raw string) string {
 	}
 	u.User, u.RawQuery, u.Fragment = nil, "", ""
 	return u.String()
+}
+
+func (c *Controller) toggleReasoningSummary() (Response, error) {
+	curr := c.a.Settings().ReasoningSummary
+	if err := c.a.SetReasoningSummary(!curr); err != nil {
+		return Response{}, fail("failed", "%s", err)
+	}
+	state := "off"
+	if !curr {
+		state = "on"
+	}
+	c.publish(Event{Kind: "notice", Text: "Reasoning summary: " + state})
+	return Response{Status: "ok"}, nil
+}
+
+func (c *Controller) toggleAutoCompact() (Response, error) {
+	curr := c.a.Settings().AutoCompact
+	if err := c.a.SetAutoCompact(!curr); err != nil {
+		return Response{}, fail("failed", "%s", err)
+	}
+	state := "off"
+	if !curr {
+		state = "on"
+	}
+	c.publish(Event{Kind: "notice", Text: "Auto compact: " + state})
+	return Response{Status: "ok"}, nil
+}
+
+func (c *Controller) cycleShowLines() (Response, error) {
+	if err := c.a.CycleShowLines(); err != nil {
+		return Response{}, fail("failed", "%s", err)
+	}
+	c.publish(Event{Kind: "notice", Text: "Show lines: " + c.a.Settings().ShowLines})
+	return Response{Status: "ok"}, nil
 }

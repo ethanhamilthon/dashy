@@ -29,7 +29,7 @@ func TestAutomaticCompactionJournalSurvivesRunAndResume(t *testing.T) {
 	})
 	defer closeAll()
 	a.History = compactHistory(t, 5)
-	a.settings.CompactKeepTurns = 2
+	a.compactKeepTurns = 2
 	before := a.Records()
 	if err := a.Run(context.Background(), "new question", func(Event) {}); err != nil {
 		t.Fatal(err)
@@ -156,7 +156,7 @@ func TestIncompleteSummaryKeepsMemoryAndFile(t *testing.T) {
 			})
 			defer closeAll()
 			a.History = compactHistory(t, 5)
-			a.settings.CompactKeepTurns = 1
+			a.compactKeepTurns = 1
 			if err := a.Save(); err != nil {
 				t.Fatal(err)
 			}
