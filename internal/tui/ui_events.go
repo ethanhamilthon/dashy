@@ -11,24 +11,11 @@ import (
 
 	"dashy/internal/agent"
 	"dashy/internal/control"
-	"dashy/internal/selfupdate"
 	"dashy/internal/shell"
 )
 
 // Version is shown on the start screen; main sets it from the VERSION file.
 var Version = "dev"
-
-// updateCheckMsg carries the newer release tag found in the background, if any.
-type updateCheckMsg struct{ latest string }
-
-// checkUpdate asks GitHub for a newer release without delaying the first frame.
-func checkUpdate() tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		return updateCheckMsg{latest: selfupdate.Available(ctx, Version)}
-	}
-}
 
 // Run runs the terminal interface until the user exits.
 // The caller remains responsible for closing the agent and releasing session ownership.
@@ -47,9 +34,6 @@ func Run(a *agent.Agent, cwd string) error {
 		m.ctl.Close()
 		if m.menuCancel != nil {
 			m.menuCancel()
-		}
-		if m.statusCancel != nil {
-			m.statusCancel()
 		}
 		if m.fileScanCancel != nil {
 			m.fileScanCancel()

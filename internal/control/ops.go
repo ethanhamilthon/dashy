@@ -104,8 +104,6 @@ func (c *Controller) dispatchLocked(req Request) (Response, error) {
 		return Response{Status: "ok", Data: HelpInfo{Commands: Commands(), Types: Types}}, nil
 	case "rename":
 		return c.rename(req.Args["title"])
-	case "reload":
-		return c.reload()
 	case "compact":
 		return c.compact(req.Text)
 	case "providers":
@@ -121,7 +119,7 @@ func (c *Controller) dispatchLocked(req Request) (Response, error) {
 }
 
 // commandNames maps the plain slash commands onto request types.
-var commandNames = map[string]string{"/new": "new", "/reload": "reload", "/quit": "quit", "/help": "help"}
+var commandNames = map[string]string{"/new": "new", "/quit": "quit", "/help": "help"}
 
 // commandRequest maps a slash command onto the operation it names.
 func commandRequest(req Request) (Request, error) {
@@ -169,14 +167,7 @@ func (c *Controller) admit(input agent.Input) error {
 	return nil
 }
 
-// noteImages reports headless image attachments; terminal pastes fire their own event.
 func (c *Controller) noteImages(input agent.Input) {
-	if c.interactive {
-		return
-	}
-	for range input.Images {
-		c.a.Fire("image_attached", "DASHY_IMAGE_SOURCE", "input")
-	}
 }
 
 // queueLocked adds input as steering for the active turn.
@@ -198,9 +189,6 @@ func (c *Controller) queueLocked(input agent.Input) (Response, error) {
 	}
 	c.queued = append(c.queued, input)
 	c.noteImages(input)
-	if c.interactive {
-		c.a.Fire("steer_queued", "DASHY_MESSAGE_FILE", input.Display())
-	}
 	return Response{Status: "queued", Turn: c.active.id}, nil
 }
 
@@ -282,17 +270,6 @@ func (c *Controller) rename(title string) (Response, error) {
 	return Response{Status: "ok"}, nil
 }
 
-func (c *Controller) reload() (Response, error) {
-	if err := c.requireIdle("Wait for the active turn before reloading settings."); err != nil {
-		return Response{}, err
-	}
-	if err := c.a.Reload(); err != nil {
-		return Response{}, fail("failed", "%s", err)
-	}
-	c.publish(Event{Kind: "notice", Text: "Settings reloaded."})
-	return Response{Status: "ok"}, nil
-}
-
 // compact summarizes older turns in the background; the operation holds the controller until it ends.
 func (c *Controller) compact(prompt string) (Response, error) {
 	if err := c.requireIdle("Wait for the active turn before compacting."); err != nil {
@@ -326,7 +303,7 @@ func (c *Controller) models(parent context.Context) (Response, error) {
 	}
 	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
-	choices, failures := agent.AllModels(ctx, settings.Providers, settings.Environment)
+	choices, failures := agent.AllModels(ctx, settings.Providers)
 	if parent.Err() != nil {
 		return Response{}, fail("cancelled", "the model listing was cancelled")
 	}
@@ -419,7 +396,7 @@ func (c *Controller) stateLocked() StateInfo {
 // projectConfigLocked reports whether dest lies inside the project directory, judged
 // by its actual path. The global $DASHY_HOME/dashy.toml is never a project file.
 func (c *Controller) projectConfigLocked(dest string) bool {
-	return c.a.ProjectFile(dest)
+	return false
 }
 
 // sanitizeURL drops credentials and query strings from a provider base URL.

@@ -177,7 +177,6 @@ func (m *model) acceptClipboard(result clipboardResult) tea.Cmd {
 			m.add("error", "At most eight clipboard images may be pending. Remove or submit images first.")
 		} else {
 			m.images = append(m.images, result.image)
-			m.ctl.FireInteractive("image_attached", "DASHY_IMAGE_SOURCE", "paste")
 		}
 		return nil
 	}

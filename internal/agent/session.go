@@ -67,13 +67,11 @@ func (a *Agent) changeSession(id string) error {
 	if err != nil {
 		return err
 	}
-	// The target is prepared without the shared hooks runner, which is updated only after it opens.
 	next := &Agent{
 		files:         a.files,
 		home:          a.home,
 		sessionsDir:   a.sessionsDir,
 		Shell:         a.Shell,
-		status:        a.status,
 		version:       a.version,
 		System:        c.system,
 		LocalConfig:   c.local,
@@ -96,19 +94,7 @@ func (a *Agent) changeSession(id string) error {
 			return err
 		}
 	}
-	previous := strings.TrimSuffix(filepath.Base(a.HistoryPath), ".jsonl")
-	a.Fire("session_end", "DASHY_REASON", "switch")
 	a.Close()
-	next.hooks = a.hooks
 	*a = *next
-	a.hooks.SetConfig(a.settings.Environment, a.settings.ShellMaxOutput)
-	a.hooks.Set(c.hooks)
-	source := "new"
-	if id != "" {
-		source = "resume"
-	}
-	a.Fire("session_start", "DASHY_SESSION_SOURCE", source, "DASHY_PREV_SESSION_ID", previous)
-	a.Fire("session_switch", "DASHY_PREV_SESSION_ID", previous)
-	a.titleChanged()
 	return nil
 }

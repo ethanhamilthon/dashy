@@ -49,21 +49,12 @@ type model struct {
 	layoutValue              string
 	layoutWidth              int
 	layout                   []composerRow
-	latest                   string
 	menuKind                 string
 	menu                     []command
 	effort, menuGeneration   int
 	menuCancel               context.CancelFunc
 	setup                    []string
 	sessions                 []control.SessionInfo
-	statusEvents             <-chan map[string]string
-	statusGen                uint64
-	statusCancel             context.CancelFunc
-	statusLeft               string
-	statusRight              string
-	statusSem                chan struct{}
-	statusInit               bool
-	statusTornDown           bool
 	fileGen, fileDebounceGen int
 	fileLoading              bool
 	fileCompletions          []string
@@ -97,10 +88,8 @@ func newModel(a *agent.Agent, cwd string) model {
 	input.BlurredStyle = style
 	events := control.NewQueue[control.Event](0)
 	ctl := control.New(a, func(e control.Event) { events.Push(e) })
-	ctl.SetInteractive(true)
-	m := model{ctl: ctl, events: events, input: input, viewport: viewport.New(80, 24), width: 80, height: 24, cwd: cwd, statusSem: make(chan struct{}, 4)}
+	m := model{ctl: ctl, events: events, input: input, viewport: viewport.New(80, 24), width: 80, height: 24, cwd: cwd}
 	if a != nil {
-		m.statusEvents = a.StatusEvents()
 	}
 	m.setEntries(ctl.History())
 	m.refresh(true)
@@ -126,9 +115,6 @@ func (m model) Init() tea.Cmd {
 	return tea.Batch(
 		textarea.Blink,
 		followerPulse(),
-		checkUpdate(),
-		listenForStatusEvents(m.statusEvents),
-		func() tea.Msg { return statusInitMsg{} },
 	)
 }
 func (m *model) resizeInput() {
@@ -259,39 +245,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.refresh(true)
 		return m, nil
-	case statusInitMsg:
-		m.statusInit = true
-		return m, m.triggerStatusRefresh(map[string]string{"DASHY_EVENT": "init"})
-
-	case statusEventMsg:
-		cmds := []tea.Cmd{listenForStatusEvents(m.statusEvents)}
-		if refCmd := m.triggerStatusRefresh(v); refCmd != nil {
-			cmds = append(cmds, refCmd)
-		}
-		return m, tea.Batch(cmds...)
-
-	case statusResultMsg:
-		if v.gen != m.statusGen {
-			return m, nil
-		}
-		m.statusLeft = v.left
-		m.statusRight = v.right
-		m.statusInit = true
-		return m, nil
-
 	case tea.QuitMsg:
-		if m.statusCancel != nil {
-			m.statusCancel()
-			m.statusCancel = nil
-		}
-		m.statusTornDown = true
-		return m, nil
-
-	case updateCheckMsg:
-		if v.latest != "" && v.latest != m.latest {
-			m.latest = v.latest
-			m.refresh(follow)
-		}
 		return m, nil
 	case workingTick:
 		status := m.ctl.Status()
@@ -522,19 +476,5 @@ func (m *model) requestCancel() {
 }
 
 func (m model) executeCommand(name string) (tea.Model, tea.Cmd) {
-	if name == "/quit" {
-		if m.statusCancel != nil {
-			m.statusCancel()
-			m.statusCancel = nil
-		}
-		m.statusTornDown = true
-	}
-	next, cmd := m.runCommand(name)
-	if name == "/reload" {
-		if nm, ok := next.(model); ok {
-			refCmd := nm.triggerStatusRefresh(map[string]string{"DASHY_EVENT": "reload"})
-			return nm, tea.Batch(cmd, refCmd)
-		}
-	}
-	return next, cmd
+	return m.runCommand(name)
 }

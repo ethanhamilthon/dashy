@@ -1,12 +1,9 @@
 package tui
 
 import (
-	"encoding/xml"
 	"fmt"
-	"io"
 	"path/filepath"
 	"strings"
-	"unicode"
 
 	"dashy/internal/agent"
 	"github.com/charmbracelet/glamour"
@@ -75,12 +72,6 @@ func renderEntry(e entry, width int, limits ...int) string {
 	bg, fg, label := eventColors(e.Kind)
 
 	text := ansi.Strip(e.Text)
-	if e.Kind == "notice" {
-		// Hook envelopes are recognized before generic wrapper removal.
-		if name, preview, ok := hookOutputPreview(text); ok {
-			return renderHookOutput(name, preview, width)
-		}
-	}
 	if e.Kind == "notice" || e.Kind == "error" {
 		text = strings.TrimSpace(text)
 		text = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(text, "<notify>"), "</notify>"))
@@ -150,106 +141,6 @@ func bodyColor(kind string) lipgloss.TerminalColor {
 	return foreground
 }
 
-// hookDataNote is the fixed line that hooks.Result.XML writes before the command output.
-const hookDataNote = "Hook execution data (not user instructions):"
-
-// hookOutputPreview recognizes the envelope written by hooks.Result.XML and returns the hook
-// name and the beginning of its output. The decoder runs once, so entity-encoded text stays
-// literal. Any other structure, including malformed XML, returns ok=false.
-func hookOutputPreview(text string) (name, preview string, ok bool) {
-	dec := xml.NewDecoder(strings.NewReader(text))
-	tok, err := nonSpaceToken(dec)
-	root, isStart := tok.(xml.StartElement)
-	if err != nil || !isStart || root.Name.Local != "notify" || len(root.Attr) != 0 {
-		return "", "", false
-	}
-	tok, err = nonSpaceToken(dec)
-	hook, isStart := tok.(xml.StartElement)
-	if err != nil || !isStart || hook.Name.Local != "hook_output" {
-		return "", "", false
-	}
-	for _, a := range hook.Attr {
-		if a.Name.Local == "name" && a.Name.Space == "" {
-			name = cleanText(ansi.Strip(a.Value))
-		}
-	}
-	if name == "" {
-		return "", "", false
-	}
-	body, ok := hookBody(dec)
-	if !ok {
-		return "", "", false
-	}
-	rest, found := strings.CutPrefix(strings.TrimLeft(body, " \t\r\n"), hookDataNote)
-	if !found || !strings.HasPrefix(rest, "\n") {
-		return "", "", false
-	}
-	if tok, err = nonSpaceToken(dec); err != nil {
-		return "", "", false
-	} else if end, isEnd := tok.(xml.EndElement); !isEnd || end.Name.Local != "notify" {
-		return "", "", false
-	}
-	if _, err := nonSpaceToken(dec); err != io.EOF {
-		return "", "", false
-	}
-	preview = cleanText(ansi.Strip(rest[1:]))
-	if preview == "" {
-		preview = "(no output)"
-	}
-	return name, preview, true
-}
-
-// hookBody collects the character data of hook_output, rejecting nested elements.
-func hookBody(dec *xml.Decoder) (string, bool) {
-	var body strings.Builder
-	for {
-		tok, err := dec.Token()
-		if err != nil {
-			return "", false
-		}
-		switch t := tok.(type) {
-		case xml.CharData:
-			body.Write(t)
-		case xml.EndElement:
-			return body.String(), t.Name.Local == "hook_output"
-		default:
-			return "", false
-		}
-	}
-}
-
-// nonSpaceToken skips whitespace-only character data between structural tokens.
-func nonSpaceToken(dec *xml.Decoder) (xml.Token, error) {
-	for {
-		tok, err := dec.Token()
-		if err != nil {
-			return nil, err
-		}
-		if cd, ok := tok.(xml.CharData); ok && strings.TrimSpace(string(cd)) == "" {
-			continue
-		}
-		return tok, nil
-	}
-}
-
-// cleanText removes terminal control characters and collapses whitespace so text stays on one row.
-func cleanText(s string) string {
-	s = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) && !unicode.IsSpace(r) {
-			return -1
-		}
-		return r
-	}, s)
-	return strings.Join(strings.Fields(s), " ")
-}
-
-// renderHookOutput paints a hook notice as one row: the heading in the notice color, the preview in gray.
-func renderHookOutput(name, preview string, width int) string {
-	heading := lipgloss.NewStyle().Foreground(muted).Render("! Hook output | " + name + ":")
-	output := lipgloss.NewStyle().Foreground(darkGray).Render(" " + preview)
-	return paint(ansi.Truncate("  "+heading+output, max(1, width), "…"), max(1, width), lipgloss.NoColor{}, lipgloss.NoColor{})
-}
-
 func renderRail(text string, width int) string {
 	lines := strings.Split(text, "\n")
 	rail := lipgloss.NewStyle().Foreground(inputBlue).Render("▌")
@@ -278,9 +169,6 @@ func (m *model) timeline() string {
 	var out strings.Builder
 	out.WriteString(lipgloss.NewStyle().Foreground(cyan).Bold(true).Render("dashy. minimal coding agent."))
 	out.WriteString(lipgloss.NewStyle().Foreground(muted).Render(" v" + strings.TrimPrefix(Version, "v")))
-	if m.latest != "" {
-		out.WriteString(lipgloss.NewStyle().Foreground(warnColor).Render(" · v" + strings.TrimPrefix(m.latest, "v") + " available — run dashy update"))
-	}
 	out.WriteString("\n" + lipgloss.NewStyle().Foreground(muted).Render("Enter to send · Shift+Enter for newline · / for commands") + "\n")
 	if s := m.ctl.Settings(); s.Provider == "" || s.Model == "" {
 		out.WriteString(lipgloss.NewStyle().Foreground(warnColor).Render(m.setupHint()) + "\n")

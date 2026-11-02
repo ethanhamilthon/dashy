@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"dashy/internal/hooks"
 	"dashy/internal/shell"
 )
 
@@ -35,7 +34,7 @@ func TestCompletedItemSavedBeforeResponseFinishes(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer a.Close()
-	configureTestAgent(t, a, Settings{Provider: "p", Model: "m", Providers: map[string]Provider{"p": {BaseURL: server.URL}}})
+	a.ApplySettings(Settings{Provider: "p", Model: "m", Providers: map[string]Provider{"p": {BaseURL: server.URL}}})
 	done := make(chan error, 1)
 	go func() {
 		done <- a.Run(context.Background(), "hello", func(e Event) {
@@ -176,98 +175,5 @@ func TestCrashDuringSecondToolKeepsFirstResult(t *testing.T) {
 	}
 	if err = a.Run(context.Background(), "continue", func(Event) {}); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestOrphanRepairedBeforeReadyHookOutputsInCapturedRequest(t *testing.T) {
-	t.Setenv("DASHY_HOME", t.TempDir())
-	var capturedInput []map[string]any
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			Input []map[string]any `json:"input"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Error(err)
-		}
-		capturedInput = body.Input
-		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, `data: {"type":"response.completed","response":{"output":[]}}`+"\n\n")
-	}))
-	defer server.Close()
-
-	dir := t.TempDir()
-	a, err := New(dir, ConfigFiles{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer a.Close()
-	configureTestAgent(t, a, Settings{Provider: "p", Model: "m", Providers: map[string]Provider{"p": {BaseURL: server.URL}}})
-
-	// Set up history with an orphan function_call
-	a.History = []json.RawMessage{
-		raw(map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": "start"}}}),
-		raw(map[string]any{"type": "function_call", "call_id": "orphan_call_1", "name": "bash", "arguments": `{"command":"echo 1"}`}),
-	}
-
-	// Queue a ready hook output for this session
-	sessionID := strings.TrimSuffix(filepath.Base(a.HistoryPath), ".jsonl")
-	a.hooks.Set([]hooks.Hook{
-		{
-			Name:       "hook1",
-			Events:     []string{"turn_end"},
-			Command:    "echo from-hook",
-			SendOutput: true,
-		},
-	})
-	a.hooks.Fire("turn_end", map[string]string{
-		"DASHY_SESSION_ID": sessionID,
-		"DASHY_CWD":        dir,
-	})
-	a.hooks.Wait(2 * time.Second)
-
-	// Run next turn
-	err = a.Run(context.Background(), "user-input-2", func(Event) {})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(capturedInput) < 4 {
-		t.Fatalf("expected at least 4 items in captured request, got %d: %+v", len(capturedInput), capturedInput)
-	}
-
-	callIdx := -1
-	callOutIdx := -1
-	hookIdx := -1
-	user2Idx := -1
-
-	for i, item := range capturedInput {
-		typ, _ := item["type"].(string)
-		callID, _ := item["call_id"].(string)
-		content, _ := json.Marshal(item)
-		contentStr := string(content)
-
-		if typ == "function_call" && callID == "orphan_call_1" {
-			callIdx = i
-		} else if typ == "function_call_output" && callID == "orphan_call_1" {
-			callOutIdx = i
-		} else if strings.Contains(contentStr, "hook_output") {
-			hookIdx = i
-		} else if strings.Contains(contentStr, "user-input-2") {
-			user2Idx = i
-		}
-	}
-
-	if callIdx == -1 || callOutIdx == -1 {
-		t.Fatalf("missing function_call or function_call_output: %+v", capturedInput)
-	}
-	if callOutIdx != callIdx+1 {
-		t.Fatalf("function_call (index %d) must be immediately followed by function_call_output (index %d), but was split! items: %+v", callIdx, callOutIdx, capturedInput)
-	}
-	if hookIdx <= callOutIdx {
-		t.Fatalf("hook output (index %d) must appear after repaired function_call_output (index %d)", hookIdx, callOutIdx)
-	}
-	if user2Idx <= hookIdx {
-		t.Fatalf("current turn input (index %d) must appear after hook output (index %d)", user2Idx, hookIdx)
 	}
 }

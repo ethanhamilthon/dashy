@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -21,10 +20,19 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 	"github.com/openai/openai-go/v3/shared"
 
-	"dashy/internal/docs"
-	"dashy/internal/hooks"
 	"dashy/internal/shell"
 )
+
+const bashToolDescription = `Run a command in system Bash (/bin/bash --noprofile --norc).
+Each call starts a fresh process in the project directory; variables, functions,
+aliases and the working directory do not persist between calls. There is no TTY
+and stdin is empty. Programs run from PATH with the user's permissions.
+
+Result: {output, exit_code}. Stdout and stderr are merged.
+timeout: seconds, null = 120, maximum 600. A timeout (exit 124) or cancellation
+(exit 130) kills the whole process group.
+max_output: bytes kept, null = 8192, 0 = no truncation. When output is cut, the
+middle is removed and the first and last halves are kept.`
 
 var codeField = regexp.MustCompile(`"command"\s*:\s*"`)
 
@@ -65,29 +73,27 @@ func partialCode(arguments string) string {
 }
 
 type Agent struct {
-	listener          net.Listener
-	socketDir         string
-	inbox             chan string
-	views             chan shell.Image
-	owner             *os.File
-	settings          Settings
-	Shell             *shell.Runner
-	History           []json.RawMessage
-	HistoryPath       string
-	System            string
-	LocalConfig       string // project directory supplying config files, or ""
-	Sources           []Source
-	primaryConfig     string // primary configuration file path
-	client            openai.Client
-	records           []Record
-	title             string // set by /rename; "" means the first user message
-	lastRequest       Metadata
-	files             ConfigFiles
-	hooks             *hooks.Runner
-	lastTitle         string // last title reported by session_title_change
-	home, sessionsDir string
-	status            *statusBridge
-	version           string
+	listener      net.Listener
+	socketDir     string
+	inbox         chan string
+	views         chan shell.Image
+	owner         *os.File
+	settings      Settings
+	Shell         *shell.Runner
+	History       []json.RawMessage
+	HistoryPath   string
+	System        string
+	LocalConfig   string
+	Sources       []Source
+	primaryConfig string
+	client        openai.Client
+	records       []Record
+	title         string // set by /rename; "" means the first user message
+	lastRequest   Metadata
+	files         ConfigFiles
+	home          string
+	sessionsDir   string
+	version       string
 }
 
 // New opens the project in dir with configuration from files (zero value: default
@@ -108,10 +114,7 @@ func New(dir string, files ConfigFiles, target ...string) (*Agent, error) {
 		LocalConfig:   cfg.local,
 		Sources:       cfg.sources,
 		primaryConfig: cfg.primary,
-		hooks: &hooks.Runner{
-			Log: filepath.Join(config, "hooks.log"),
-		},
-		Shell: &shell.Runner{Dir: dir},
+		Shell:         &shell.Runner{Dir: dir},
 	}
 	a.applySettings(cfg.settings)
 	if err := a.openProject(dir, target...); err != nil {
@@ -119,7 +122,6 @@ func New(dir string, files ConfigFiles, target ...string) (*Agent, error) {
 		return nil, err
 	}
 	a.Shell.Env = a.shellEnv
-	a.hooks.Set(cfg.hooks)
 	return a, nil
 }
 
@@ -149,19 +151,10 @@ func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event), ste
 	}
 	forward := emit
 	emit = func(e Event) {
-		if e.Kind == "error" {
-			a.Fire("error", "DASHY_ERROR", clip(e.Text))
-		}
 		a.records = ApplyEvent(a.records, e)
 		forward(e)
 	}
 
-	turnStart := time.Now()
-	source := "user"
-	if len(input.Images) == 0 && strings.HasPrefix(input.Text, "<notify>") {
-		source = "notify"
-	}
-	started := false
 	defer func() {
 		err = a.safeError(err)
 		if err != nil && !errors.Is(err, context.Canceled) {
@@ -174,52 +167,16 @@ func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event), ste
 				emit(Event{Kind: "error", Text: saveError.Error()})
 			}
 		}
-		if !started {
-			return
-		}
-		status, problem := "ok", ""
-		if err != nil {
-			status, problem = "error", clip(err.Error())
-			if errors.Is(err, context.Canceled) {
-				status = "cancelled"
-			}
-		}
-		a.Fire("turn_end", "DASHY_TURN_STATUS", status, "DASHY_TURN_DURATION_MS", ms(time.Since(turnStart)), "DASHY_ERROR", problem, "DASHY_TURN_SOURCE", source)
 	}()
-
-	// A failed startup blocks the request; the input is withdrawn so it can be edited and resent.
-	if err = a.prepare(ctx); err != nil {
-		emit(Event{Kind: "withdraw", Text: input.Text})
-		return err
-	}
-
-	// Ready hook outputs must be snapshotted and drained at entry, BEFORE dispatching turn_start.
-	// A fast turn_start hook must not sneak into that same turn.
-	sessionID := strings.TrimSuffix(filepath.Base(a.HistoryPath), ".jsonl")
-	var readyResults []hooks.Result
-	if a.hooks != nil {
-		readyResults = a.hooks.DrainOutputs(sessionID)
-	}
 
 	// A crash may leave calls without outputs. Their effects are unknown, so
 	// never rerun them; supply an explicit interrupted result on continuation.
-	// Orphan calls must be repaired BEFORE appending hook outputs so user messages
-	// do not split tool call/output pairing in API requests.
 	for _, output := range interruptedOutputs(a.History) {
 		a.History = append(a.History, output)
 		for _, r := range RecordsForItem(output) {
 			emit(Event{Kind: r.Kind, Text: r.Text, Final: true})
 		}
 	}
-
-	for _, res := range readyResults {
-		msg := res.XML()
-		a.message("user", msg)
-		emit(Event{Kind: "notice", Text: msg})
-	}
-
-	started = true
-	a.Fire("turn_start", "DASHY_TURN_SOURCE", source, "DASHY_MESSAGE_FILE", input.Display())
 
 	// Only the turn goroutine mutates history. Steering waits until all outputs
 	// for the current response have been committed, preserving call/output pairs.
@@ -231,9 +188,6 @@ func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event), ste
 		var instructions []Input
 		if len(steering) > 0 {
 			instructions = steering[0].TakeInputs()
-		}
-		for _, instruction := range instructions {
-			a.Fire("steer_accepted", "DASHY_MESSAGE_FILE", instruction.Display())
 		}
 		for _, text := range a.Notifications() {
 			instructions = append(instructions, Input{Text: text})
@@ -251,8 +205,8 @@ func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event), ste
 	shown.ID = fmt.Sprintf("input-%d", time.Now().UnixNano())
 	emit(shown)
 	a.commitInput(input)
-	a.titleChanged()
 
+	turnStart := time.Now()
 	var total Usage
 	usageKnown := true
 	for step := 0; a.settings.MaxAgentSteps <= 0 || step < a.settings.MaxAgentSteps; step++ {
@@ -311,8 +265,7 @@ func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event), ste
 			}
 			return e
 		}
-		// Discard streaming-only entries from the persistent journal. The UI
-		// continues showing them until the completed records reconcile them.
+		// Discard streaming-only entries from the persistent journal.
 		a.records = baseRecords
 		meta := a.lastRequest
 		if meta.Usage == nil {
@@ -381,7 +334,7 @@ func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event), ste
 			}
 		}
 	}
-	return fmt.Errorf("stopped after %d agent steps; raise max_agent_steps in dashy.toml", a.settings.MaxAgentSteps)
+	return fmt.Errorf("stopped after %d agent steps; raise max_agent_steps", a.settings.MaxAgentSteps)
 }
 
 // runTool executes one function call; failures become an error result for the model.
@@ -397,7 +350,6 @@ func (a *Agent) runTool(ctx context.Context, name, arguments string) shell.Resul
 		Timeout   *int64 `json:"timeout"`
 		MaxOutput *int64 `json:"max_output"`
 	}
-	// Settings are validated on load, so shell limits are always set.
 	timeout := time.Duration(a.settings.ShellTimeout) * time.Second
 	maxTimeout := time.Duration(a.settings.ShellMaxTimeout) * time.Second
 	limit := a.settings.ShellMaxOutput
@@ -419,11 +371,7 @@ func (a *Agent) runTool(ctx context.Context, name, arguments string) shell.Resul
 	}
 	if err == nil {
 		var result shell.Result
-		a.Fire("shell_start", "DASHY_COMMAND_FILE", args.Command, "DASHY_TIMEOUT", strconv.Itoa(int(timeout/time.Second)))
-		started := time.Now()
 		if result, err = a.Shell.ExecuteLimit(ctx, args.Command, timeout, limit); err == nil {
-			a.Fire("shell_end", "DASHY_EXIT_CODE", strconv.Itoa(result.ExitCode), "DASHY_DURATION_MS", ms(time.Since(started)),
-				"DASHY_TIMED_OUT", strconv.FormatBool(result.ExitCode == 124))
 			return result
 		}
 	}
@@ -455,7 +403,7 @@ func (a *Agent) request(ctx context.Context, emit func(Event), checkpoints ...fu
 		Store:        openai.Bool(false),
 		Tools: []responses.ToolUnionParam{{OfFunction: &responses.FunctionToolParam{
 			Name:        "bash",
-			Description: openai.String(docs.ToolDescription),
+			Description: openai.String(bashToolDescription),
 			Parameters:  a.bashParameters(),
 			Strict:      openai.Bool(true),
 		}}},
@@ -467,7 +415,6 @@ func (a *Agent) request(ctx context.Context, emit func(Event), checkpoints ...fu
 		payload.Reasoning.Summary = shared.ReasoningSummaryAuto
 	}
 	started := time.Now()
-	a.Fire("model_request_start")
 	a.lastRequest = Metadata{RequestID: fmt.Sprintf("r-%d", len(a.History))}
 	stream := a.client.Responses.NewStreaming(ctx, payload)
 	defer stream.Close()
@@ -494,7 +441,6 @@ func (a *Agent) request(ctx context.Context, emit func(Event), checkpoints ...fu
 			}
 
 			// Some providers deliver complete message.content without text deltas.
-			// Show it as soon as available, not only at response.completed.
 			if event.Item.Type == "function_call" {
 				names[event.OutputIndex] = event.Item.Name
 				if event.Item.Arguments.OfString != "" {
@@ -526,12 +472,6 @@ func (a *Agent) request(ctx context.Context, emit func(Event), checkpoints ...fu
 				}
 				a.lastRequest.Usage = &Usage{Input: event.Response.Usage.InputTokens, Output: event.Response.Usage.OutputTokens, Cached: cached}
 			}
-			usage := a.lastRequest.Usage
-			if usage == nil {
-				usage = &Usage{}
-			}
-			a.Fire("model_request_end", "DASHY_DURATION_MS", ms(a.lastRequest.Duration),
-				"DASHY_INPUT_TOKENS", strconv.FormatInt(usage.Input, 10), "DASHY_OUTPUT_TOKENS", strconv.FormatInt(usage.Output, 10))
 			completed = make([]json.RawMessage, len(event.Response.Output))
 			for i, item := range event.Response.Output {
 				completed[i] = json.RawMessage(item.RawJSON())
@@ -548,3 +488,13 @@ func (a *Agent) request(ctx context.Context, emit func(Event), checkpoints ...fu
 	}
 	return completed, nil
 }
+
+func (a *Agent) sessionID() string {
+	return strings.TrimSuffix(filepath.Base(a.HistoryPath), ".jsonl")
+}
+
+func (a *Agent) Start(version string) {
+	a.version = version
+}
+
+func (a *Agent) Finish(code int) {}

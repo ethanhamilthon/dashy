@@ -87,7 +87,6 @@ func (a *Agent) Notifications() []string {
 	for {
 		select {
 		case text := <-a.inbox:
-			a.Fire("notify_received", "DASHY_NOTIFY_FILE", text)
 			messages = append(messages, text)
 		default:
 			return messages
@@ -102,7 +101,6 @@ func (a *Agent) viewed() []shell.Image {
 	for {
 		select {
 		case image := <-a.views:
-			a.Fire("image_attached", "DASHY_IMAGE_SOURCE", "view")
 			images = append(images, image)
 		default:
 			return images

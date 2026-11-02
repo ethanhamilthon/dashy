@@ -30,9 +30,6 @@ type Settings struct {
 	MaxCodeLines     int
 	MaxResultLines   int
 	MaxThinkingLines int
-	StatusLeft       []string
-	StatusRight      []string
-	Environment      map[string]string
 	ShellTimeout     int
 	ShellMaxTimeout  int
 	ShellMaxOutput   int
@@ -75,7 +72,7 @@ func validateSettings(s Settings) error {
 			return fmt.Errorf("provider %q has conflicting api_key and api_key_env", s.Provider)
 		}
 		if p.APIKeyEnv != "" {
-			val := resolveEnv(p.APIKeyEnv, s.Environment)
+			val := os.Getenv(p.APIKeyEnv)
 			if strings.TrimSpace(val) == "" {
 				return fmt.Errorf("provider %q: environment variable %q is not set or empty", s.Provider, p.APIKeyEnv)
 			}
@@ -92,11 +89,6 @@ func validateSettings(s Settings) error {
 			}
 		}
 	}
-	for k := range s.Environment {
-		if strings.HasPrefix(k, "DASHY_") {
-			return fmt.Errorf("env key %q is reserved", k)
-		}
-	}
 	if s.ReasoningSummary != "" && s.ReasoningSummary != "auto" && s.ReasoningSummary != "off" {
 		return fmt.Errorf("reasoning_summary must be auto or off")
 	}
@@ -104,15 +96,6 @@ func validateSettings(s Settings) error {
 		return fmt.Errorf("unsupported effort %q", s.Effort)
 	}
 	return nil
-}
-
-func resolveEnv(key string, env map[string]string) string {
-	if env != nil {
-		if v, ok := env[key]; ok {
-			return v
-		}
-	}
-	return os.Getenv(key)
 }
 
 func configDir(cwd string) (string, error) {
@@ -133,22 +116,36 @@ func configDir(cwd string) (string, error) {
 func (a *Agent) Settings() Settings {
 	s := a.settings
 	s.Providers = maps.Clone(a.settings.Providers)
-	s.Environment = maps.Clone(a.settings.Environment)
-	s.StatusLeft = slices.Clone(a.settings.StatusLeft)
-	s.StatusRight = slices.Clone(a.settings.StatusRight)
 	return s
 }
 
+// ApplySettings updates the settings for testing and runtime use.
+func (a *Agent) ApplySettings(s Settings) {
+	a.applySettings(s)
+}
+
 func (a *Agent) applySettings(s Settings) {
+	if s.ShellTimeout <= 0 {
+		s.ShellTimeout = 120
+	}
+	if s.ShellMaxTimeout <= 0 {
+		s.ShellMaxTimeout = 600
+	}
+	if s.ShellMaxOutput < 0 {
+		s.ShellMaxOutput = 8192
+	}
+	if s.CompactKeepTurns <= 0 {
+		s.CompactKeepTurns = 4
+	}
+	if s.MaxContextTokens <= 0 {
+		s.MaxContextTokens = 400000
+	}
 	a.settings = s
 	p := s.Providers[s.Provider]
 	if p.APIKey == "" && p.APIKeyEnv != "" {
-		p.APIKey = resolveEnv(p.APIKeyEnv, s.Environment)
+		p.APIKey = os.Getenv(p.APIKeyEnv)
 	}
 	a.client = newClient(p)
-	if a.hooks != nil {
-		a.hooks.SetConfig(s.Environment, s.ShellMaxOutput)
-	}
 }
 
 func newClient(p Provider) openai.Client {

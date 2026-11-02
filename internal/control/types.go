@@ -66,7 +66,7 @@ func fail(code, format string, args ...any) error {
 
 // Types lists the request types Submit accepts.
 var Types = []string{"input", "steer", "recall", "stop", "quit", "new", "resume", "sessions",
-	"rename", "history", "state", "reload", "compact", "help", "models", "providers",
+	"rename", "history", "state", "compact", "help", "models", "providers",
 	"select_model", "select_provider", "add_provider", "command"}
 
 // CommandInfo describes one slash command.
@@ -82,7 +82,6 @@ var commandList = []CommandInfo{
 	{"/resume", "Resume a saved session in this project"},
 	{"/rename", "Rename this session; empty name restores the default"},
 	{"/compact", "Summarize older turns; add a prompt to guide it"},
-	{"/reload", "Re-read dashy.toml; restart the shell"},
 	{"/model", "Choose model; Left/Right changes effort"},
 	{"/login", "Select or create a provider"},
 }
@@ -100,9 +99,7 @@ func Help(keyboard string) string {
 	if keyboard != "" {
 		help.WriteString("\n" + keyboard + "\n")
 	}
-	help.WriteString("\nConfiguration: --config PATH, ./dashy.toml, or $DASHY_HOME/dashy.toml (default ~/.dashy/dashy.toml).\n" +
-		"Edit configuration, then /reload to apply changes to this chat.\n" +
-		"Host access: the bash tool runs commands with your permissions; not an OS security sandbox.")
+	help.WriteString("\nHost access: the bash tool runs commands with your permissions; not an OS security sandbox.")
 	return help.String()
 }
 

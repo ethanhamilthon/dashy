@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -167,8 +166,8 @@ func TestPrimaryConfigMethod(t *testing.T) {
 	if dest == "" {
 		t.Fatal("expected non-empty PrimaryConfig()")
 	}
-	if !strings.HasSuffix(dest, "dashy.toml") {
-		t.Fatalf("PrimaryConfig() = %q, want suffix dashy.toml", dest)
+	if !strings.HasSuffix(dest, "settings.json") {
+		t.Fatalf("PrimaryConfig() = %q, want suffix settings.json", dest)
 	}
 }
 
@@ -176,8 +175,6 @@ func TestCredentialDestinationInLoginAndModelNotices(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("DASHY_HOME", home)
 	projectDir := t.TempDir()
-	projectToml := filepath.Join(projectDir, "dashy.toml")
-	_ = os.WriteFile(projectToml, []byte("model = \"base-model\"\n"), 0600)
 
 	a, err := agent.New(projectDir, agent.ConfigFiles{})
 	if err != nil {
@@ -185,8 +182,9 @@ func TestCredentialDestinationInLoginAndModelNotices(t *testing.T) {
 	}
 	defer a.Close()
 
-	if a.PrimaryConfig() != projectToml {
-		t.Fatalf("a.PrimaryConfig() = %q, want %q", a.PrimaryConfig(), projectToml)
+	destPath := a.PrimaryConfig()
+	if destPath != filepath.Join(home, "settings.json") {
+		t.Fatalf("a.PrimaryConfig() = %q, want %q", destPath, filepath.Join(home, "settings.json"))
 	}
 
 	m := newModel(a, projectDir)
@@ -194,8 +192,8 @@ func TestCredentialDestinationInLoginAndModelNotices(t *testing.T) {
 	// 1. openPicker("login") displays credential destination
 	m.openPicker("login")
 	entriesStr := fmt.Sprint(m.entries)
-	if !strings.Contains(entriesStr, "Credentials destination: "+projectToml) {
-		t.Fatalf("openPicker login entries = %v, want Credentials destination: %s", m.entries, projectToml)
+	if !strings.Contains(entriesStr, "Credentials destination: "+destPath) {
+		t.Fatalf("openPicker login entries = %v, want Credentials destination: %s", m.entries, destPath)
 	}
 
 	// 2. Select "Add" row
@@ -206,8 +204,8 @@ func TestCredentialDestinationInLoginAndModelNotices(t *testing.T) {
 	m = enterPicker(m)
 
 	entriesStr = fmt.Sprint(m.entries)
-	if !strings.Contains(entriesStr, "Credentials will be saved to "+projectToml) {
-		t.Fatalf("entering setup entries = %v, want Credentials will be saved to: %s", m.entries, projectToml)
+	if !strings.Contains(entriesStr, "Credentials will be saved to "+destPath) {
+		t.Fatalf("entering setup entries = %v, want Credentials will be saved to: %s", m.entries, destPath)
 	}
 
 	// 3. Provider name
@@ -218,19 +216,13 @@ func TestCredentialDestinationInLoginAndModelNotices(t *testing.T) {
 	m.input.SetValue("https://api.project.com/v1")
 	m = enterPicker(m)
 
-	// At API key step, warning about project config is shown
-	entriesStr = fmt.Sprint(m.entries)
-	if !strings.Contains(entriesStr, "Warning: API key will be saved to project configuration ("+projectToml+")") {
-		t.Fatalf("setup API key prompt missing project config warning: %v", m.entries)
-	}
-
 	// 5. API key entered and submitted
 	m.input.SetValue("secret-proj-key")
 	m = enterPicker(m)
 
 	// Success notice contains destination
 	entriesStr = fmt.Sprint(m.entries)
-	if !strings.Contains(entriesStr, "Provider created in "+projectToml+". Choose a model with /model.") {
+	if !strings.Contains(entriesStr, "Provider created in "+destPath+". Choose a model with /model.") {
 		t.Fatalf("provider created notice missing destination: %v", m.entries)
 	}
 	// Verify secret key is not leaked
@@ -245,7 +237,7 @@ func TestCredentialDestinationInLoginAndModelNotices(t *testing.T) {
 	m = enterPicker(m)
 
 	entriesStr = fmt.Sprint(m.entries)
-	if !strings.Contains(entriesStr, "(saved to "+projectToml+")") {
+	if !strings.Contains(entriesStr, "(saved to "+destPath+")") {
 		t.Fatalf("model selection notice missing destination: %v", m.entries)
 	}
 }

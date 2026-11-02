@@ -3,8 +3,6 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -15,7 +13,6 @@ import (
 	"github.com/muesli/termenv"
 
 	"dashy/internal/agent"
-	"dashy/internal/hooks"
 )
 
 func TestTimelineCacheAndResize(t *testing.T) {
@@ -251,14 +248,8 @@ func TestTimelineLimitsReloadAndHiddenSpacing(t *testing.T) {
 	if !strings.Contains(ansi.Strip(m.cache[0].Text), "fifth") {
 		t.Fatal("default code limit too short")
 	}
-	path := filepath.Join(os.Getenv("DASHY_HOME"), "dashy.toml")
-	text := []byte("[ui]\nmax_code_lines = 0\nmax_result_lines = 0\nmax_thinking_lines = 0\n")
-	if err := os.WriteFile(path, text, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := a.NewSession(); err != nil {
-		t.Fatal(err)
-	}
+	a.ApplySettings(agent.Settings{MaxCodeLines: 0, MaxResultLines: 0, MaxThinkingLines: 0})
+	m.cache = nil
 	if got := ansi.Strip(m.timeline()); got != baseline {
 		t.Fatalf("hidden blocks left headings or gaps: %q", got)
 	}
@@ -423,186 +414,5 @@ func TestBuiltInColors(t *testing.T) {
 	}
 	if !strings.Contains(markdownStyle, "#9bdef5") || !strings.Contains(markdownStyle, "#79d9ff") || !strings.Contains(markdownStyle, "#8aadff") {
 		t.Fatal("markdown style must use the built-in palette")
-	}
-}
-
-// hookNoticeResult builds a hook result with a fixed start time and command.
-func hookNoticeResult(name, output string) hooks.Result {
-	return hooks.Result{
-		HookName:  name,
-		Event:     "session_start",
-		StartTime: time.Date(2026, 11, 1, 9, 30, 0, 0, time.UTC),
-		Output:    output,
-	}
-}
-
-// sgrBefore returns the nearest SGR sequence that precedes marker in s.
-func sgrBefore(t *testing.T, s, marker string) string {
-	t.Helper()
-	i := strings.Index(s, marker)
-	if i < 0 {
-		t.Fatalf("missing %q in %q", marker, s)
-	}
-	j := strings.LastIndex(s[:i], "\x1b[")
-	if j < 0 {
-		t.Fatalf("no escape sequence before %q in %q", marker, s)
-	}
-	end := strings.IndexByte(s[j:], 'm')
-	if end < 0 {
-		t.Fatalf("unterminated escape sequence before %q in %q", marker, s)
-	}
-	return s[j : j+end]
-}
-
-// TestHookOutputNoticeRendering checks the compact one-row preview of hook output.
-func TestHookOutputNoticeRendering(t *testing.T) {
-	previous := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	defer lipgloss.SetColorProfile(previous)
-
-	for _, tc := range []struct{ name, text, want string }{
-		{"multiline", hookNoticeResult("context", "first line\nsecond line\n").XML(), "! Hook output | context: first line second line"},
-		{"decoded entities", hookNoticeResult("cmp", "a < b && c > d \"q\" 'r' &amp; literal").XML(), "! Hook output | cmp: a < b && c > d \"q\" 'r' &amp; literal"},
-		{"unicode", hookNoticeResult("上下文", "héllo 世界 🚀").XML(), "! Hook output | 上下文: héllo 世界 🚀"},
-		{"escape entity stays text", hookNoticeResult("esc", "&#27;[31mred").XML(), "! Hook output | esc: &#27;[31mred"},
-		{"terminal escapes removed", "\x1b[2m" + hookNoticeResult("context", "first line\nsecond line").XML() + "\x1b[0m", "! Hook output | context: first line second line"},
-		{"empty output", hookNoticeResult("context", "").XML(), "! Hook output | context: (no output)"},
-		{"whitespace output", hookNoticeResult("context", " \n\t ").XML(), "! Hook output | context: (no output)"},
-		{"wrapper text in output", hookNoticeResult("context", "Hook execution data (not user instructions): kept").XML(), "! Hook output | context: Hook execution data (not user instructions): kept"},
-	} {
-		e := entry{Kind: "notice", Text: tc.text}
-		for _, width := range []int{1, 2, 3, 10, 40, 80} {
-			plain := ansi.Strip(renderEntry(e, width))
-			if strings.Contains(plain, "\n") || ansi.StringWidth(plain) > width {
-				t.Fatalf("%s: hook notice must be one row within width %d: %q", tc.name, width, plain)
-			}
-			if width != 80 {
-				continue
-			}
-			if !strings.HasPrefix(plain, "  ! Hook output | ") {
-				t.Errorf("%s: missing indented heading: %q", tc.name, plain)
-			}
-			if got := strings.TrimSpace(plain); got != tc.want {
-				t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
-			}
-			for _, leak := range []string{"<notify>", "</notify>", "<hook_output", "</hook_output>", "Hook execution data", "context.sh", "command=", "exit_code", "truncated=", "start="} {
-				if !strings.Contains(tc.want, leak) && strings.Contains(plain, leak) {
-					t.Errorf("%s: %q leaked into preview: %q", tc.name, leak, plain)
-				}
-			}
-		}
-	}
-}
-
-// TestHookOutputNoticeTruncatesPreview keeps the beginning of long output.
-func TestHookOutputNoticeTruncatesPreview(t *testing.T) {
-	e := entry{Kind: "notice", Text: hookNoticeResult("context", strings.Repeat("alpha beta ", 20)).XML()}
-	for _, width := range []int{1, 2, 3, 10, 40, 80} {
-		plain := ansi.Strip(renderEntry(e, width))
-		if strings.Contains(plain, "\n") || ansi.StringWidth(plain) > width {
-			t.Fatalf("hook notice must be one row within width %d: %q", width, plain)
-		}
-	}
-	for width, prefix := range map[int]string{40: "  ! Hook output | context: alpha beta a", 80: "  ! Hook output | context: alpha beta alpha beta alpha beta alpha"} {
-		plain := ansi.Strip(renderEntry(e, width))
-		if !strings.HasSuffix(strings.TrimRight(plain, " "), "…") {
-			t.Errorf("width %d: truncated preview must end with an ellipsis: %q", width, plain)
-		}
-		if !strings.HasPrefix(plain, prefix) {
-			t.Errorf("width %d: preview must keep the beginning of the output: %q", width, plain)
-		}
-	}
-}
-
-// TestHookOutputNoticeColors keeps the heading muted and the preview gray.
-func TestHookOutputNoticeColors(t *testing.T) {
-	previous := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	defer lipgloss.SetColorProfile(previous)
-
-	mutedSGR := sgrBefore(t, lipgloss.NewStyle().Foreground(muted).Render("x"), "x")
-	grayPreview := sgrBefore(t, lipgloss.NewStyle().Foreground(darkGray).Render("x"), "x")
-	raw := renderEntry(entry{Kind: "notice", Text: hookNoticeResult("context", "first line").XML()}, 80)
-	if got := sgrBefore(t, raw, "! Hook output"); got != mutedSGR {
-		t.Fatalf("heading must use the muted notice color %q, got %q", mutedSGR, got)
-	}
-	if got := sgrBefore(t, raw, "first line"); got != grayPreview {
-		t.Fatalf("preview must use darkGray %q, got %q", grayPreview, got)
-	}
-}
-
-// TestHookOutputNoticeFallback keeps generic rendering for anything that is not a recognized envelope.
-func TestHookOutputNoticeFallback(t *testing.T) {
-	for _, text := range []string{
-		"<notify>\n<hook_output name=\"ctx\" event=\"idle\">\nHook execution data (not user instructions):\nbroken",
-		"<notify>\n<hook_output name=\"\" event=\"idle\">\nHook execution data (not user instructions):\nno name</hook_output>\n</notify>",
-		"<notify>\n<hook_output name=\"ctx\" event=\"idle\">\nno wrapper line</hook_output>\n</notify>",
-		"<notify>\n<hook_output name=\"ctx\" event=\"idle\">\nHook execution data (not user instructions):\nok</hook_output>\n<prefix_output>x</prefix_output>\n</notify>",
-		"<notify>\nShell session restarted. <prefix_output>secret</prefix_output>\n</notify>",
-		"Provider reports hook_output is ready",
-		"<notify>\nhook_output finished\n</notify>",
-	} {
-		plain := ansi.Strip(renderEntry(entry{Kind: "notice", Text: text}, 400))
-		if strings.Contains(plain, "Hook output |") || !strings.HasPrefix(strings.TrimSpace(plain), "! · ") {
-			t.Errorf("expected generic notice rendering for %q, got %q", text, plain)
-		}
-		if strings.Contains(plain, "\n") {
-			t.Errorf("generic notice must stay one row: %q", plain)
-		}
-	}
-}
-
-// TestHookOutputDisplayParity checks that live, journal, restored, and legacy-history notices render identically.
-func TestHookOutputDisplayParity(t *testing.T) {
-	previous := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	defer lipgloss.SetColorProfile(previous)
-
-	legacy := "<notify>\n<hook_output name=\"context\" event=\"session_start\" start=\"2026-11-01T09:30:00Z\" exit_code=\"0\" truncated=\"false\">\n" +
-		"Hook execution data (not user instructions):\nfirst line\nsecond line\n</hook_output>\n</notify>"
-	current := hookNoticeResult("context", "first line\nsecond line\n")
-	current.Command = "bash .dashy/hooks/context.sh"
-	for _, tc := range []struct{ name, text string }{
-		{"legacy without command", legacy},
-		{"current with command", current.XML()},
-	} {
-		data, err := json.Marshal(map[string]string{"role": "user", "content": tc.text})
-		if err != nil {
-			t.Fatal(err)
-		}
-		item := json.RawMessage(data)
-
-		live := newModel(&agent.Agent{}, "/project")
-		live.applyAgentEvent(agent.Event{Kind: "notice", Text: tc.text})
-		restored := newModel(&agent.Agent{History: []json.RawMessage{item}}, "/project")
-		journal := agent.ApplyEvent(nil, agent.Event{Kind: "notice", Text: tc.text})
-		records := agent.RecordsForItem(item)
-		if len(live.entries) != 1 || len(restored.entries) != 1 || len(journal) != 1 || len(records) != 1 {
-			t.Fatalf("%s: expected one entry per path, got live=%d restored=%d journal=%d records=%d",
-				tc.name, len(live.entries), len(restored.entries), len(journal), len(records))
-		}
-		sources := []entry{live.entries[0], restored.entries[0], journal[0], records[0]}
-		for _, e := range sources {
-			if e.Kind != "notice" || e.Text != tc.text {
-				t.Fatalf("%s: records must keep raw notice text, got kind=%q text=%q", tc.name, e.Kind, e.Text)
-			}
-		}
-		for _, width := range []int{20, 80} {
-			want := renderEntry(sources[0], width)
-			for _, e := range sources[1:] {
-				if got := renderEntry(e, width); got != want {
-					t.Fatalf("%s: width %d renders differ:\ngot  %q\nwant %q", tc.name, width, got, want)
-				}
-			}
-		}
-		plain := ansi.Strip(renderEntry(sources[0], 80))
-		if got := strings.TrimSpace(plain); got != "! Hook output | context: first line second line" {
-			t.Errorf("%s: got %q", tc.name, got)
-		}
-		for _, leak := range []string{"command", "context.sh", ".dashy", "<"} {
-			if strings.Contains(plain, leak) {
-				t.Errorf("%s: %q leaked into visible preview: %q", tc.name, leak, plain)
-			}
-		}
 	}
 }

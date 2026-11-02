@@ -124,9 +124,7 @@ func TestNewCommand(t *testing.T) {
 	if len(a.History) != 0 || len(m.entries) != 0 {
 		t.Fatal("new should clear timeline and history")
 	}
-	if a.System == "" {
-		t.Fatal("new should re-read the system prompt from config")
-	}
+
 }
 func TestTimelineHasNoBackgrounds(t *testing.T) {
 	previous := lipgloss.ColorProfile()

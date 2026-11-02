@@ -3,6 +3,7 @@ package agent
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/openai/openai-go/v3"
@@ -36,7 +37,11 @@ func (a *Agent) safeError(err error) error {
 		}
 	}
 	for _, p := range a.settings.Providers {
-		for _, key := range []string{p.APIKey, resolveEnv(p.APIKeyEnv, a.settings.Environment)} {
+		keyEnv := ""
+		if p.APIKeyEnv != "" {
+			keyEnv = os.Getenv(p.APIKeyEnv)
+		}
+		for _, key := range []string{p.APIKey, keyEnv} {
 			if key != "" {
 				text = strings.ReplaceAll(text, key, "[redacted]")
 			}

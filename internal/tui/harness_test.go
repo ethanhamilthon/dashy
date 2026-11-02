@@ -2,12 +2,14 @@ package tui
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -54,14 +56,27 @@ func testModelConfig(t *testing.T, hold <-chan struct{}, extra string) (model, *
 		fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"answer\"}]}]}}\n\n")
 	}))
 	t.Cleanup(server.Close)
-	config := fmt.Sprintf("provider='p'\nmodel='m'\n%s[providers.p]\nbase_url=%q\n", extra, server.URL)
-	if err := os.WriteFile(filepath.Join(home, "dashy.toml"), []byte(config), 0600); err != nil {
-		t.Fatal(err)
-	}
 	a, err := agent.New(t.TempDir(), agent.ConfigFiles{})
 	if err != nil {
 		t.Fatal(err)
 	}
+	s := agent.Settings{
+		Provider:         "p",
+		Model:            "m",
+		CompactKeepTurns: 4,
+		ShellTimeout:     120,
+		ShellMaxTimeout:  600,
+		ShellMaxOutput:   8192,
+		Providers: map[string]agent.Provider{
+			"p": {BaseURL: server.URL},
+		},
+	}
+	if strings.Contains(extra, "compact_keep_turns = 1") {
+		s.CompactKeepTurns = 1
+	}
+	a.ApplySettings(s)
+	data, _ := json.Marshal(s)
+	_ = os.WriteFile(filepath.Join(home, "settings.json"), data, 0600)
 	t.Cleanup(a.Close)
 	m := newModel(a, "/project")
 	t.Cleanup(m.ctl.Close)

@@ -79,7 +79,6 @@ func (a *Agent) requestWithRetries(ctx context.Context, emit func(Event), checkp
 			return nil, err
 		}
 		pause := delay(attempt, err)
-		a.Fire("model_retry", "DASHY_ERROR", clip(err.Error()), "DASHY_ATTEMPT", strconv.Itoa(attempt+2))
 		emit(Event{Kind: "notice", Text: fmt.Sprintf("Retrying in %s (attempt %d/%d): %s", pause.Round(time.Second), attempt+2, retryAttempts, err)})
 		select {
 		case <-ctx.Done():

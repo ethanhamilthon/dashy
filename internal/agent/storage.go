@@ -122,7 +122,6 @@ func (a *Agent) Sessions() ([]SessionSummary, error) {
 // default (the first user message). Unsent sessions keep it until first save.
 func (a *Agent) Rename(name string) error {
 	a.title = strings.Join(strings.Fields(name), " ")
-	defer a.titleChanged()
 	if !a.HasSavedSession() {
 		return nil
 	}

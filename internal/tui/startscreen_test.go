@@ -24,17 +24,3 @@ func TestStartScreenShowsVersionAndSetupHint(t *testing.T) {
 		t.Fatal("turn started without provider and model")
 	}
 }
-
-func TestStartScreenShowsUpdateHint(t *testing.T) {
-	m, _ := pickerModel(t)
-	Version = "0.2.2"
-	m.latest = "v0.2.3"
-	m.refresh(true)
-	if view := m.timeline(); !strings.Contains(view, "v0.2.3 available — run dashy update") {
-		t.Fatalf("start screen missing update hint:\n%s", view)
-	}
-	next, _ := m.Update(updateCheckMsg{latest: "v0.2.3"})
-	if next.(model).latest != "v0.2.3" {
-		t.Fatal("update hint was not stored")
-	}
-}

@@ -8,8 +8,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"dashy/internal/docs"
 )
 
 func TestRuntimeContractOnlyInToolDescription(t *testing.T) {
@@ -26,7 +24,7 @@ func TestRuntimeContractOnlyInToolDescription(t *testing.T) {
 			if body.Instructions != want {
 				t.Errorf("system prompt changed: %q; want %q", body.Instructions, want)
 			}
-			if len(body.Tools) != 1 || body.Tools[0].Name != "bash" || body.Tools[0].Description != docs.ToolDescription {
+			if len(body.Tools) != 1 || body.Tools[0].Name != "bash" || body.Tools[0].Description != bashToolDescription {
 				t.Errorf("missing runtime contract: %+v", body.Tools)
 			}
 			if strings.Contains(body.Instructions, "<prefix>") || strings.Contains(body.Instructions, "<prefix_output>") {
@@ -36,7 +34,7 @@ func TestRuntimeContractOnlyInToolDescription(t *testing.T) {
 			fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"output\":[]}}\n\n")
 		}))
 		a := &Agent{System: system}
-		configureTestAgent(t, a, Settings{Provider: "test", Model: "test", Providers: map[string]Provider{"test": {BaseURL: server.URL}}})
+		a.applySettings(Settings{Provider: "test", Model: "test", Providers: map[string]Provider{"test": {BaseURL: server.URL}}})
 		_, err := a.request(context.Background(), func(Event) {})
 		server.Close()
 		if err != nil {

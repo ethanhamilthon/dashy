@@ -7,12 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
-
-	"dashy/internal/hooks"
 )
 
 const secretKey = "sk-synthetic-secret-7f3a"
@@ -31,24 +27,15 @@ func secretAgent(t *testing.T, fromEnv bool, handler http.HandlerFunc) (*Agent, 
 		t.Setenv("DASHY_TEST_PROVIDER_KEY", secretKey)
 		p = Provider{BaseURL: server.URL, APIKeyEnv: "DASHY_TEST_PROVIDER_KEY"}
 	}
-	configureTestAgent(t, a, Settings{Provider: "p", Model: "m", Providers: map[string]Provider{"p": p}})
+	a.ApplySettings(Settings{
+		Provider:        "p",
+		Model:           "m",
+		ShellTimeout:    120,
+		ShellMaxTimeout: 600,
+		ShellMaxOutput:  8192,
+		Providers:       map[string]Provider{"p": p},
+	})
 	return a, func() { a.Close(); server.Close() }
-}
-
-// errorHook captures DASHY_ERROR of the given hook events; the reader waits for delivery.
-func errorHook(t *testing.T, a *Agent, events string) func() string {
-	t.Helper()
-	out := filepath.Join(t.TempDir(), "errors")
-	a.hooks.Set([]hooks.Hook{{
-		Events:  strings.Split(events, ","),
-		Command: `echo "$DASHY_EVENT $DASHY_ERROR" >> ` + out,
-	}})
-	return func() string {
-		t.Helper()
-		a.hooks.Wait(5 * time.Second)
-		data, _ := os.ReadFile(out)
-		return string(data)
-	}
 }
 
 // assertNoSecret checks every surface an error can reach: texts, records and the saved session.
@@ -98,20 +85,16 @@ func TestProviderFailuresRedactSecret(t *testing.T) {
 					fmt.Fprint(w, tc.body)
 				})
 				defer closeAll()
-				hookOut := errorHook(t, a, "error,turn_end")
 				var events []Event
 				err := a.RunInput(context.Background(), Input{Text: "hi"}, func(e Event) { events = append(events, e) })
 				if err == nil || !strings.Contains(err.Error(), "[redacted]") {
 					t.Fatalf("expected a sanitized failure, got %v", err)
 				}
-				texts := []string{err.Error(), hookOut()}
+				texts := []string{err.Error()}
 				for _, e := range events {
 					texts = append(texts, e.Text)
 				}
 				assertNoSecret(t, a, texts...)
-				if !strings.Contains(hookOut(), "error") {
-					t.Fatal("error hook did not run")
-				}
 			})
 		}
 	}
@@ -129,15 +112,11 @@ func TestCompactErrorsRedactSecret(t *testing.T) {
 	if err := a.Save(); err != nil {
 		t.Fatal(err)
 	}
-	hookOut := errorHook(t, a, "compact_end")
 	_, err := a.Compact(context.Background(), "")
 	if err == nil {
 		t.Fatal("expected a compaction error")
 	}
-	assertNoSecret(t, a, err.Error(), hookOut())
-	if !strings.Contains(hookOut(), "compact_end") {
-		t.Fatal("compact_end hook did not run")
-	}
+	assertNoSecret(t, a, err.Error())
 
 	// Automatic compaction reports through an error event instead of returning.
 	a.settings.MaxContextTokens = 100

@@ -28,11 +28,10 @@ type Result struct {
 
 // Runner executes commands in stateless system Bash processes.
 type Runner struct {
-	mu          sync.Mutex
-	active      map[*exec.Cmd]struct{}
-	Dir         string
-	Environment map[string]string // base [env] configuration
-	// Env returns variables exported before every call, such as session metadata.
+	mu     sync.Mutex
+	active map[*exec.Cmd]struct{}
+	Dir    string
+	// Env returns variables exported before every call, such as session id and endpoint.
 	Env func() map[string]string
 }
 
@@ -185,17 +184,12 @@ func (r *Runner) ExecuteLimit(ctx context.Context, command string, timeout time.
 	return result, nil
 }
 
-// buildEnv merges inherited environment, configured [env],
-// and per-call metadata. Command applies the final PATH and execution policy.
+// buildEnv merges inherited environment and per-call environment.
+// Command applies the final PATH and execution policy.
 func (r *Runner) buildEnv() []string {
 	envMap := make(map[string]string)
 	for _, entry := range os.Environ() {
 		if k, v, ok := strings.Cut(entry, "="); ok {
-			envMap[k] = v
-		}
-	}
-	if r != nil {
-		for k, v := range r.Environment {
 			envMap[k] = v
 		}
 	}

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -471,7 +472,7 @@ func TestUpDownNavigatesFileCompletions(t *testing.T) {
 	}
 }
 
-func TestReloadClearsFileCache(t *testing.T) {
+func TestNewClearsFileCache(t *testing.T) {
 	t.Setenv("DASHY_HOME", t.TempDir())
 	dir := t.TempDir()
 	a, err := agent.New(dir, agent.ConfigFiles{})
@@ -487,17 +488,17 @@ func TestReloadClearsFileCache(t *testing.T) {
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // not slash yet
 	m = next.(model)
 
-	// Run /reload
+	// Run /new
 	m.fileCompletions = nil
-	m.input.SetValue("/reload")
+	m.input.SetValue("/new")
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(model)
 
 	if m.fileIndexCache != nil {
-		t.Fatal("expected /reload to clear fileIndexCache")
+		t.Fatal("expected /new to clear fileIndexCache")
 	}
 	if len(m.fileCompletions) != 0 {
-		t.Fatal("expected /reload to dismiss file completions")
+		t.Fatal("expected /new to dismiss file completions")
 	}
 }
 
@@ -1074,15 +1075,21 @@ func fakeProvider(t *testing.T, hold <-chan struct{}) (string, func() []string) 
 func fileSubmitAgent(t *testing.T, dir, url string) *agent.Agent {
 	t.Helper()
 	t.Setenv("DASHY_HOME", t.TempDir())
-	config := fmt.Sprintf("provider = \"p\"\nmodel = \"m\"\n[providers.p]\nbase_url = %q\napi_key = \"k\"\n", url)
-	if err := os.WriteFile(filepath.Join(os.Getenv("DASHY_HOME"), "dashy.toml"), []byte(config), 0600); err != nil {
-		t.Fatal(err)
-	}
 	a, err := agent.New(dir, agent.ConfigFiles{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { a.Close() })
+	s := agent.Settings{
+		Provider: "p",
+		Model:    "m",
+		Providers: map[string]agent.Provider{
+			"p": {BaseURL: url, APIKey: "k"},
+		},
+	}
+	a.ApplySettings(s)
+	data, _ := json.Marshal(s)
+	_ = os.WriteFile(filepath.Join(os.Getenv("DASHY_HOME"), "settings.json"), data, 0600)
 	return a
 }
 

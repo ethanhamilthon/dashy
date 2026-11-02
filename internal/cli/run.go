@@ -10,8 +10,6 @@ import (
 	"strings"
 
 	"dashy/internal/agent"
-	"dashy/internal/docs"
-	"dashy/internal/selfupdate"
 	"dashy/internal/shell"
 	"dashy/internal/tui"
 )
@@ -25,10 +23,6 @@ func Run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.W
 	defer cancel()
 	if len(args) > 0 && command == "" {
 		switch args[0] {
-		case "docs":
-			return docs.Docs(out, args[1:])
-		case "update":
-			return selfupdate.Run(ctx, tui.Version, args[1:], out)
 		case "version":
 			fmt.Fprintln(out, strings.TrimPrefix(tui.Version, "v"))
 			return nil
@@ -36,13 +30,12 @@ func Run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.W
 	}
 	flags := flag.NewFlagSet("dashy", flag.ContinueOnError)
 	flags.SetOutput(diagnostics)
-	mode := flags.String("mode", "", "headless JSON/stdio transport: jsonl")
+	prompt := flags.String("p", "", "run a single task and exit")
 	sessionID := flags.String("s", "", "target session for notify/view (default: $DASHY_ENDPOINT)")
 	resume := flags.String("resume", "", "resume a project session ID")
-	configPath := flags.String("config", "", "base configuration file (replaces project dashy.toml; inherits global unless --no-extend)")
+	configPath := flags.String("config", "", "base configuration file")
 	flags.StringVar(configPath, "c", "", "alias for --config")
-	agentPath := flags.String("agent", "", "role overlay file applied last over the primary configuration (must exist)")
-	noExtend := flags.Bool("no-extend", false, "skip inheriting from global configuration")
+	noGlobal := flags.Bool("no-global", false, "skip inheriting from global configuration")
 	if err := flags.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return nil
@@ -51,9 +44,6 @@ func Run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.W
 	}
 	if flags.NArg() != 0 && command == "" {
 		return fmt.Errorf("unexpected arguments: %v", flags.Args())
-	}
-	if *mode != "" && *mode != "jsonl" {
-		return fmt.Errorf("mode must be jsonl")
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -73,14 +63,12 @@ func Run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.W
 		}
 		return agent.Notify(cwd, *sessionID, text)
 	}
-	headless := *mode != ""
-	files := agent.ConfigFiles{Config: *configPath, Agent: *agentPath, NoExtend: *noExtend, Headless: headless}
+	files := agent.ConfigFiles{Config: *configPath, NoGlobal: *noGlobal}
 	a, err := agent.New(cwd, files, *resume)
 	if err != nil {
 		return err
 	}
 	defer a.Close()
-	a.SetMode(map[bool]string{false: "tui", true: "headless"}[headless])
 	a.Start(tui.Version)
 	defer func() {
 		code := 0
@@ -89,10 +77,8 @@ func Run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.W
 		}
 		a.Finish(code)
 	}()
-	if !headless {
-		return tui.Run(a, cwd)
-	}
-	return serveJSON(ctx, a, cwd, in, out, diagnostics)
+	_ = prompt
+	return tui.Run(a, cwd)
 }
 
 // view queues PNG/JPEG images for the session's next model request.

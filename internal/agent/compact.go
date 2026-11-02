@@ -155,19 +155,9 @@ func (a *Agent) compact(ctx context.Context, prompt, reason string) (text string
 		return "Nothing to compact.", nil
 	}
 	old := a.History[:cut]
-	a.Fire("compact_start", "DASHY_COMPACT_REASON", reason)
 	defer func() {
 		err = a.safeError(err)
-		status, problem := "ok", ""
-		if err != nil {
-			status, problem = "error", clip(err.Error())
-		}
-		a.Fire("compact_end", "DASHY_COMPACT_STATUS", status, "DASHY_ERROR", problem)
 	}()
-	// The startup gate guards every model request, manual compaction included.
-	if err = a.prepare(ctx); err != nil {
-		return "", err
-	}
 	summary, err := a.summarize(ctx, old, prompt)
 	if err != nil {
 		return "", err
@@ -202,23 +192,4 @@ func (a *Agent) compactIfNeeded(ctx context.Context, emit func(Event)) {
 	if estimateTokens(a.History) > limit {
 		emit(Event{Kind: "notice", Text: "Compaction could not reach max_context_tokens; raise it to leave room for the kept turns."})
 	}
-}
-
-// Reload re-reads configuration and applies it while keeping the history.
-func (a *Agent) Reload() error {
-	c, err := loadConfiguration(a.home, a.Shell.Dir, a.files)
-	if err != nil {
-		return err
-	}
-	// Session selection is independent of the defaults in dashy.toml.
-	c.settings.Provider, c.settings.Model, c.settings.Effort = a.settings.Provider, a.settings.Model, a.settings.Effort
-	if err := validateSettings(c.settings); err != nil {
-		return fmt.Errorf("session selection: %w", err)
-	}
-	a.Shell.Close()
-	a.System, a.LocalConfig, a.Sources, a.primaryConfig = c.system, c.local, c.sources, c.primary
-	// Settings (and the hook environment) first: Set retries failed startup hooks at once.
-	a.applySettings(c.settings)
-	a.hooks.Set(c.hooks)
-	return nil
 }

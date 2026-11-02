@@ -9,10 +9,6 @@ import (
 	"syscall"
 	"testing"
 	"time"
-
-	"github.com/pelletier/go-toml/v2"
-
-	"dashy/internal/defaults"
 )
 
 func run(t *testing.T, r *Runner, command string, timeout time.Duration) Result {
@@ -128,12 +124,14 @@ func TestBASHENVExcluded(t *testing.T) {
 		t.Fatal("host BASH_ENV script ran!")
 	}
 
-	// 2. Configured Environment BASH_ENV must also be excluded.
+	// 2. Env callback BASH_ENV must also be excluded.
 	rConfigured := &Runner{
 		Dir: dir,
-		Environment: map[string]string{
-			"BASH_ENV": badScript,
-			"SAFE_VAR": "safe_value",
+		Env: func() map[string]string {
+			return map[string]string{
+				"BASH_ENV": badScript,
+				"SAFE_VAR": "safe_value",
+			}
 		},
 	}
 	res = run(t, rConfigured, `echo "$SAFE_VAR"; echo "[$BASH_ENV]"`, 5*time.Second)
@@ -147,38 +145,24 @@ func TestBASHENVExcluded(t *testing.T) {
 
 func TestEnvironmentAndMetadata(t *testing.T) {
 	dir := t.TempDir()
-	r := &Runner{
-		Dir: dir,
-		Environment: map[string]string{
-			"CONFIG_KEY": "config_val",
-			"OVERRIDE":   "base",
-		},
-	}
+	r := &Runner{Dir: dir}
 
-	// Base environment from configuration
-	res := run(t, r, `echo "$CONFIG_KEY|$OVERRIDE"`, 5*time.Second)
-	if res.Output != "config_val|base\n" {
-		t.Fatalf("base environment: %+v", res)
-	}
-
-	// Metadata via Env callback overrides base environment
-	model := "model-v1"
+	val := "first"
 	r.Env = func() map[string]string {
 		return map[string]string{
-			"DASHY_MODEL": model,
-			"OVERRIDE":    "meta",
+			"TEST_VAR": val,
 		}
 	}
-	res = run(t, r, `echo "$DASHY_MODEL|$OVERRIDE"`, 5*time.Second)
-	if res.Output != "model-v1|meta\n" {
-		t.Fatalf("metadata override: %+v", res)
+	res := run(t, r, `echo "$TEST_VAR"`, 5*time.Second)
+	if res.Output != "first\n" {
+		t.Fatalf("env: %+v", res)
 	}
 
 	// Dynamic change on subsequent call
-	model = "model-v2"
-	res = run(t, r, `echo "$DASHY_MODEL|$OVERRIDE"`, 5*time.Second)
-	if res.Output != "model-v2|meta\n" {
-		t.Fatalf("metadata change: %+v", res)
+	val = "second"
+	res = run(t, r, `echo "$TEST_VAR"`, 5*time.Second)
+	if res.Output != "second\n" {
+		t.Fatalf("env change: %+v", res)
 	}
 }
 
@@ -354,25 +338,5 @@ func TestCommandKillsProcessGroupOnCancel(t *testing.T) {
 	time.Sleep(1300 * time.Millisecond)
 	if _, err := os.Stat(marker); err == nil {
 		t.Fatal("background child survived cancellation")
-	}
-}
-
-// defaults.toml is the source of truth for shell limits; shell constants are only
-// the engine fallback and must never drift from it.
-func TestShellDefaultsMatchShippedConfig(t *testing.T) {
-	var cfg struct {
-		Shell struct {
-			Timeout    int `toml:"timeout"`
-			MaxTimeout int `toml:"max_timeout"`
-			MaxOutput  int `toml:"max_output"`
-		} `toml:"shell"`
-	}
-	if err := toml.Unmarshal([]byte(defaults.Config), &cfg); err != nil {
-		t.Fatal(err)
-	}
-	if time.Duration(cfg.Shell.Timeout)*time.Second != DefaultTimeout ||
-		time.Duration(cfg.Shell.MaxTimeout)*time.Second != MaxTimeout ||
-		cfg.Shell.MaxOutput != DefaultOutputLimit {
-		t.Fatalf("shell defaults drifted from internal/defaults/defaults.toml: %+v", cfg.Shell)
 	}
 }

@@ -10,39 +10,6 @@ import (
 	"time"
 )
 
-func TestGlobalHomeDefaultsAndMissingFiles(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("DASHY_HOME", "")
-	a, err := New(t.TempDir(), ConfigFiles{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer a.Close()
-	if a.home != filepath.Join(home, ".dashy") {
-		t.Fatal(a.home)
-	}
-	if a.System != "You are Dashy, a coding agent" {
-		t.Fatalf("unexpected default system: %q", a.System)
-	}
-	cfgPath := filepath.Join(a.home, "dashy.toml")
-	if err := os.WriteFile(cfgPath, []byte("system = 'Keep this prompt'\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	b, err := New(a.Shell.Dir, ConfigFiles{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer b.Close()
-	if b.System != "Keep this prompt" {
-		t.Fatalf("expected custom prompt, got %q", b.System)
-	}
-	info, err := os.Stat(cfgPath)
-	if err != nil || info.Mode().Perm() != 0600 {
-		t.Fatalf("private config permission: %v", err)
-	}
-}
-
 func TestScopedJSONLSessionsResumeAndCheckpoint(t *testing.T) {
 	t.Setenv("DASHY_HOME", t.TempDir())
 	cwd := filepath.Join(t.TempDir(), "project")
@@ -140,86 +107,5 @@ func TestScopedJSONLSessionsResumeAndCheckpoint(t *testing.T) {
 	}
 	if err = a.Resume(strings.TrimSuffix(filepath.Base(second), ".jsonl")); err == nil {
 		t.Fatal("unterminated session accepted")
-	}
-}
-
-func TestSessionSwitchPreservesStatusBridgeAndVersion(t *testing.T) {
-	t.Setenv("DASHY_HOME", t.TempDir())
-	a, err := New(t.TempDir(), ConfigFiles{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer a.Close()
-	a.Start("0.6.0")
-	ch := a.StatusEvents()
-	if ch == nil {
-		t.Fatal("StatusEvents returned nil channel")
-	}
-	// Drain startup events
-startupDrain:
-	for {
-		select {
-		case <-ch:
-		default:
-			break startupDrain
-		}
-	}
-
-	a.message("user", "test session")
-	if err = a.Save(); err != nil {
-		t.Fatal(err)
-	}
-	firstID := strings.TrimSuffix(filepath.Base(a.HistoryPath), ".jsonl")
-	if err = a.NewSession(); err != nil {
-		t.Fatal(err)
-	}
-	if a.version != "0.6.0" {
-		t.Fatalf("expected version 0.6.0 preserved, got %q", a.version)
-	}
-	foundStart := false
-drainNew:
-	for {
-		select {
-		case ev := <-ch:
-			if ev["DASHY_EVENT"] == "session_start" {
-				foundStart = true
-				if ev["DASHY_VERSION"] != "0.6.0" {
-					t.Fatalf("expected DASHY_VERSION 0.6.0, got %q", ev["DASHY_VERSION"])
-				}
-				if ev["DASHY_SESSION_SOURCE"] != "new" {
-					t.Fatalf("expected session source new, got %q", ev["DASHY_SESSION_SOURCE"])
-				}
-			}
-		default:
-			break drainNew
-		}
-	}
-	if !foundStart {
-		t.Fatal("session_start event not found after NewSession")
-	}
-
-	if err = a.Resume(firstID); err != nil {
-		t.Fatal(err)
-	}
-	if a.version != "0.6.0" {
-		t.Fatalf("expected version 0.6.0 preserved after Resume, got %q", a.version)
-	}
-	foundResume := false
-drainResume:
-	for {
-		select {
-		case ev := <-ch:
-			if ev["DASHY_EVENT"] == "session_start" && ev["DASHY_SESSION_SOURCE"] == "resume" {
-				foundResume = true
-				if ev["DASHY_VERSION"] != "0.6.0" {
-					t.Fatalf("expected DASHY_VERSION 0.6.0 on resume, got %q", ev["DASHY_VERSION"])
-				}
-			}
-		default:
-			break drainResume
-		}
-	}
-	if !foundResume {
-		t.Fatal("session_start with source=resume not found after Resume")
 	}
 }

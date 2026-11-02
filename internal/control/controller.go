@@ -22,9 +22,8 @@ const maxPendingImages = 8
 // Events are emitted under the controller lock, so emit must not block and must
 // not call back into the controller.
 type Controller struct {
-	a           *agent.Agent
-	emit        func(Event)
-	interactive bool // terminal interface: fire interface-only hooks
+	a    *agent.Agent
+	emit func(Event)
 
 	mu       sync.Mutex
 	count    int
@@ -74,18 +73,6 @@ func (c *Controller) view(fn func()) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	fn()
-}
-
-// SetInteractive enables interface-only hooks: idle, steer_queued and pasted images.
-func (c *Controller) SetInteractive(on bool) { c.view(func() { c.interactive = on }) }
-
-// FireInteractive emits an interface-only hook for an interface action.
-func (c *Controller) FireInteractive(event string, kv ...string) {
-	c.view(func() {
-		if c.interactive {
-			c.a.Fire(event, kv...)
-		}
-	})
 }
 
 // Closed is closed after a quit or shutdown has saved the session.
@@ -355,9 +342,6 @@ func (c *Controller) finishCompact(op *operation, text string, err error) {
 // A session change is refused while unsent images are handed back for editing,
 // so the switch cannot discard them.
 func (c *Controller) settleLocked(unsent []agent.Input) {
-	if c.interactive {
-		c.a.Fire("idle")
-	}
 	d := c.deferred
 	if d == nil || c.closing {
 		c.deliverLocked()
@@ -478,7 +462,7 @@ func redact(text string, secrets ...string) string {
 func providerSecrets(s agent.Settings, extra ...string) []string {
 	secrets := append([]string(nil), extra...)
 	for _, p := range s.Providers {
-		secrets = append(secrets, p.APIKey, s.Environment[p.APIKeyEnv], os.Getenv(p.APIKeyEnv))
+		secrets = append(secrets, p.APIKey, os.Getenv(p.APIKeyEnv))
 	}
 	return secrets
 }

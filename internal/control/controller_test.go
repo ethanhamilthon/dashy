@@ -81,17 +81,22 @@ func newHarness(t *testing.T, model *fakeModel, config string) *harness {
 	t.Setenv("DASHY_HOME", home)
 	server := httptest.NewServer(model)
 	t.Cleanup(server.Close)
-	if config == "" {
-		config = "compact_keep_turns = 1\n"
-	}
-	text := fmt.Sprintf("provider='test'\nmodel='m'\n%s[providers.test]\nbase_url=%q\n", config, server.URL)
-	if err := os.WriteFile(filepath.Join(home, "dashy.toml"), []byte(text), 0600); err != nil {
-		t.Fatal(err)
-	}
 	a, err := agent.New(t.TempDir(), agent.ConfigFiles{})
 	if err != nil {
 		t.Fatal(err)
 	}
+	keepTurns := 1
+	a.ApplySettings(agent.Settings{
+		Provider:         "test",
+		Model:            "m",
+		CompactKeepTurns: keepTurns,
+		ShellTimeout:     120,
+		ShellMaxTimeout:  600,
+		ShellMaxOutput:   8192,
+		Providers: map[string]agent.Provider{
+			"test": {BaseURL: server.URL},
+		},
+	})
 	h := &harness{t: t, a: a, model: model}
 	h.c = New(a, func(e Event) {
 		h.mu.Lock()
@@ -342,7 +347,6 @@ func TestBusyGuardsRejectMutations(t *testing.T) {
 	<-model.started
 	defer close(model.gate)
 	cases := []Request{
-		{Type: "reload"},
 		{Type: "rename", Args: map[string]string{"title": "x"}},
 		{Type: "compact"},
 		{Type: "select_model", Args: map[string]string{"provider": "test", "model": "m"}},

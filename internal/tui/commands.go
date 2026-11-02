@@ -14,7 +14,7 @@ import (
 type command struct{ name, icon, description, label string }
 
 // commandIcons are the completion glyphs; the names and descriptions are shared with the JSON transport.
-var commandIcons = map[string]string{"/new": "+", "/help": "?", "/quit": "->", "/resume": "<", "/rename": "#", "/compact": "=", "/reload": "*", "/model": "~", "/login": "+"}
+var commandIcons = map[string]string{"/new": "+", "/help": "?", "/quit": "->", "/resume": "<", "/rename": "#", "/compact": "=", "/model": "~", "/login": "+"}
 
 func commandMenu() []command {
 	var menu []command
@@ -180,14 +180,7 @@ func (m model) runCommand(name string) (tea.Model, tea.Cmd) {
 		cmd := m.openPicker(strings.TrimPrefix(verb[0], "/"))
 		m.refresh(true)
 		return m, cmd
-	case "/reload":
-		m.resetCompletions()
-		if _, err := m.ctl.Submit(control.Request{Type: "reload"}); err != nil {
-			return m.reject(err)
-		}
-		m.cache = nil
-		m.refresh(true)
-		return m, nil
+
 	case "/rename":
 		if name == "/rename" {
 			m.input.SetValue("/rename ")
