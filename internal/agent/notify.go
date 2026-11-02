@@ -3,16 +3,22 @@ package agent
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"image"
 	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
+
+	_ "image/jpeg" // registers the decoder used by validImage
+	_ "image/png"
 
 	"dashy/internal/shell"
 )
@@ -47,7 +53,7 @@ func (a *Agent) listenNotifications() error {
 	if err := os.MkdirAll(runDir, 0700); err != nil {
 		return err
 	}
-	sockPath := SocketPath(runDir, a.sessionID())
+	sockPath := SocketPath(runDir, a.SessionID())
 
 	// Check if a stale socket exists and remove it if no active listener answers.
 	if conn, err := net.DialTimeout("unix", sockPath, 100*time.Millisecond); err == nil {
@@ -80,14 +86,13 @@ func (a *Agent) listenNotifications() error {
 			case err != nil:
 				status = err.Error()
 			case message.Image != nil:
-				if !strings.HasPrefix(message.Image.URL, "data:image/") {
-					status = "invalid image"
-					break
-				}
-				select {
-				case views <- *message.Image:
+				switch {
+				case !validImage(*message.Image):
+					status = "view requires a PNG or JPEG image"
+				case !a.ReserveImages(1):
+					status = "view: at most four new images per model request"
 				default:
-					status = "view queue is full: four images per model request"
+					views <- *message.Image // the reservation bounds the queue to its capacity
 				}
 			case strings.TrimSpace(message.Text) == "" || len(message.Text) > 128*1024:
 				status = "notify requires 1..131072 bytes of message text"
@@ -121,7 +126,43 @@ func (a *Agent) Notifications() []string {
 	}
 }
 
-// viewed drains images queued by dashy view.
+// imageSlots is the allowance of new images per model request. It is shared by
+// dashy view, composer submissions and steering; an image holds a slot until it
+// is in the history (or was returned to the composer unsent).
+type imageSlots struct {
+	mu sync.Mutex
+	n  int
+}
+
+// MaxPendingImages is how many new images one model request may carry.
+const MaxPendingImages = 4
+
+// ReserveImages takes n slots, or reports false when they would exceed MaxPendingImages.
+func (a *Agent) ReserveImages(n int) bool {
+	a.slots.mu.Lock()
+	defer a.slots.mu.Unlock()
+	if a.slots.n+n > MaxPendingImages {
+		return false
+	}
+	a.slots.n += n
+	return true
+}
+
+// ReleaseImages returns n slots.
+func (a *Agent) ReleaseImages(n int) {
+	a.slots.mu.Lock()
+	defer a.slots.mu.Unlock()
+	a.slots.n = max(0, a.slots.n-n)
+}
+
+// PendingImages counts the images that the next model request will carry.
+func (a *Agent) PendingImages() int {
+	a.slots.mu.Lock()
+	defer a.slots.mu.Unlock()
+	return a.slots.n
+}
+
+// viewed drains images queued by dashy view and releases their slots.
 func (a *Agent) viewed() []shell.Image {
 	var images []shell.Image
 	for {
@@ -129,9 +170,27 @@ func (a *Agent) viewed() []shell.Image {
 		case image := <-a.views:
 			images = append(images, image)
 		default:
+			a.ReleaseImages(len(images))
 			return images
 		}
 	}
+}
+
+// validImage accepts only a PNG or JPEG data URL whose payload decodes as that format.
+func validImage(img shell.Image) bool {
+	for _, format := range []string{"png", "jpeg"} {
+		payload, ok := strings.CutPrefix(img.URL, "data:image/"+format+";base64,")
+		if !ok {
+			continue
+		}
+		data, err := base64.StdEncoding.DecodeString(payload)
+		if err != nil {
+			return false
+		}
+		_, decoded, err := image.DecodeConfig(bytes.NewReader(data))
+		return err == nil && decoded == format
+	}
+	return false
 }
 
 // Endpoint resolves a session socket. Without an ID it uses DASHY_ENDPOINT,

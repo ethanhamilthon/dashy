@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"fmt"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,368 +9,155 @@ import (
 	"time"
 )
 
-func TestAgentsAssemblyOrderingAndNoGlobal(t *testing.T) {
-	home := t.TempDir()
-	cwd := t.TempDir()
-	t.Setenv("DASHY_HOME", home)
-
-	globalFile := filepath.Join(home, "AGENTS.md")
-	if err := os.WriteFile(globalFile, []byte("Global instructions.\n"), 0600); err != nil {
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 		t.Fatal(err)
-	}
-
-	localFile := filepath.Join(cwd, "AGENTS.md")
-	if err := os.WriteFile(localFile, []byte("Project instructions.\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	// 1. With NoGlobal: false -> both files in order: global then local, separated by blank line
-	a, err := New(cwd, ConfigFiles{NoGlobal: false})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer a.Close()
-
-	prompt := a.instructions()
-	wantHeader1 := "# " + globalFile
-	wantHeader2 := "# " + localFile
-
-	if !strings.Contains(prompt, wantHeader1) {
-		t.Fatalf("prompt missing global header %q:\n%s", wantHeader1, prompt)
-	}
-	if !strings.Contains(prompt, wantHeader2) {
-		t.Fatalf("prompt missing local header %q:\n%s", wantHeader2, prompt)
-	}
-
-	idx1 := strings.Index(prompt, wantHeader1)
-	idx2 := strings.Index(prompt, wantHeader2)
-	if idx1 >= idx2 {
-		t.Fatalf("expected global before local in prompt order: idx1=%d, idx2=%d", idx1, idx2)
-	}
-
-	// Verify blank line separation between sections
-	expected := fmt.Sprintf("# %s\nGlobal instructions.\n\n# %s\nProject instructions.\n", globalFile, localFile)
-	if prompt != expected {
-		t.Fatalf("assembled prompt mismatch:\ngot:\n%q\nwant:\n%q", prompt, expected)
-	}
-
-	// 2. With NoGlobal: true -> only local file
-	aNoGlobal, err := New(cwd, ConfigFiles{NoGlobal: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer aNoGlobal.Close()
-
-	promptNoGlobal := aNoGlobal.instructions()
-	if strings.Contains(promptNoGlobal, wantHeader1) {
-		t.Fatalf("NoGlobal prompt contains global header %q:\n%s", wantHeader1, promptNoGlobal)
-	}
-	if !strings.Contains(promptNoGlobal, wantHeader2) {
-		t.Fatalf("NoGlobal prompt missing local header %q:\n%s", wantHeader2, promptNoGlobal)
-	}
-	expectedNoGlobal := fmt.Sprintf("# %s\nProject instructions.\n", localFile)
-	if promptNoGlobal != expectedNoGlobal {
-		t.Fatalf("assembled prompt mismatch:\ngot:\n%q\nwant:\n%q", promptNoGlobal, expectedNoGlobal)
 	}
 }
 
-func TestAgentsNestedFences(t *testing.T) {
-	home := t.TempDir()
-	cwd := t.TempDir()
-	t.Setenv("DASHY_HOME", home)
-
-	content := "# Rules\n\nPreamble text\n\n> ```dashy\n> echo quote_marker\n> ```\n\n- ```dashy\n  echo list_marker\n  ```\n\n```bash\necho bash_marker\n```\n\n```dashy extra\necho extra_marker\n```\n\n````dashy\ncat << 'EOF'\n```\necho nested\n```\nEOF\n````\n\nFooter text\n"
-
-	localFile := filepath.Join(cwd, "AGENTS.md")
-	if err := os.WriteFile(localFile, []byte(content), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	a, err := New(cwd, ConfigFiles{NoGlobal: true})
+// systemPrompt assembles the prompt of a fresh agent with the given global and local AGENTS.md content.
+func systemPrompt(t *testing.T, global, local string) string {
+	t.Helper()
+	a := newTestAgentWith(t, &fakeProvider{reply: func(int, string) string { return "" }}, Options{}, func(home, dir string) {
+		if global != "" {
+			writeFile(t, filepath.Join(home, "AGENTS.md"), global)
+		}
+		if local != "" {
+			writeFile(t, filepath.Join(dir, "AGENTS.md"), local)
+		}
+	})
+	prompt, err := a.instructions(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close()
+	return prompt
+}
 
-	prompt := a.instructions()
-
-	if !strings.Contains(prompt, "> ```dashy") || strings.Contains(prompt, "\nquote_marker\n") {
-		t.Fatalf("nested fence inside blockquote was executed or altered:\n%s", prompt)
+// Files are added verbatim under "# path" headers, separated by exactly one blank line.
+func TestPromptKeepsFileBytesVerbatim(t *testing.T) {
+	a := newTestAgent(t, &fakeProvider{}, Options{})
+	global, local := filepath.Join(a.home, "AGENTS.md"), filepath.Join(a.Shell.Dir, "AGENTS.md")
+	writeFile(t, global, "g\r\nline")
+	writeFile(t, local, "l\n\n\n")
+	a.promptFiles = []string{global, local}
+	got, err := a.instructions(context.Background())
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(prompt, "- ```dashy") || strings.Contains(prompt, "\nlist_marker\n") {
-		t.Fatalf("nested fence inside list was executed or altered:\n%s", prompt)
-	}
-	if !strings.Contains(prompt, "```bash") || strings.Contains(prompt, "\nbash_marker\n") {
-		t.Fatalf("code block with non-dashy info was executed or altered:\n%s", prompt)
-	}
-	if !strings.Contains(prompt, "```dashy extra") || strings.Contains(prompt, "\nextra_marker\n") {
-		t.Fatalf("dashy block with extra info string was executed or altered:\n%s", prompt)
-	}
-
-	wantNested := "```\necho nested\n```"
-	if !strings.Contains(prompt, wantNested) {
-		t.Fatalf("4-backtick dashy block did not produce inner backticks:\n%s", prompt)
+	want := "# " + global + "\ng\r\nline\n\n# " + local + "\nl\n\n\n"
+	if got != want {
+		t.Fatalf("prompt = %q\nwant     %q", got, want)
 	}
 }
 
-func TestAgentsFailureText(t *testing.T) {
-	home := t.TempDir()
-	cwd := t.TempDir()
-	t.Setenv("DASHY_HOME", home)
-
-	content := "# Failure Test\n\n```dashy\necho \"standard error line 1\" >&2\necho \"standard error line 2\" >&2\nexit 42\n```\n"
-
-	localFile := filepath.Join(cwd, "AGENTS.md")
-	if err := os.WriteFile(localFile, []byte(content), 0600); err != nil {
-		t.Fatal(err)
+func TestNoAGENTSFilesMeansEmptyPrompt(t *testing.T) {
+	if got := systemPrompt(t, "", ""); got != "" {
+		t.Fatalf("prompt = %q", got)
 	}
-
-	a, err := New(cwd, ConfigFiles{NoGlobal: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer a.Close()
-
-	prompt := a.instructions()
-	if !strings.Contains(prompt, "[dashy block failed: exit status 42]") {
-		t.Fatalf("prompt missing failure header:\n%s", prompt)
-	}
-	if !strings.Contains(prompt, "standard error line 2") {
-		t.Fatalf("prompt missing stderr tail:\n%s", prompt)
+	a := newTestAgent(t, &fakeProvider{}, Options{NoGlobal: true})
+	if len(a.promptFiles) != 0 {
+		t.Fatalf("files = %v", a.promptFiles)
 	}
 }
 
-func TestAgentsTimeout(t *testing.T) {
-	home := t.TempDir()
-	cwd := t.TempDir()
-	t.Setenv("DASHY_HOME", home)
+// body returns the prompt without its "# path" header line.
+func body(prompt string) string { return prompt[strings.Index(prompt, "\n")+1:] }
 
-	content := "# Timeout Test\n\n```dashy\nsleep 5\n```\n"
-
-	localFile := filepath.Join(cwd, "AGENTS.md")
-	if err := os.WriteFile(localFile, []byte(content), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	origTimeout := dashyBlockTimeout
-	dashyBlockTimeout = 50 * time.Millisecond
-	defer func() { dashyBlockTimeout = origTimeout }()
-
-	a, err := New(cwd, ConfigFiles{NoGlobal: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer a.Close()
-
-	prompt := a.instructions()
-	if !strings.Contains(prompt, "[dashy block failed: timed out after 50ms]") {
-		t.Fatalf("prompt missing timeout failure message:\n%s", prompt)
+// Only top-level fences with the exact info string "dashy" run. Nested, other
+// info strings and quoted fences stay verbatim; the fence lines of a block vanish.
+func TestOnlyTopLevelDashyBlocksRun(t *testing.T) {
+	src := "before\n```dashy\necho one\n```\n- item\n\n  ```dashy\n  echo nested\n  ```\n```sh\necho sh\n```\n> ```dashy\n> echo quoted\n> ```\nafter\n"
+	want := "before\none\n- item\n\n  ```dashy\n  echo nested\n  ```\n```sh\necho sh\n```\n> ```dashy\n> echo quoted\n> ```\nafter\n"
+	if got := body(systemPrompt(t, src, "")); got != want {
+		t.Fatalf("body = %q\nwant   %q", got, want)
 	}
 }
 
-func TestAgentsTruncation(t *testing.T) {
-	home := t.TempDir()
-	cwd := t.TempDir()
-	t.Setenv("DASHY_HOME", home)
-
-	content := "# Truncation Test\n\n```dashy\nprintf \"START_MARKER\"\nhead -c 100000 /dev/zero | tr '\\0' 'A'\nprintf \"END_MARKER\"\n```\n"
-
-	localFile := filepath.Join(cwd, "AGENTS.md")
-	if err := os.WriteFile(localFile, []byte(content), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	a, err := New(cwd, ConfigFiles{NoGlobal: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer a.Close()
-
-	prompt := a.instructions()
-	if !strings.Contains(prompt, "START_MARKER") {
-		t.Fatalf("truncation did not keep the start")
-	}
-	if strings.Contains(prompt, "END_MARKER") {
-		t.Fatalf("truncation did not truncate at 64 KiB; found END_MARKER")
-	}
-
-	header := fmt.Sprintf("# %s\n# Truncation Test\n\n", localFile)
-	subContent := strings.TrimPrefix(prompt, header)
-	subContent = strings.TrimSuffix(subContent, "\n")
-	if len(subContent) != DashyBlockMaxOutput {
-		t.Fatalf("expected truncated output length %d, got %d", DashyBlockMaxOutput, len(subContent))
+// A failing block becomes its failure text with a short stderr tail; blocks run in order.
+func TestBlockFailureTextAndSequentialOrder(t *testing.T) {
+	src := "```dashy\necho first; echo tail-msg >&2; exit 3\n```\n```dashy\necho second\n```\n"
+	want := "[dashy block failed: exit status 3]\ntail-msg\nsecond\n"
+	if got := body(systemPrompt(t, src, "")); got != want {
+		t.Fatalf("body = %q", got)
 	}
 }
 
-func TestAgentsLazyFreezeAndSource(t *testing.T) {
-	home := t.TempDir()
-	cwd := t.TempDir()
-	t.Setenv("DASHY_HOME", home)
-
-	agentsPath := filepath.Join(cwd, "AGENTS.md")
-	if err := os.WriteFile(agentsPath, []byte("Version 1:\n```dashy\necho $DASHY_MODE:$DASHY_SOURCE\n```\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	a, err := New(cwd, ConfigFiles{NoGlobal: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer a.Close()
-
-	if a.System != "" {
-		t.Fatalf("expected lazy assembly, but a.System was already populated: %q", a.System)
-	}
-
-	p1 := a.instructions()
-	if !strings.Contains(p1, "Version 1:\ntui:startup") {
-		t.Fatalf("expected tui:startup in prompt, got:\n%s", p1)
-	}
-
-	if err := os.WriteFile(agentsPath, []byte("Version 2 modified\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	p2 := a.instructions()
-	if p2 != p1 {
-		t.Fatalf("prompt was not frozen; got:\n%s\nwant:\n%s", p2, p1)
-	}
-
-	if err := a.NewSession(); err != nil {
-		t.Fatal(err)
-	}
-	if a.promptFrozen {
-		t.Fatal("new session must not be promptFrozen before first request")
-	}
-
-	if err := os.WriteFile(agentsPath, []byte("Version 3:\n```dashy\necho $DASHY_MODE:$DASHY_SOURCE\n```\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	pNew := a.instructions()
-	if !strings.Contains(pNew, "Version 3:\ntui:new") {
-		t.Fatalf("expected tui:new in new session prompt, got:\n%s", pNew)
+func TestBlockTimeoutIsAFailure(t *testing.T) {
+	old := blockTimeout
+	blockTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { blockTimeout = old })
+	got := systemPrompt(t, "```dashy\nsleep 30\n```\n", "")
+	if !strings.Contains(got, "[dashy block failed: timed out after 300ms]") {
+		t.Fatalf("prompt = %q", got)
 	}
 }
 
-func TestAgentsConfigFlag(t *testing.T) {
-	home := t.TempDir()
-	cwd := t.TempDir()
-	t.Setenv("DASHY_HOME", home)
-
-	defaultFile := filepath.Join(cwd, "AGENTS.md")
-	if err := os.WriteFile(defaultFile, []byte("Default local.\n"), 0600); err != nil {
-		t.Fatal(err)
+// Stdout keeps its prefix within the combined 64 KiB budget; stderr keeps only a short tail.
+func TestBlockOutputBudget(t *testing.T) {
+	a := newTestAgent(t, &fakeProvider{}, Options{})
+	out, err := a.runBlock(context.Background(), "head -c 200000 /dev/zero | tr '\\0' a", "tui", "startup")
+	if err != nil || len(out) != blockOutput-blockStderrTail {
+		t.Fatalf("stdout kept %d bytes, err %v", len(out), err)
 	}
-
-	customFile := filepath.Join(cwd, "custom_role.md")
-	if err := os.WriteFile(customFile, []byte("Custom role instructions.\n"), 0600); err != nil {
-		t.Fatal(err)
+	failed, err := a.runBlock(context.Background(), "head -c 100000 /dev/zero | tr '\\0' a; echo boom >&2; exit 1", "tui", "startup")
+	if err != nil || failed != "[dashy block failed: exit status 1]\nboom" {
+		t.Fatalf("failure after the capture limit: %q %v", failed, err)
 	}
-
-	a, err := New(cwd, ConfigFiles{Config: "custom_role.md", NoGlobal: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer a.Close()
-
-	prompt := a.instructions()
-	if strings.Contains(prompt, "Default local.") {
-		t.Fatalf("prompt should not contain default local instructions when --config is given:\n%s", prompt)
-	}
-	if !strings.Contains(prompt, "Custom role instructions.") {
-		t.Fatalf("prompt missing custom role instructions:\n%s", prompt)
-	}
-	if !strings.Contains(prompt, "# "+customFile) {
-		t.Fatalf("prompt missing custom file header:\n%s", prompt)
-	}
-
-	_, err = New(cwd, ConfigFiles{Config: "nonexistent.md"})
-	if err == nil {
-		t.Fatal("expected startup error for missing --config file, got nil")
+	many := "for i in $(seq 1 40); do echo line$i >&2; done; exit 2"
+	failed, _ = a.runBlock(context.Background(), many, "tui", "startup")
+	if !strings.HasSuffix(failed, "line36\nline37\nline38\nline39\nline40") || strings.Count(failed, "\n") > blockTailLines {
+		t.Fatalf("stderr tail = %q", failed)
 	}
 }
 
-func TestAgentsEmptyWhenNothingFound(t *testing.T) {
-	home := t.TempDir()
-	cwd := t.TempDir()
-	t.Setenv("DASHY_HOME", home)
-
-	a, err := New(cwd, ConfigFiles{NoGlobal: true})
-	if err != nil {
+// A selected AGENTS.md that cannot be read is an error, never a shorter prompt.
+func TestSelectedFileVanishingIsAnError(t *testing.T) {
+	a := newTestAgentWith(t, &fakeProvider{}, Options{}, func(_, dir string) {
+		writeFile(t, filepath.Join(dir, "AGENTS.md"), "x")
+	})
+	if err := os.Remove(filepath.Join(a.Shell.Dir, "AGENTS.md")); err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close()
-
-	prompt := a.instructions()
-	if prompt != "" {
-		t.Fatalf("expected empty prompt when no AGENTS.md exists, got: %q", prompt)
+	if _, err := a.instructions(context.Background()); err == nil {
+		t.Fatal("missing selected file was skipped")
 	}
 }
 
-func TestAgentsEnvironmentVars(t *testing.T) {
-	home := t.TempDir()
-	cwd := t.TempDir()
-	t.Setenv("DASHY_HOME", home)
+func TestCancelledTurnStopsWhileBlockRuns(t *testing.T) {
+	a := newTestAgentWith(t, &fakeProvider{}, Options{}, func(_, dir string) {
+		writeFile(t, filepath.Join(dir, "AGENTS.md"), "```dashy\nsleep 30\n```\n")
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if _, err := a.assemblePrompt(ctx); err == nil || time.Since(start) > 10*time.Second {
+		t.Fatalf("cancel: %v after %s", err, time.Since(start))
+	}
+}
 
-	agentsPath := filepath.Join(cwd, "AGENTS.md")
-	script := "# Env Test\n\n```dashy\necho MODE=$DASHY_MODE\necho SOURCE=$DASHY_SOURCE\necho SESSION=$DASHY_SESSION_ID\necho HOME=$DASHY_HOME\n```\n"
-	if err := os.WriteFile(agentsPath, []byte(script), 0600); err != nil {
+// /resume of the current session assembles the prompt again: changed files and
+// blocks take effect once, then the new prompt is frozen for the session.
+func TestSameSessionResumeAssemblesAgain(t *testing.T) {
+	var runs string
+	fp := &fakeProvider{reply: func(int, string) string { return textReply("ok") }}
+	a := newTestAgentWith(t, fp, Options{}, func(home, dir string) {
+		runs = filepath.Join(home, "runs")
+		writeFile(t, filepath.Join(dir, "AGENTS.md"), "v1\n```dashy\necho run >> "+runs+"; echo block1\n```\n")
+	})
+	turn(t, a, "first")
+	writeFile(t, filepath.Join(a.Shell.Dir, "AGENTS.md"), "v2\n```dashy\necho run >> "+runs+"; echo block2\n```\n")
+	if err := a.Resume(a.SessionID()); err != nil {
 		t.Fatal(err)
 	}
-
-	// 1. Print mode + startup
-	a, err := New(cwd, ConfigFiles{NoGlobal: true, Mode: "print"})
-	if err != nil {
-		t.Fatal(err)
+	turn(t, a, "second")
+	turn(t, a, "third")
+	data, _ := os.ReadFile(runs)
+	if n := strings.Count(string(data), "run"); n != 2 {
+		t.Fatalf("blocks ran %d times, want 2", n)
 	}
-	defer a.Close()
-
-	p := a.instructions()
-	if !strings.Contains(p, "MODE=print") {
-		t.Fatalf("expected MODE=print, got:\n%s", p)
-	}
-	if !strings.Contains(p, "SOURCE=startup") {
-		t.Fatalf("expected SOURCE=startup, got:\n%s", p)
-	}
-	if !strings.Contains(p, "SESSION="+a.sessionID()) {
-		t.Fatalf("expected SESSION=%s, got:\n%s", a.sessionID(), p)
-	}
-	if !strings.Contains(p, "HOME="+home) {
-		t.Fatalf("expected HOME=%s, got:\n%s", home, p)
-	}
-
-	// Save session so we can resume it
-	if err := a.Save(); err != nil {
-		t.Fatal(err)
-	}
-	oldID := a.sessionID()
-
-	// Switch to a new session first
-	if err := a.NewSession(); err != nil {
-		t.Fatal(err)
-	}
-
-	// 2. Resume mode via Resume(id)
-	if err := a.Resume(oldID); err != nil {
-		t.Fatal(err)
-	}
-	pResume := a.instructions()
-	if !strings.Contains(pResume, "SOURCE=resume") {
-		t.Fatalf("expected SOURCE=resume on Resume(id), got:\n%s", pResume)
-	}
-
-	// Close first agent so lock is released
-	a.Close()
-
-	// 3. Resume mode via New(cwd, files, resumeID)
-	aResume, err := New(cwd, ConfigFiles{NoGlobal: true, Mode: "print"}, oldID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer aResume.Close()
-	pResumeStartup := aResume.instructions()
-	if !strings.Contains(pResumeStartup, "SOURCE=resume") {
-		t.Fatalf("expected SOURCE=resume on New with target id, got:\n%s", pResumeStartup)
+	bodies := fp.requests()
+	if !strings.Contains(bodies[0], "block1") || !strings.Contains(bodies[1], "block2") || !strings.Contains(bodies[2], "block2") || strings.Contains(bodies[2], "block1") {
+		t.Fatal("request prompts do not follow reassembly and freezing")
 	}
 }

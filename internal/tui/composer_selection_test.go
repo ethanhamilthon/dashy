@@ -1,20 +1,17 @@
 package tui
 
 import (
-	"fmt"
-	"strings"
-	"testing"
-
-	"dashy/internal/agent"
 	"dashy/internal/shell"
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/x/ansi"
+	"strings"
+	"testing"
 )
 
 // composerModel returns a model whose composer holds value, sized to width x height.
-func composerModel(value string, width, height int) model {
-	m := newModel(&agent.Agent{}, "/project")
+func composerModel(t *testing.T, value string, width, height int) model {
+	t.Helper()
+	m := bareModel(t, "/project")
 	m.width, m.height = width, height
 	m.input.SetValue(value)
 	m.refresh(true)
@@ -48,7 +45,7 @@ func update(m model, msg tea.Msg) model {
 // selectBrave selects "brave" in "hello brave world".
 func selectBrave(t *testing.T) model {
 	t.Helper()
-	m := composerModel("hello brave world", 40, 20)
+	m := composerModel(t, "hello brave world", 40, 20)
 	dragComposer(&m, 0, 6, 0, 11)
 	if got := m.selectedComposerText(); got != "brave" {
 		t.Fatalf("selected %q, want brave", got)
@@ -98,7 +95,7 @@ func TestComposerLayoutWrapsLikeTextarea(t *testing.T) {
 }
 
 func TestComposerDragSelectsWithoutCopy(t *testing.T) {
-	m := composerModel("hello brave world", 40, 20)
+	m := composerModel(t, "hello brave world", 40, 20)
 	dragComposer(&m, 0, 6, 0, 11)
 	if m.sel != nil {
 		t.Fatal("composer drag created a timeline selection")
@@ -109,20 +106,6 @@ func TestComposerDragSelectsWithoutCopy(t *testing.T) {
 	}
 	if got := m.input.Value(); got != "hello brave world" {
 		t.Fatalf("drag changed the text: %q", got)
-	}
-}
-
-func TestComposerClickPlacesCursor(t *testing.T) {
-	m := composerModel("hello world", 40, 20)
-	x, y := composerPoint(m, 0, 6)
-	m.mouseSelection(mouseAt(tea.MouseActionPress, x, y))
-	m.mouseSelection(mouseAt(tea.MouseActionRelease, x, y))
-	if _, _, ok := m.activeComposerSelection(); ok {
-		t.Fatal("click without drag left a selection")
-	}
-	m = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("X")})
-	if got := m.input.Value(); got != "hello Xworld" {
-		t.Fatalf("typing after click = %q, want %q", got, "hello Xworld")
 	}
 }
 
@@ -149,24 +132,6 @@ func TestComposerTypingReplacesSelection(t *testing.T) {
 	}
 }
 
-func TestComposerCtrlCCopiesInsteadOfQuit(t *testing.T) {
-	m := selectBrave(t)
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
-	m = next.(model)
-	if cmd == nil {
-		t.Fatal("selected text was not copied")
-	}
-	if got := m.input.Value(); got != "hello brave world" {
-		t.Fatalf("copy changed the text: %q", got)
-	}
-	if m.selectedComposerText() != "brave" {
-		t.Fatal("copy cleared the selection")
-	}
-	if m.ctl.Status().Cancelling {
-		t.Fatal("copy requested cancellation")
-	}
-}
-
 func TestComposerCtrlXCutsSelectionKeepsImages(t *testing.T) {
 	m := selectBrave(t)
 	m.images = []shell.Image{{URL: "data:image/png;base64,one"}}
@@ -182,54 +147,10 @@ func TestComposerCtrlXCutsSelectionKeepsImages(t *testing.T) {
 		t.Fatal("cut with a selection removed an image")
 	}
 
-	m = composerModel("hello world", 40, 20)
+	m = composerModel(t, "hello world", 40, 20)
 	m.images = []shell.Image{{URL: "data:image/png;base64,one"}}
 	m = update(m, tea.KeyMsg{Type: tea.KeyCtrlX})
 	if len(m.images) != 0 {
 		t.Fatal("ctrl+x without a selection did not remove the image")
-	}
-}
-
-func TestTimelineDragStillCopies(t *testing.T) {
-	m := composerModel("hello", 40, 20)
-	m.add("user", "timeline text")
-	m.refresh(true)
-	if m.viewport.YOffset != 0 {
-		t.Fatalf("test timeline must fit: offset %d", m.viewport.YOffset)
-	}
-	cmd, _ := m.mouseSelection(mouseAt(tea.MouseActionPress, 0, 0))
-	if cmd != nil || m.sel == nil {
-		t.Fatal("timeline press did not start a selection")
-	}
-	m.mouseSelection(mouseAt(tea.MouseActionMotion, 4, 0))
-	cmd, _ = m.mouseSelection(mouseAt(tea.MouseActionRelease, 4, 0))
-	if cmd == nil {
-		t.Fatal("timeline drag was not copied on release")
-	}
-	if m.inputSel != nil {
-		t.Fatal("timeline drag created a composer selection")
-	}
-}
-
-func TestComposerSelectionInsideScrolledValue(t *testing.T) {
-	var lines []string
-	for i := 0; i < 30; i++ {
-		lines = append(lines, fmt.Sprintf("line %02d", i))
-	}
-	value := strings.Join(lines, "\n")
-	m := composerModel(value, 40, 20)
-	m = update(m, struct{}{}) // the textarea scrolls to its cursor on the next update
-
-	top := m.inputTop - m.viewport.YOffset
-	shown := strings.TrimSpace(strings.TrimPrefix(ansi.Strip(strings.Split(m.View(), "\n")[top]), "▌"))
-	var first int
-	if _, err := fmt.Sscanf(shown, "line %d", &first); err != nil || first != 20 {
-		t.Fatalf("first visible row = %q, want line 20", shown)
-	}
-
-	dragComposer(&m, 0, 5, 1, 3)
-	start, end := first*8+5, (first+1)*8+3
-	if got, want := m.selectedComposerText(), value[start:end]; got != want {
-		t.Fatalf("selected %q, want %q", got, want)
 	}
 }

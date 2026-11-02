@@ -46,12 +46,15 @@ func retryable(err error) bool {
 	return errors.Is(err, io.EOF)
 }
 
-// delay returns the pause before the next attempt. A provider Retry-After wins when longer.
+// delay returns the pause before the next attempt: capped exponential backoff,
+// lengthened by a provider Retry-After but never beyond retryMax.
 func delay(attempt int, err error) time.Duration {
 	wait := min(retryMax, retryBase<<attempt)
 	var api *openai.Error
 	if errors.As(err, &api) && api.Response != nil {
 		if seconds, e := strconv.Atoi(api.Response.Header.Get("Retry-After")); e == nil && seconds > 0 {
+			// Clamp before converting to a duration so huge values cannot overflow.
+			seconds = min(seconds, int(retryMax/time.Second))
 			wait = max(wait, time.Duration(seconds)*time.Second)
 		}
 	}

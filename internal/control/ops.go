@@ -2,61 +2,32 @@ package control
 
 import (
 	"context"
-	"net/url"
+	"os"
 	"slices"
-	"sort"
 	"strings"
 
 	"dashy/internal/agent"
 )
 
-// Input sends user input. An idle session starts a turn; a busy one receives
-// it as steering.
+// Input sends user input. An idle session starts a turn; a busy one queues it as steering.
 func (c *Controller) Input(input agent.Input) error {
 	var err error
 	c.view(func() {
-		if c.shut {
+		switch {
+		case c.shut:
 			err = fail("closed", "the session is closed")
-			return
-		}
-		if strings.TrimSpace(input.Text) == "" && len(input.Images) == 0 {
+		case strings.TrimSpace(input.Text) == "" && len(input.Images) == 0:
 			err = fail("invalid", "input requires text or images")
-			return
-		}
-		if c.active != nil {
+		case c.active != nil:
 			err = c.queueLocked(input)
-			return
+		default:
+			if err = c.setupError(); err == nil {
+				if err = c.admit(input); err == nil {
+					c.noteImages(input)
+					c.beginTurnLocked(input, "user")
+				}
+			}
 		}
-		if err = c.setupError(); err != nil {
-			return
-		}
-		if err = c.admit(input); err != nil {
-			return
-		}
-		c.noteImages(input)
-		c.beginTurnLocked(input, "user")
-	})
-	return err
-}
-
-// Steer adds input as steering for the active turn. It returns an error if no
-// turn is active.
-func (c *Controller) Steer(input agent.Input) error {
-	var err error
-	c.view(func() {
-		if c.shut {
-			err = fail("closed", "the session is closed")
-			return
-		}
-		if strings.TrimSpace(input.Text) == "" && len(input.Images) == 0 {
-			err = fail("invalid", "input requires text or images")
-			return
-		}
-		if c.active == nil {
-			err = fail("not_busy", "no turn is running; send input to start one")
-			return
-		}
-		err = c.queueLocked(input)
 	})
 	return err
 }
@@ -72,10 +43,29 @@ func (c *Controller) queueLocked(input agent.Input) error {
 		return err
 	}
 	if !c.active.steering.PushInput(input) {
+		c.a.ReleaseImages(len(input.Images))
 		return fail("queue_full", "Steering queue is full; your message remains in the input.")
 	}
 	c.noteImages(input)
 	return nil
+}
+
+// admit reserves the images of input in the allowance of one model request.
+func (c *Controller) admit(input agent.Input) error {
+	if len(input.Images) > 0 && !c.a.ReserveImages(len(input.Images)) {
+		return fail("attachment_limit", "At most %d new images per request. Remove or submit images first.", agent.MaxPendingImages)
+	}
+	return nil
+}
+
+func (c *Controller) noteImages(input agent.Input) {
+	switch len(input.Images) {
+	case 0:
+	case 1:
+		c.publish(Event{Kind: "notice", Text: "Image added to next model request."})
+	default:
+		c.publish(Event{Kind: "notice", Text: "Images added to next model request."})
+	}
 }
 
 // Recall returns the newest instruction the agent has not accepted yet.
@@ -83,10 +73,11 @@ func (c *Controller) Recall() (*agent.Input, error) {
 	var input agent.Input
 	var ok bool
 	c.view(func() {
-		if c.active == nil || c.active.steering == nil {
-			return
+		if c.active != nil {
+			if input, ok = c.active.steering.RecallInput(); ok {
+				c.a.ReleaseImages(len(input.Images))
+			}
 		}
-		input, ok = c.active.steering.RecallInput()
 	})
 	if !ok {
 		return nil, fail("not_recallable", "That instruction was already accepted and cannot be recalled.")
@@ -94,84 +85,72 @@ func (c *Controller) Recall() (*agent.Input, error) {
 	return &input, nil
 }
 
-// Stop stops the active operation.
+// Stop cancels the active operation. The cancellation completes later as a done event.
 func (c *Controller) Stop() {
 	c.view(func() {
 		if c.active != nil {
-			c.cancelActiveLocked()
+			c.active.cancelled = true
+			c.active.cancel()
 		}
 	})
 }
 
 // Quit closes the session now, or after the active operation has ended.
 // closed reports whether the session closed immediately.
-func (c *Controller) Quit() (bool, error) {
-	var closed bool
-	var err error
+func (c *Controller) Quit() (closed bool, err error) {
 	c.view(func() {
 		if c.active != nil {
 			c.deferred = &deferredAction{kind: "quit"}
-			c.cancelActiveLocked()
-			closed = false
+			c.active.cancelled = true
+			c.active.cancel()
 			return
 		}
-		if err = c.closeLocked("quit"); err == nil {
-			closed = true
-		}
+		err = c.closeLocked()
+		closed = err == nil
 	})
 	return closed, err
 }
 
-// NewSession switches to a new session.
-func (c *Controller) NewSession() error {
-	var err error
-	c.view(func() {
-		err = c.switchRequest("new", "")
-	})
-	return err
-}
+// NewSession switches to a new session once the active operation ends.
+func (c *Controller) NewSession() error { return c.switchRequest("new", "") }
 
-// Resume switches to the saved session with the given ID.
-func (c *Controller) Resume(sessionID string) error {
-	var err error
-	c.view(func() {
-		err = c.switchRequest("resume", sessionID)
-	})
-	return err
-}
+// Resume switches to a saved session of this project once the active operation ends.
+func (c *Controller) Resume(sessionID string) error { return c.switchRequest("resume", sessionID) }
 
 func (c *Controller) switchRequest(kind, id string) error {
-	if kind == "resume" {
-		if id == "" {
-			return fail("invalid", "resume requires session_id")
-		}
-		sessions, err := c.sessionsLocked()
-		if err != nil {
-			return fail("failed", "%s", err)
-		}
-		if !slices.ContainsFunc(sessions, func(s SessionInfo) bool { return s.ID == id }) {
-			return fail("not_found", "session not found in this project: %s", id)
-		}
-	}
-	if c.pendingImages() > 0 && c.active != nil {
-		for _, in := range c.active.steering.Pending() {
-			if len(in.Images) > 0 {
-				return fail("pending_images", "Submit or remove pending images before switching sessions.")
+	var err error
+	c.view(func() {
+		if kind == "resume" {
+			var sessions []SessionInfo
+			if sessions, err = c.sessionsLocked(); err != nil {
+				err = fail("failed", "%s", err)
+				return
+			}
+			if !slices.ContainsFunc(sessions, func(s SessionInfo) bool { return s.ID == id }) {
+				err = fail("not_found", "session not found in this project: %s", id)
+				return
 			}
 		}
-	}
-	if c.active != nil {
-		c.deferred = &deferredAction{kind: kind, session: id}
-		c.cancelActiveLocked()
-		return nil
-	}
-	if err := c.switchLocked(kind, id); err != nil {
-		return fail("failed", "%s", err)
-	}
-	return nil
+		if c.active != nil {
+			for _, in := range c.active.steering.Pending() {
+				if len(in.Images) > 0 {
+					err = fail("pending_images", "Submit or remove pending images before switching sessions.")
+					return
+				}
+			}
+			c.deferred = &deferredAction{kind: kind, session: id}
+			c.active.cancelled = true
+			c.active.cancel()
+			return
+		}
+		if err = c.switchLocked(kind, id); err != nil {
+			err = fail("failed", "%s", err)
+		}
+	})
+	return err
 }
 
-// Rename sets the title of the current session.
+// Rename sets the title of the current session; an empty name restores the first user message.
 func (c *Controller) Rename(title string) error {
 	var err error
 	c.view(func() {
@@ -182,9 +161,10 @@ func (c *Controller) Rename(title string) error {
 			err = fail("failed", "%s", err)
 			return
 		}
+		c.custom = c.a.CustomTitle()
 		text := "Session title reset to the first message."
-		if name := strings.Join(strings.Fields(title), " "); name != "" {
-			text = "Session renamed: " + name
+		if c.custom != "" {
+			text = "Session renamed: " + c.custom
 		}
 		c.publish(Event{Kind: "notice", Text: text})
 	})
@@ -195,28 +175,27 @@ func (c *Controller) Rename(title string) error {
 func (c *Controller) Compact(prompt string) error {
 	var err error
 	c.view(func() {
-		if c.active != nil {
-			hint := "Wait for the active turn before compacting."
-			if c.active.kind == "compact" {
-				hint = "Compaction is already running."
+		switch {
+		case c.active != nil && c.active.kind == "compact":
+			err = fail("busy", "Compaction is already running.")
+		case c.active != nil:
+			err = fail("busy", "Wait for the active turn before compacting.")
+		default:
+			if err = c.setupError(); err == nil {
+				c.beginCompactLocked(strings.TrimSpace(prompt))
 			}
-			err = fail("busy", "%s", hint)
-			return
 		}
-		if err = c.setupError(); err != nil {
-			return
-		}
-		c.beginCompactLocked(prompt)
 	})
 	return err
 }
 
-func (c *Controller) runCompact(op *operation, prompt string) {
-	text, err := c.a.Compact(op.ctx, strings.TrimSpace(prompt))
-	c.finishCompact(op, text, err)
+// Instructions lists the AGENTS.md files of the session, in prompt order.
+func (c *Controller) Instructions() (paths []string) {
+	c.view(func() { paths = c.a.PromptFiles() })
+	return paths
 }
 
-// Models fetches model lists from all configured providers.
+// Models lists models of all configured providers.
 func (c *Controller) Models(ctx context.Context) (ModelList, error) {
 	var settings agent.Settings
 	var err error
@@ -243,30 +222,7 @@ func (c *Controller) Models(ctx context.Context) (ModelList, error) {
 	return list, nil
 }
 
-// Providers returns descriptions of configured providers.
-func (c *Controller) Providers() ([]ProviderInfo, error) {
-	var list []ProviderInfo
-	var err error
-	c.view(func() {
-		if err = c.requireIdle("Wait for the active turn before changing settings."); err != nil {
-			return
-		}
-		settings := c.a.Settings()
-		list = []ProviderInfo{}
-		for name, p := range settings.Providers {
-			list = append(list, ProviderInfo{
-				Name:             name,
-				BaseURL:          sanitizeURL(p.BaseURL),
-				APIKeyEnv:        p.APIKeyEnv,
-				APIKeyConfigured: p.APIKey != "" || p.APIKeyEnv != "",
-			})
-		}
-		sort.Slice(list, func(i, j int) bool { return list[i].Name < list[j].Name })
-	})
-	return list, err
-}
-
-// SelectModel sets the active provider, model, and reasoning effort.
+// SelectModel sets the active provider, model and reasoning effort.
 func (c *Controller) SelectModel(provider, model, effort string) error {
 	var err error
 	c.view(func() {
@@ -274,7 +230,7 @@ func (c *Controller) SelectModel(provider, model, effort string) error {
 			return
 		}
 		if provider == "" || model == "" {
-			err = fail("invalid", "select_model requires provider and model")
+			err = fail("invalid", "a model and its provider are required")
 			return
 		}
 		err = c.selectLocked(provider, model, effort)
@@ -282,15 +238,15 @@ func (c *Controller) SelectModel(provider, model, effort string) error {
 	return err
 }
 
-// SelectProvider sets the active provider.
+// SelectProvider sets the active provider, keeping its model when the selection allows.
 func (c *Controller) SelectProvider(name string) error {
 	var err error
 	c.view(func() {
 		if err = c.requireIdle("Wait for the active turn before changing settings."); err != nil {
 			return
 		}
-		settings := c.a.Settings()
-		err = c.selectLocked(name, settings.Model, settings.Effort)
+		s := c.a.Settings()
+		err = c.selectLocked(name, s.Model, s.Effort)
 	})
 	return err
 }
@@ -302,116 +258,91 @@ func (c *Controller) selectLocked(provider, model, effort string) error {
 	if err := c.a.Select(provider, model, effort); err != nil {
 		return fail("failed", "%s", redact(err.Error(), providerSecrets(c.a.Settings())...))
 	}
-	text := "Selected " + provider + " · " + model + "/" + effort
-	if dest := c.a.SelectionConfig(); dest != "" {
-		text += " (saved to " + dest + ")"
-	}
-	c.publish(Event{Kind: "notice", Text: text})
+	c.publish(Event{Kind: "notice", Text: "Selected " + provider + " · " + model + "/" + effort + " (saved to " + c.a.SettingsPath() + ")"})
 	return nil
 }
 
-// AddProvider configures a new provider.
+// AddProvider configures a new provider. The API key is never reported back.
 func (c *Controller) AddProvider(name, baseURL, apiKey string) error {
 	var err error
 	c.view(func() {
 		if err = c.requireIdle("Wait for the active turn before changing settings."); err != nil {
 			return
 		}
-		trimmed := strings.TrimSpace(name)
 		secrets := providerSecrets(c.a.Settings(), apiKey)
-		if err = c.a.AddProvider(trimmed, agent.Provider{BaseURL: baseURL, APIKey: apiKey}); err != nil {
+		if err = c.a.AddProvider(name, agent.Provider{BaseURL: baseURL, APIKey: apiKey}); err != nil {
 			err = fail("failed", "%s", redact(err.Error(), secrets...))
 			return
 		}
-		dest := c.a.PrimaryConfig()
-		text := "Provider created. Choose a model with /settings."
-		if dest != "" {
-			text = "Provider created in " + dest + ". Choose a model with /settings."
+		c.publish(Event{Kind: "notice", Text: "Provider created in " + c.a.SettingsPath() + ". Choose a model with /settings."})
+	})
+	return err
+}
+
+// ToggleReasoningSummary, ToggleAutoCompact and CycleShowLines change one setting and save it.
+// They are rejected while an operation runs, so no turn ever sees settings change under it.
+func (c *Controller) ToggleReasoningSummary() error {
+	return c.changeSetting(func(s agent.Settings) (string, error) {
+		err := c.a.SetReasoningSummary(!s.ReasoningSummary)
+		return "Reasoning summary: " + onOff(!s.ReasoningSummary), err
+	})
+}
+
+func (c *Controller) ToggleAutoCompact() error {
+	return c.changeSetting(func(s agent.Settings) (string, error) {
+		err := c.a.SetAutoCompact(!s.AutoCompact)
+		return "Auto compact: " + onOff(!s.AutoCompact), err
+	})
+}
+
+func (c *Controller) CycleShowLines() error {
+	return c.changeSetting(func(agent.Settings) (string, error) {
+		err := c.a.CycleShowLines()
+		return "Show lines: " + c.a.Settings().ShowLines, err
+	})
+}
+
+func (c *Controller) changeSetting(change func(agent.Settings) (string, error)) error {
+	var err error
+	c.view(func() {
+		if err = c.requireIdle("Wait for the active turn before changing settings."); err != nil {
+			return
+		}
+		text, e := change(c.a.Settings())
+		if e != nil {
+			err = fail("failed", "%s", e)
+			return
 		}
 		c.publish(Event{Kind: "notice", Text: text})
 	})
 	return err
 }
 
-func (c *Controller) requireIdle(msg string) error {
-	if c.active != nil {
-		return fail("busy", "%s", msg)
+func onOff(v bool) string {
+	if v {
+		return "on"
 	}
-	return nil
+	return "off"
 }
 
-func (c *Controller) admit(input agent.Input) error {
-	if len(input.Images) > 0 && c.pendingImages()+len(input.Images) > maxPendingImages {
-		return fail("attachment_limit", "At most %d images may be pending. Remove or submit images first.", maxPendingImages)
+// redact removes credentials from text returned to a caller.
+func redact(text string, secrets ...string) string {
+	for _, secret := range secrets {
+		if secret != "" {
+			text = strings.ReplaceAll(text, secret, "[redacted]")
+		}
 	}
-	return nil
+	return text
 }
 
-func (c *Controller) noteImages(input agent.Input) {
-	if len(input.Images) == 0 {
-		return
+// providerSecrets lists every configured credential so error text can be scrubbed.
+func providerSecrets(s agent.Settings, extra ...string) []string {
+	secrets := append([]string(nil), extra...)
+	for _, p := range s.Providers {
+		secrets = append(secrets, p.APIKey)
+		if p.APIKeyEnv != "" {
+			secrets = append(secrets, os.Getenv(p.APIKeyEnv))
+		}
 	}
-	text := "Image added to next model request."
-	if len(input.Images) > 1 {
-		text = "Images added to next model request."
-	}
-	c.publish(Event{Kind: "notice", Text: text})
-}
-
-func sanitizeURL(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return ""
-	}
-	u.User, u.RawQuery, u.Fragment = nil, "", ""
-	return u.String()
-}
-
-// ToggleReasoningSummary toggles reasoning summary on or off.
-func (c *Controller) ToggleReasoningSummary() error {
-	var err error
-	c.view(func() {
-		curr := c.a.Settings().ReasoningSummary
-		if err = c.a.SetReasoningSummary(!curr); err != nil {
-			err = fail("failed", "%s", err)
-			return
-		}
-		state := "off"
-		if !curr {
-			state = "on"
-		}
-		c.publish(Event{Kind: "notice", Text: "Reasoning summary: " + state})
-	})
-	return err
-}
-
-// ToggleAutoCompact toggles automatic compaction on or off.
-func (c *Controller) ToggleAutoCompact() error {
-	var err error
-	c.view(func() {
-		curr := c.a.Settings().AutoCompact
-		if err = c.a.SetAutoCompact(!curr); err != nil {
-			err = fail("failed", "%s", err)
-			return
-		}
-		state := "off"
-		if !curr {
-			state = "on"
-		}
-		c.publish(Event{Kind: "notice", Text: "Auto compact: " + state})
-	})
-	return err
-}
-
-// CycleShowLines cycles show lines through short, medium, and full.
-func (c *Controller) CycleShowLines() error {
-	var err error
-	c.view(func() {
-		if err = c.a.CycleShowLines(); err != nil {
-			err = fail("failed", "%s", err)
-			return
-		}
-		c.publish(Event{Kind: "notice", Text: "Show lines: " + c.a.Settings().ShowLines})
-	})
-	return err
+	return secrets
 }

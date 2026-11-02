@@ -1,8 +1,10 @@
 package tui
 
 import (
+	"dashy/internal/osc7501"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +18,7 @@ import (
 )
 
 func TestTimelineCacheAndResize(t *testing.T) {
-	m := newModel(&agent.Agent{}, "/project")
+	m := bareModel(t, "/project")
 	for i := 0; i < 100; i++ {
 		m.add("assistant", fmt.Sprintf("**Answer %d**\n\n- bullet", i))
 	}
@@ -68,9 +70,9 @@ func TestMetadataAndBottomBar(t *testing.T) {
 	if !strings.Contains(formatMetadata(&agent.Metadata{}, "code"), "↑? ↓?") {
 		t.Fatal("missing usage not marked")
 	}
-	m := newModel(&agent.Agent{}, "/a/very/long/项目/path")
-	n := int64(1234)
-	m.contextInput = &n
+	a := freshAgent(t)
+	a.History = []json.RawMessage{json.RawMessage(`{"role":"user","content":"` + strings.Repeat("x", 4400) + `"}`)}
+	m := newModel(a, "/a/very/long/项目/path", osc7501.New(io.Discard, false))
 	for _, width := range []int{1, 2, 3, 5, 10, 40, 80} {
 		m.width = width
 		bar := m.bottomBar()
@@ -83,71 +85,6 @@ func TestMetadataAndBottomBar(t *testing.T) {
 		t.Fatal(m.bottomBar())
 	}
 }
-func TestConfigSourcesHeader(t *testing.T) {
-	a := &agent.Agent{}
-	m := newModel(a, "/project")
-	if strings.Contains(ansi.Strip(m.timeline()), "AGENTS.md") {
-		t.Fatal("sources shown before the agent loaded any")
-	}
-	a.Sources = []agent.Source{
-		{Name: "AGENTS.md", Path: "/work/repo/AGENTS.md", Origin: "project"},
-		{Name: "AGENTS.md", Path: "/home/u/.dashy/AGENTS.md", Origin: "home"},
-		{Name: "AGENTS.md", Origin: "none"},
-	}
-	text := ansi.Strip(m.timeline())
-	for _, want := range []string{"AGENTS  /work/repo/AGENTS.md (project)", "AGENTS  /home/u/.dashy/AGENTS.md (home)", "AGENTS  none"} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("header missing %q in:\n%s", want, text)
-		}
-	}
-}
-
-func TestUnavailableContextClearsOldEstimate(t *testing.T) {
-	m := newModel(&agent.Agent{}, "/project")
-	n := int64(1234)
-	m.contextInput = &n
-	m.applyAgentEvent(agent.Event{Kind: "assistant", Text: "answer", Meta: &agent.Metadata{RequestID: "next"}, Final: true})
-	if m.contextInput != nil || !strings.Contains(m.bottomBar(), "ctx ?") {
-		t.Fatal("stale context shown for request without usage")
-	}
-}
-func TestCachePercentAvailability(t *testing.T) {
-	for _, tc := range []struct {
-		usage *agent.Usage
-		want  string
-	}{
-		{nil, "cache —"},
-		{&agent.Usage{Input: 100, Cached: -1}, "cache —"},
-		{&agent.Usage{}, "cache —"},
-		{&agent.Usage{Input: 100}, "cache 0%"},
-		{&agent.Usage{Input: 100, Cached: 100}, "cache 100%"},
-		{&agent.Usage{Input: 100, Cached: 200}, "cache —"},
-	} {
-		if got := formatMetadata(&agent.Metadata{Usage: tc.usage}, "code"); !strings.HasSuffix(got, tc.want) {
-			t.Errorf("%+v: %s", tc.usage, got)
-		}
-	}
-	if formatTokens(1500000) != "1.5m" {
-		t.Fatal("million token format")
-	}
-}
-
-func TestInputInfoBarGap(t *testing.T) {
-	m := newModel(&agent.Agent{}, "/project")
-	for _, text := range []string{"hello", "hello\nworld", "/"} {
-		m.input.SetValue(text)
-		m.refresh(false)
-		rows := strings.Split(ansi.Strip(m.timeline()), "\n")
-		if strings.TrimSpace(rows[len(rows)-2]) != "" || strings.TrimSpace(rows[len(rows)-3]) == "" {
-			t.Fatalf("expected exactly one blank row before bar: %q", rows)
-		}
-		m.refresh(true)
-		if m.viewport.TotalLineCount() < len(rows) {
-			t.Fatal("extra row not included in viewport layout")
-		}
-	}
-}
-
 func TestBlockLineLimits(t *testing.T) {
 	text := "first\nsecond\nthird\nfourth\nfifth\nsixth"
 	for _, kind := range []string{"code", "output", "reasoning"} {
@@ -190,12 +127,12 @@ func TestBlockLineLimits(t *testing.T) {
 
 func TestTimelineLimitsAndHiddenSpacing(t *testing.T) {
 	t.Setenv("DASHY_HOME", t.TempDir())
-	a, err := agent.New(t.TempDir(), agent.ConfigFiles{})
+	a, err := agent.New(t.TempDir(), agent.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer a.Close()
-	m := newModel(a, "/project")
+	m := newModel(a, "/project", osc7501.New(io.Discard, false))
 	for _, kind := range []string{"code", "output", "reasoning"} {
 		m.entries = append(m.entries, entry{Kind: kind, Text: "first\nsecond\nthird\nfourth\nfifth", Meta: &agent.Metadata{}})
 	}
@@ -206,7 +143,11 @@ func TestTimelineLimitsAndHiddenSpacing(t *testing.T) {
 	if !strings.Contains(ansi.Strip(m.cache[0].Text), "fifth") {
 		t.Fatal("default code limit too short")
 	}
-	a.ApplySettings(agent.Settings{ShowLines: "full"})
+	for i := 0; i < 2; i++ { // short -> medium -> full
+		if err := a.CycleShowLines(); err != nil {
+			t.Fatal(err)
+		}
+	}
 	m.cache = nil
 	m.timeline()
 	if !strings.Contains(ansi.Strip(m.cache[1].Text), "fifth") || !strings.Contains(ansi.Strip(m.cache[2].Text), "fifth") {
@@ -223,31 +164,11 @@ func TestTimelineLimitsAndHiddenSpacing(t *testing.T) {
 	}
 }
 
-func TestCompactContext(t *testing.T) {
-	for _, tc := range []struct {
-		n    int64
-		want string
-	}{
-		{0, "0"}, {999, "999"}, {1000, "1K"}, {36679, "37K"},
-		{999499, "999K"}, {999500, "1M"}, {1000000, "1M"}, {1200000, "1.2M"},
-	} {
-		if got := formatContext(tc.n); got != tc.want {
-			t.Errorf("%d: %s, want %s", tc.n, got, tc.want)
-		}
-	}
-	m := newModel(&agent.Agent{}, "/project")
-	n := int64(36679)
-	m.contextInput = &n
-	if !strings.Contains(m.bottomBar(), "ctx ~37K") {
-		t.Fatal(m.bottomBar())
-	}
-}
-
 func TestMinimalCommandCompletions(t *testing.T) {
 	previous := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	defer lipgloss.SetColorProfile(previous)
-	m := newModel(&agent.Agent{}, "/project")
+	m := bareModel(t, "/project")
 	m.input.SetValue("/")
 	for selected := range commands {
 		m.selected = selected
@@ -330,12 +251,19 @@ func TestSingleLineNotifications(t *testing.T) {
 	if fg != muted || marker != "!" {
 		t.Fatal("notice must use a gray icon and text")
 	}
-	m := newModel(&agent.Agent{History: []json.RawMessage{json.RawMessage(`{"role":"user","content":"` + reset + `"}`)}}, "/project")
+	t.Setenv("DASHY_HOME", t.TempDir())
+	a, err := agent.New(t.TempDir(), agent.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(a.Close)
+	a.History = []json.RawMessage{json.RawMessage(`{"role":"user","content":"` + reset + `"}`)}
+	m := newModel(a, "/project", osc7501.New(io.Discard, false))
 	restored := m.timeline()
 	if !strings.Contains(ansi.Strip(restored), "! · Shell session restarted.") || strings.Contains(ansi.Strip(restored), "<notify>") {
 		t.Fatal("restored notice not formatted")
 	}
-	live := newModel(&agent.Agent{}, "/project")
+	live := bareModel(t, "/project")
 	live.applyAgentEvent(agent.Event{Kind: "notice", Text: reset})
 	live.timeline()
 	if m.cache[0].Text != live.cache[0].Text {

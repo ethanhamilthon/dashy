@@ -5,20 +5,19 @@ import (
 	"strings"
 )
 
-const (
-	// DefaultOutputLimit caps a tool call result when the agent does not choose a limit.
-	DefaultOutputLimit = 8 * 1024
-	// NoOutputLimit keeps the complete output (used for the prefix and max_output 0).
-	NoOutputLimit = 0
-)
-
 // cappedBuffer captures UTF-8 tool output. With a positive limit it keeps the
-// first and last limit/2 bytes; with NoOutputLimit it keeps everything.
+// first and last limit/2 bytes; otherwise it keeps everything.
 type cappedBuffer struct {
 	limit      int
 	head, tail []byte
 	size       int
 }
+
+// OutputBuffer is a capped capture of command output.
+type OutputBuffer = cappedBuffer
+
+// NewOutputBuffer keeps the first and last limit/2 bytes, or everything when limit <= 0.
+func NewOutputBuffer(limit int) *OutputBuffer { return &cappedBuffer{limit: limit} }
 
 func (b *cappedBuffer) Write(p []byte) (int, error) {
 	total := len(p)
@@ -39,15 +38,6 @@ func (b *cappedBuffer) Write(p []byte) (int, error) {
 	}
 	return total, nil
 }
-
-// OutputBuffer is a capped capture of command output.
-type OutputBuffer = cappedBuffer
-
-// NewOutputBuffer keeps the first and last limit/2 bytes, or everything when limit <= 0.
-func NewOutputBuffer(limit int) *OutputBuffer { return &cappedBuffer{limit: limit} }
-
-// Truncated reports whether any bytes were omitted.
-func (b *cappedBuffer) Truncated() bool { return b.limit > 0 && b.size > b.limit }
 
 func (b *cappedBuffer) Text() string {
 	head, tail := strings.ToValidUTF8(string(b.head), ""), strings.ToValidUTF8(string(b.tail), "")

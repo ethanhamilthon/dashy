@@ -150,7 +150,7 @@ func renderRail(text string, width int) string {
 	return strings.Join(lines, "\n")
 }
 func (m model) inputBlock() string {
-	if m.menuKind == "setup" && len(m.setup) == 2 {
+	if m.menuKind == pickerSetup && len(m.setup) == 2 {
 		return renderRail("API key: "+strings.Repeat("*", len([]rune(m.input.Value()))), m.width)
 	}
 	return renderRail(m.input.View(), m.width)
@@ -173,12 +173,8 @@ func (m *model) timeline() string {
 	if s := m.ctl.Settings(); s.Provider == "" || s.Model == "" {
 		out.WriteString(lipgloss.NewStyle().Foreground(warnColor).Render(m.setupHint()) + "\n")
 	}
-	for _, s := range m.ctl.Sources() {
-		where := s.Origin
-		if s.Path != "" {
-			where = shortPath(s.Path) + " (" + s.Origin + ")"
-		}
-		row := fmt.Sprintf("%-7s %s", strings.TrimSuffix(s.Name, filepath.Ext(s.Name)), where)
+	for _, path := range m.ctl.Instructions() {
+		row := "AGENTS.md " + shortPath(path)
 		out.WriteString(lipgloss.NewStyle().Foreground(muted).Render(ansi.Truncate(row, max(1, m.width), "…")) + "\n")
 	}
 	out.WriteString("\n")
@@ -190,11 +186,11 @@ func (m *model) timeline() string {
 		limit := -1
 		switch e.Kind {
 		case "code":
-			limit = settings.MaxCodeLines()
+			limit = settings.MaxLines("code")
 		case "output":
-			limit = settings.MaxResultLines()
+			limit = settings.MaxLines("output")
 		case "reasoning":
-			limit = settings.MaxThinkingLines()
+			limit = settings.MaxLines("reasoning")
 		}
 		if i >= len(m.cache) {
 			m.cache = append(m.cache, renderedEntry{})
@@ -228,7 +224,7 @@ func (m *model) timeline() string {
 	if count > 0 {
 		start = max(0, selected%count-rows+1)
 	}
-	if !fileMode && (m.menuKind == "model" || m.menuKind == "settings") {
+	if !fileMode && m.menuKind == pickerSettings {
 		parts := make([]string, len(agent.Efforts))
 		for i, e := range agent.Efforts {
 			parts[i] = " " + e + " "
@@ -250,7 +246,7 @@ func (m *model) timeline() string {
 		} else {
 			cmd := matches[i]
 			row = fmt.Sprintf("%s%-2s %-9s %s", marker, cmd.icon, cmd.name, cmd.description)
-			if m.menuKind == "model" || m.menuKind == "settings" {
+			if m.menuKind == pickerSettings {
 				if cmd.label != "" {
 					row = marker + cmd.label
 				} else if cmd.description != "" {

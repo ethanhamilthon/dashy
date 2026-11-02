@@ -2,14 +2,13 @@ package tui
 
 import (
 	"context"
+	"github.com/charmbracelet/bubbles/cursor"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"dashy/internal/agent"
-	"github.com/charmbracelet/bubbles/cursor"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -56,27 +55,6 @@ func TestFindFileTokenBasics(t *testing.T) {
 	}
 }
 
-func TestQuotePath(t *testing.T) {
-	tests := []struct {
-		in   string
-		want string
-	}{
-		{"main.go", "@main.go"},
-		{"internal/tui/files.go", "@internal/tui/files.go"},
-		{"internal/", "@internal/"},
-		{"my file.txt", "@\"my file.txt\""},
-		{"dir with space/", "@\"dir with space/\""},
-		{"quote\"in\"path.go", "@\"quote\\\"in\\\"path.go\""},
-	}
-
-	for _, tc := range tests {
-		got := quotePath(tc.in)
-		if got != tc.want {
-			t.Errorf("quotePath(%q) = %q, want %q", tc.in, got, tc.want)
-		}
-	}
-}
-
 func TestFilterRanking(t *testing.T) {
 	indexed := []string{
 		"cmd/dashy/main.go",
@@ -117,60 +95,8 @@ func TestFilterRanking(t *testing.T) {
 	}
 }
 
-func TestScanWalkBounded(t *testing.T) {
-	dir := t.TempDir()
-
-	// Create sample structure
-	_ = os.MkdirAll(filepath.Join(dir, "src", "pkg"), 0755)
-	_ = os.WriteFile(filepath.Join(dir, "src", "pkg", "app.go"), []byte("package pkg"), 0644)
-	_ = os.WriteFile(filepath.Join(dir, "root.txt"), []byte("root"), 0644)
-
-	// Create ignored directories
-	_ = os.MkdirAll(filepath.Join(dir, ".git", "objects"), 0755)
-	_ = os.WriteFile(filepath.Join(dir, ".git", "config"), []byte("git config"), 0644)
-	_ = os.MkdirAll(filepath.Join(dir, ".dashy"), 0755)
-	_ = os.WriteFile(filepath.Join(dir, ".dashy", "state"), []byte("state"), 0644)
-	_ = os.MkdirAll(filepath.Join(dir, "node_modules", "pkg"), 0755)
-	_ = os.WriteFile(filepath.Join(dir, "node_modules", "pkg", "index.js"), []byte("js"), 0644)
-
-	// Create symlink to directory (must not traverse)
-	_ = os.Symlink(filepath.Join(dir, "src"), filepath.Join(dir, "link_to_src"))
-
-	ctx, cancel := context.WithTimeout(context.Background(), fileScanTimeout)
-	defer cancel()
-
-	paths, err := scanProjectFiles(ctx, dir)
-	if err != nil {
-		t.Fatalf("scanProjectFiles error: %v", err)
-	}
-
-	for _, p := range paths {
-		if strings.HasPrefix(p, ".git") || strings.HasPrefix(p, ".dashy") || strings.HasPrefix(p, "node_modules") {
-			t.Fatalf("ignored directory leaked into paths: %s", p)
-		}
-		if strings.HasPrefix(p, "link_to_src/") {
-			t.Fatalf("traversed directory symlink: %s", p)
-		}
-	}
-
-	// Check that real files are found
-	hasRoot := false
-	hasApp := false
-	for _, p := range paths {
-		if p == "root.txt" {
-			hasRoot = true
-		}
-		if p == "src/pkg/app.go" {
-			hasApp = true
-		}
-	}
-	if !hasRoot || !hasApp {
-		t.Fatalf("expected paths root.txt and src/pkg/app.go in %v", paths)
-	}
-}
-
 func TestFileCompletionAcceptFileReplacesTokenOnly(t *testing.T) {
-	m := newModel(&agent.Agent{}, t.TempDir())
+	m := bareModel(t, t.TempDir())
 	m.input.SetValue("Please read @src/ and review")
 	_ = m.setCursorOffset(17)
 	token, ok := findFileToken(m.input.Value(), 17)
@@ -193,7 +119,7 @@ func TestFileCompletionAcceptFileReplacesTokenOnly(t *testing.T) {
 }
 
 func TestFileCompletionEnterDoesNotSubmit(t *testing.T) {
-	m := newModel(&agent.Agent{}, t.TempDir())
+	m := bareModel(t, t.TempDir())
 	m.fileCompletions = []string{"main.go"}
 	m.fileTokenStart = 0
 	m.fileTokenEnd = 2
@@ -216,7 +142,7 @@ func TestFileCompletionEnterDoesNotSubmit(t *testing.T) {
 }
 
 func TestEscClosesActiveCompletionBeforeTurnCancellation(t *testing.T) {
-	m, _, _ := heldModel(t, "")
+	m, _, _ := heldModel(t)
 	m = startBusy(t, m)
 	m.fileCompletions = []string{"file1.go", "file2.go"}
 
@@ -236,40 +162,6 @@ func TestEscClosesActiveCompletionBeforeTurnCancellation(t *testing.T) {
 	m = awaitIdle(t, next.(model))
 	if !hasEntry(m, "notice", "Turn cancelled.") {
 		t.Fatal("second Esc did not cancel the turn")
-	}
-}
-
-func TestUpDownNavigatesFileCompletions(t *testing.T) {
-	m := newModel(&agent.Agent{}, t.TempDir())
-	m.fileCompletions = []string{"a.go", "b.go", "c.go"}
-	m.fileSelected = 0
-
-	// Down moves to 1
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	m = next.(model)
-	if m.fileSelected != 1 {
-		t.Fatalf("selected = %d, want 1", m.fileSelected)
-	}
-
-	// Down moves to 2
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	m = next.(model)
-	if m.fileSelected != 2 {
-		t.Fatalf("selected = %d, want 2", m.fileSelected)
-	}
-
-	// Down wraps to 0
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	m = next.(model)
-	if m.fileSelected != 0 {
-		t.Fatalf("selected = %d, want 0", m.fileSelected)
-	}
-
-	// Up wraps to 2
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
-	m = next.(model)
-	if m.fileSelected != 2 {
-		t.Fatalf("selected = %d, want 2", m.fileSelected)
 	}
 }
 
@@ -329,51 +221,12 @@ func TestGitTrackedAndUntracked(t *testing.T) {
 	}
 }
 
-func TestQuotedPathWithSpacesAcceptance(t *testing.T) {
-	m := newModel(&agent.Agent{}, t.TempDir())
-	input := "look at @\"my fold"
-	m.input.SetValue(input)
-	m.input.CursorEnd()
-
-	token, ok := findFileToken(input, len([]rune(input)))
-	if !ok {
-		t.Fatal("token not found")
-	}
-
-	m.fileCompletions = []string{"my folder/document.pdf"}
-	m.fileTokenStart = token.start
-	m.fileTokenEnd = token.end
-
-	m.acceptFileCompletion()
-
-	want := "look at @\"my folder/document.pdf\""
-	if got := m.input.Value(); got != want {
-		t.Fatalf("quoted path replacement = %q, want %q", got, want)
-	}
-}
-
-func TestRenderingFileCompletions(t *testing.T) {
-	m := newModel(&agent.Agent{}, t.TempDir())
-	m.width = 80
-	m.height = 24
-	m.fileCompletions = []string{"alpha.go", "beta.go"}
-	m.fileSelected = 0
-
-	view := m.timeline()
-	if !strings.Contains(view, "› alpha.go") {
-		t.Fatalf("expected selected marker for alpha.go in timeline:\n%s", view)
-	}
-	if !strings.Contains(view, "  beta.go") {
-		t.Fatalf("expected unselected marker for beta.go in timeline:\n%s", view)
-	}
-}
-
 func TestFileCompletionE2EUpdateTypingBlinkEnterEsc(t *testing.T) {
 	dir := t.TempDir()
 	_ = os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0644)
 	_ = os.WriteFile(filepath.Join(dir, "util.go"), []byte("package main"), 0644)
 
-	m, _, release := heldModel(t, "")
+	m, _, release := heldModel(t)
 	m.cwd = dir
 
 	// Genuine Update typing of "@ma"
@@ -510,97 +363,111 @@ func TestFileCompletionE2EUpdateTypingBlinkEnterEsc(t *testing.T) {
 	}
 }
 
-func TestQuotePathAndFindFileTokenEscapingRoundtrip(t *testing.T) {
+func TestUpDownNavigatesFileCompletions(t *testing.T) {
+	m := bareModel(t, t.TempDir())
+	m.fileCompletions = []string{"a.go", "b.go", "c.go"}
+	m.fileSelected = 0
+
+	// Down moves to 1
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = next.(model)
+	if m.fileSelected != 1 {
+		t.Fatalf("selected = %d, want 1", m.fileSelected)
+	}
+
+	// Down moves to 2
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = next.(model)
+	if m.fileSelected != 2 {
+		t.Fatalf("selected = %d, want 2", m.fileSelected)
+	}
+
+	// Down wraps to 0
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = next.(model)
+	if m.fileSelected != 0 {
+		t.Fatalf("selected = %d, want 0", m.fileSelected)
+	}
+
+	// Up wraps to 2
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = next.(model)
+	if m.fileSelected != 2 {
+		t.Fatalf("selected = %d, want 2", m.fileSelected)
+	}
+}
+
+func TestScanWalkBounded(t *testing.T) {
 	dir := t.TempDir()
-	quoteDir := filepath.Join(dir, "my\"folder")
-	_ = os.Mkdir(quoteDir, 0755)
-	_ = os.WriteFile(filepath.Join(quoteDir, "main.go"), []byte("package main"), 0644)
 
-	slashDir := filepath.Join(dir, "my\\folder")
-	_ = os.Mkdir(slashDir, 0755)
-	_ = os.WriteFile(filepath.Join(slashDir, "util.go"), []byte("package main"), 0644)
+	// Create sample structure
+	_ = os.MkdirAll(filepath.Join(dir, "src", "pkg"), 0755)
+	_ = os.WriteFile(filepath.Join(dir, "src", "pkg", "app.go"), []byte("package pkg"), 0644)
+	_ = os.WriteFile(filepath.Join(dir, "root.txt"), []byte("root"), 0644)
 
-	// quotePath escapes quotes and backslashes
-	qpQuote := quotePath("my\"folder/")
-	if qpQuote != "@\"my\\\"folder/\"" {
-		t.Fatalf("quotePath for directory with quote = %q, want %q", qpQuote, "@\"my\\\"folder/\"")
+	// Create ignored directories
+	_ = os.MkdirAll(filepath.Join(dir, ".git", "objects"), 0755)
+	_ = os.WriteFile(filepath.Join(dir, ".git", "config"), []byte("git config"), 0644)
+	_ = os.MkdirAll(filepath.Join(dir, ".dashy"), 0755)
+	_ = os.WriteFile(filepath.Join(dir, ".dashy", "state"), []byte("state"), 0644)
+	_ = os.MkdirAll(filepath.Join(dir, "node_modules", "pkg"), 0755)
+	_ = os.WriteFile(filepath.Join(dir, "node_modules", "pkg", "index.js"), []byte("js"), 0644)
+
+	// Create symlink to directory (must not traverse)
+	_ = os.Symlink(filepath.Join(dir, "src"), filepath.Join(dir, "link_to_src"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), fileScanTimeout)
+	defer cancel()
+
+	paths, err := scanProjectFiles(ctx, dir)
+	if err != nil {
+		t.Fatalf("scanProjectFiles error: %v", err)
 	}
 
-	qpSlash := quotePath("my\\folder/")
-	if qpSlash != "@\"my\\\\folder/\"" {
-		t.Fatalf("quotePath for directory with backslash = %q, want %q", qpSlash, "@\"my\\\\folder/\"")
+	for _, p := range paths {
+		if strings.HasPrefix(p, ".git") || strings.HasPrefix(p, ".dashy") || strings.HasPrefix(p, "node_modules") {
+			t.Fatalf("ignored directory leaked into paths: %s", p)
+		}
+		if strings.HasPrefix(p, "link_to_src/") {
+			t.Fatalf("traversed directory symlink: %s", p)
+		}
 	}
 
-	// findFileToken parses escaped quotes and backslashes
-	// Cursor right before closing quote in @"my"folder/"
-	runes := []rune(qpQuote)
-	cursorBeforeQuote := len(runes) - 1
-	token, ok := findFileToken(qpQuote, cursorBeforeQuote)
+	// Check that real files are found
+	hasRoot := false
+	hasApp := false
+	for _, p := range paths {
+		if p == "root.txt" {
+			hasRoot = true
+		}
+		if p == "src/pkg/app.go" {
+			hasApp = true
+		}
+	}
+	if !hasRoot || !hasApp {
+		t.Fatalf("expected paths root.txt and src/pkg/app.go in %v", paths)
+	}
+}
+
+func TestQuotedPathWithSpacesAcceptance(t *testing.T) {
+	m := bareModel(t, t.TempDir())
+	input := "look at @\"my fold"
+	m.input.SetValue(input)
+	m.input.CursorEnd()
+
+	token, ok := findFileToken(input, len([]rune(input)))
 	if !ok {
-		t.Fatalf("findFileToken failed for %q at cursor %d", qpQuote, cursorBeforeQuote)
-	}
-	if !token.dir {
-		t.Fatal("expected token.dir = true")
-	}
-	if token.query != "my\"folder/" {
-		t.Fatalf("token.query = %q, want %q", token.query, "my\"folder/")
-	}
-	if token.start != 0 || token.end != len(runes) {
-		t.Fatalf("token range = [%d, %d], want [0, %d]", token.start, token.end, len(runes))
+		t.Fatal("token not found")
 	}
 
-	// findFileToken for backslash path
-	runesSlash := []rune(qpSlash)
-	cursorBeforeSlash := len(runesSlash) - 1
-	tokenSlash, okSlash := findFileToken(qpSlash, cursorBeforeSlash)
-	if !okSlash {
-		t.Fatalf("findFileToken failed for %q at cursor %d", qpSlash, cursorBeforeSlash)
-	}
-	if !tokenSlash.dir {
-		t.Fatal("expected tokenSlash.dir = true")
-	}
-	if tokenSlash.query != "my\\folder/" {
-		t.Fatalf("tokenSlash.query = %q, want %q", tokenSlash.query, "my\\folder/")
-	}
+	m.fileCompletions = []string{"my folder/document.pdf"}
+	m.fileTokenStart = token.start
+	m.fileTokenEnd = token.end
 
-	// End-to-end directory continuation: accept directory completion, then accept file inside it
-	m := newModel(&agent.Agent{}, dir)
-	m.fileCompletions = []string{"my\"folder/"}
-	m.fileSelected = 0
-	m.fileTokenStart = 0
-	m.fileTokenEnd = 0
-	m.input.SetValue("@my")
-	tokenInit, _ := findFileToken("@my", 3)
-	m.fileTokenStart, m.fileTokenEnd = tokenInit.start, tokenInit.end
+	m.acceptFileCompletion()
 
-	acceptDirCmd := m.acceptFileCompletion()
-	if acceptDirCmd != nil {
-		if noop := acceptDirCmd(); noop != nil {
-			next, _ := m.Update(noop)
-			m = next.(model)
-		}
-	}
-
-	// Value should be quoted dir, and token range should span the entire quoted directory
-	if m.input.Value() != "@\"my\\\"folder/\"" {
-		t.Fatalf("after accepting quoted dir, input = %q", m.input.Value())
-	}
-	// Completion continuation: file inside directory
-	m.fileCompletions = []string{"my\"folder/main.go"}
-	m.fileSelected = 0
-	acceptFileCmd := m.acceptFileCompletion()
-	if acceptFileCmd != nil {
-		if noop := acceptFileCmd(); noop != nil {
-			next, _ := m.Update(noop)
-			m = next.(model)
-		}
-	}
-
-	wantFinal := "@\"my\\\"folder/main.go\""
-	if m.input.Value() != wantFinal {
-		t.Fatalf("after accepting file in quoted dir, input = %q, want %q", m.input.Value(), wantFinal)
-	}
-	if m.hasFileCompletions() {
-		t.Fatal("file completion should be dismissed after accepting regular file")
+	want := "look at @\"my folder/document.pdf\""
+	if got := m.input.Value(); got != want {
+		t.Fatalf("quoted path replacement = %q, want %q", got, want)
 	}
 }

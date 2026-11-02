@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"os"
 	"strings"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 
 	"dashy/internal/agent"
 	"dashy/internal/control"
+	"dashy/internal/osc7501"
 	"dashy/internal/shell"
 )
 
@@ -19,17 +21,21 @@ var Version = "dev"
 
 // Run runs the terminal interface until the user exits.
 // The caller remains responsible for closing the agent and releasing session ownership.
-func Run(a *agent.Agent, cwd string) error {
+func Run(ctx context.Context, a *agent.Agent, cwd string) error {
 	keyboard := keyboardProtocol{}
 	defer keyboard.close()
-	m := newModel(a, cwd)
-	if m.reporter != nil {
-		defer m.reporter.Close()
-	}
+	reporter := osc7501.New(os.Stdout, osc7501.Enabled(os.Stdout))
+	defer reporter.Close()
+	m := newModel(a, cwd, reporter)
 	program := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithFilter(keyboard.filter))
-	ctx, stop := context.WithCancel(context.Background())
+	running, stop := context.WithCancel(ctx)
 	defer stop()
-	go forwardControl(ctx, m.events, program)
+	go forwardControl(running, m.events, program)
+	// A signal ends the interface through the program's own exit path.
+	go func() {
+		<-running.Done()
+		program.Quit()
+	}()
 	final, err := program.Run()
 	keyboard.close()
 	stop()
@@ -90,9 +96,7 @@ func (m model) workingBlock() string {
 
 // handleControl applies one controller event to the interface.
 func (m model) handleControl(e control.Event) (tea.Model, tea.Cmd) {
-	if m.reporter != nil {
-		m.reporter.HandleEvent(e)
-	}
+	m.reporter.HandleEvent(e)
 	follow := m.viewport.AtBottom()
 	var cmd tea.Cmd
 	switch e.Kind {
@@ -154,8 +158,5 @@ func (m *model) restoreUnsent(unsent []agent.Input) {
 }
 
 func (m *model) applyAgentEvent(e agent.Event) {
-	if e.Meta != nil && e.Meta.RequestID != "" {
-		m.contextInput = e.Meta.ContextInput
-	}
 	m.entries = agent.ApplyEvent(m.entries, e)
 }

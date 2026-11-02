@@ -5,16 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"syscall"
 )
 
+// acquire takes the exclusive per-session lock and, outside print mode, opens the session socket.
 func (a *Agent) acquire() error {
-	dir := a.sessionsDir
-	if dir == "" {
-		dir = filepath.Dir(a.HistoryPath)
-	}
-	lockPath := filepath.Join(dir, a.sessionID()+".lock")
+	lockPath := filepath.Join(a.sessionsDir, a.SessionID()+".lock")
 	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return err
@@ -22,14 +18,14 @@ func (a *Agent) acquire() error {
 	err = syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 	if errors.Is(err, syscall.EWOULDBLOCK) {
 		file.Close()
-		return fmt.Errorf("session is in use by another dashy process: %s", a.sessionID())
+		return fmt.Errorf("session is in use by another dashy process")
 	}
 	if err != nil {
 		file.Close()
 		return err
 	}
 	a.owner = file
-	if !a.NoSocket {
+	if !a.opts.Print {
 		if err := a.listenNotifications(); err != nil {
 			a.release()
 			return err
@@ -38,6 +34,7 @@ func (a *Agent) acquire() error {
 	return nil
 }
 
+// release closes the socket, drops the lock and removes the lock file of an unsaved session.
 func (a *Agent) release() {
 	if a.listener != nil {
 		a.listener.Close()
@@ -49,54 +46,45 @@ func (a *Agent) release() {
 		_ = syscall.Flock(int(a.owner.Fd()), syscall.LOCK_UN)
 		_ = a.owner.Close()
 		a.owner = nil
-		dir := a.sessionsDir
-		if dir == "" {
-			dir = filepath.Dir(a.HistoryPath)
-		}
-		lockPath := filepath.Join(dir, a.sessionID()+".lock")
 		if _, err := os.Stat(a.HistoryPath); os.IsNotExist(err) {
-			_ = os.Remove(lockPath)
+			_ = os.Remove(filepath.Join(a.sessionsDir, a.SessionID()+".lock"))
 		}
 	}
 }
 
+// HasSavedSession reports whether the session has history or a file on disk.
 func (a *Agent) HasSavedSession() bool {
 	_, err := os.Stat(a.HistoryPath)
 	return len(a.History) > 0 || err == nil
 }
 
-func (a *Agent) Close() { a.Shell.Close(); a.release() }
+// Close stops running shell calls and releases the session.
+func (a *Agent) Close() { a.release() }
 
-// Session changes are called only after the active turn has finished.
+// NewSession and Resume are called only when no turn is running.
 func (a *Agent) NewSession() error      { return a.changeSession("") }
 func (a *Agent) Resume(id string) error { return a.changeSession(id) }
 
+// changeSession switches to a new or saved session and re-reads settings and
+// AGENTS.md files. Resuming the current session keeps its lock and history but
+// selects settings and AGENTS.md files again, and assembles the prompt again.
 func (a *Agent) changeSession(id string) error {
-	if id != "" && id == strings.TrimSuffix(filepath.Base(a.HistoryPath), ".jsonl") {
+	if id != "" && id == a.SessionID() {
+		if err := a.loadConfig(a.Shell.Dir); err != nil {
+			return err
+		}
+		a.promptFrozen, a.promptSource = false, "resume"
 		return nil
 	}
-	c, err := loadConfiguration(a.home, a.Shell.Dir, a.files)
-	if err != nil {
+	next := &Agent{opts: a.opts, home: a.home, sessionsDir: a.sessionsDir, Shell: a.Shell,
+		promptSource: "new", slots: &imageSlots{}}
+	if err := next.loadConfig(a.Shell.Dir); err != nil {
 		return err
 	}
-	source := "new"
 	if id != "" {
-		source = "resume"
+		next.promptSource = "resume"
 	}
-	next := &Agent{
-		files:         a.files,
-		home:          a.home,
-		mode:          a.mode,
-		promptSource:  source,
-		NoSocket:      a.NoSocket,
-		sessionsDir:   a.sessionsDir,
-		Shell:         a.Shell,
-		System:        c.system,
-		LocalConfig:   c.local,
-		Sources:       c.sources,
-		primaryConfig: c.primary,
-	}
-	next.applySettings(c.settings)
+	var err error
 	if id == "" {
 		err = next.createSession()
 	} else {
@@ -112,7 +100,23 @@ func (a *Agent) changeSession(id string) error {
 			return err
 		}
 	}
-	a.Close()
+	a.release()
 	*a = *next
 	return nil
+}
+
+func (a *Agent) mode() string {
+	if a.opts.Print {
+		return "print"
+	}
+	return "tui"
+}
+
+// shellEnv is exported to every bash tool call. API keys and settings are never exported.
+func (a *Agent) shellEnv() map[string]string {
+	env := map[string]string{"DASHY_SESSION_ID": a.SessionID()}
+	if a.socketPath != "" {
+		env["DASHY_ENDPOINT"] = a.socketPath
+	}
+	return env
 }

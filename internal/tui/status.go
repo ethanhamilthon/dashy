@@ -59,11 +59,7 @@ func (m model) status() (string, string) {
 		left = "no model selected"
 	}
 
-	ctx := "ctx ?"
-	if m.contextInput != nil {
-		ctx = "ctx ~" + formatContext(*m.contextInput)
-	}
-	right := ctx + " · " + shortPath(m.cwd)
+	right := "ctx ~" + formatContext(m.ctl.Context()) + " · " + shortPath(m.cwd)
 	return left, right
 }
 

@@ -1,143 +1,157 @@
 package tui
 
 import (
-	"path/filepath"
 	"strings"
 	"testing"
 
-	"dashy/internal/agent"
 	tea "github.com/charmbracelet/bubbletea"
+
+	"dashy/internal/agent"
 )
 
-func TestEnterExecutesSelectedCommandWithoutExtraConfirmation(t *testing.T) {
-	for _, text := range []string{"/", "/he", "/help"} {
-		m, _ := testModel(t, nil)
-		m.input.SetValue(text)
-		if text == "/" {
-			m.selected = 1
+func menuNames(m model) []string {
+	var names []string
+	for _, c := range m.menu {
+		names = append(names, c.name)
+	}
+	return names
+}
+
+// /settings opens the settings picker with its rows; /login opens the provider part of it.
+func TestSettingsAndLoginCommandsOpenTheirPickers(t *testing.T) {
+	f := newFixture(t, true)
+	f.command(t, "/settings")
+	if f.m.menuKind != pickerSettings {
+		t.Fatalf("/settings opened %q", f.m.menuKind)
+	}
+	names := strings.Join(menuNames(f.m), "|")
+	for _, row := range []string{"Reasoning summary", "Auto compact", "Show lines", "Add provider"} {
+		if !strings.Contains(names, row) {
+			t.Fatalf("settings rows %q lack %q", names, row)
 		}
-		m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
-		if m.ctl.Status().Busy || len(m.entries) != 1 || !strings.Contains(m.entries[0].Text, "Enter:") {
-			t.Fatalf("%q: command not executed immediately: %+v", text, m.entries)
-		}
-		if m.input.Value() != "" {
-			t.Fatalf("%q: composer not cleared", text)
-		}
+	}
+	f.key(tea.KeyMsg{Type: tea.KeyEsc})
+	f.command(t, "/login")
+	if f.m.menuKind != pickerLogin || !strings.Contains(strings.Join(menuNames(f.m), "|"), "p|Add") {
+		t.Fatalf("/login opened %q with %v", f.m.menuKind, menuNames(f.m))
 	}
 }
 
-func TestSlashTextIsOrdinarySteeringWithoutCommandCompletion(t *testing.T) {
-	for _, text := range []string{"/tmp/example.go", "/unknown", "/help me with this", "/new\nexplain this", "/resume missing-id"} {
-		m, release := busyModel(t)
-		before := len(m.entries)
-		m.input.SetValue(text)
-		m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
-		queued := m.ctl.Status().Queued
-		if len(queued) != 1 || queued[0].Text != text || len(m.entries) != before {
-			t.Fatalf("%q: got queued=%v, entries=%v", text, queued, m.entries)
+// First run: no provider yet. /settings offers "Add provider", whose three prompts
+// create the provider in the settings file.
+func TestFirstRunSetupThroughSettings(t *testing.T) {
+	f := newFixture(t, false)
+	f.command(t, "/settings")
+	idx := -1
+	for i, c := range f.m.menu {
+		if c.name == "Add provider" {
+			idx = i
 		}
-		release()
-		awaitIdle(t, m)
+	}
+	if idx < 0 {
+		t.Fatalf("no Add provider row: %v", menuNames(f.m))
+	}
+	f.m.selected = idx
+	f.key(tea.KeyMsg{Type: tea.KeyEnter})
+	if f.m.menuKind != pickerSetup {
+		t.Fatalf("Add provider opened %q", f.m.menuKind)
+	}
+	for _, answer := range []string{"work", "http://127.0.0.1:9", ""} {
+		f.m.input.SetValue(answer)
+		f.key(tea.KeyMsg{Type: tea.KeyEnter})
+	}
+	if f.m.menuKind != "" {
+		t.Fatalf("picker still open: %q", f.m.menuKind)
+	}
+	if _, ok := f.m.ctl.Settings().Providers["work"]; !ok {
+		t.Fatal("provider was not added")
 	}
 }
 
-func TestDismissedCompletionAllowsLiteralCommandText(t *testing.T) {
-	m, release := busyModel(t)
+// A toggle refused by the controller (a turn is running) stays visible in the timeline,
+// and the setting does not change.
+func TestRejectedToggleIsShownAndChangesNothing(t *testing.T) {
+	m, _, release := heldModel(t)
 	defer release()
-	m.input.SetValue("/help")
-	m.hideCompletion = true
+	m = openPickerCmd(t, m, "/settings")
+	m = selectRow(t, m, "Auto compact")
+	before := m.ctl.Settings().AutoCompact
+	m = startBusy(t, m)
 	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if got := m.ctl.Status().Queued; len(got) != 1 || got[0].Text != "/help" {
-		t.Fatalf("dismissed completion still executed command: %v", got)
+	last := m.entries[len(m.entries)-1]
+	if m.ctl.Settings().AutoCompact != before || !strings.Contains(last.Text, "Wait for the active turn") {
+		t.Fatalf("setting changed or rejection missing: last entry %+v", last)
 	}
 }
 
-func TestNavigationCommandsAndUnsentSessionNotSaved(t *testing.T) {
-	t.Setenv("DASHY_HOME", t.TempDir())
-	cwd := t.TempDir()
-	writer, err := agent.New(cwd, agent.ConfigFiles{})
-	if err != nil {
-		t.Fatal(err)
+// The terminal is told about turns and session switches: a finished answer is done,
+// /new returns to idle, a failed turn is error and resuming returns to idle.
+func TestTerminalStatusFollowsTurnsAndSessionSwitches(t *testing.T) {
+	f := newFixture(t, true)
+	f.run(t, "first question")
+	if msg := awaitReport(t, f, "done"); msg != "answer" {
+		t.Fatalf("done message %q", msg)
 	}
-	defer writer.Close()
-	if sessions, _ := writer.Sessions(); len(sessions) != 0 {
-		t.Fatalf("empty session created before first message: %v", sessions)
+	f.command(t, "/new")
+	if msg := awaitReport(t, f, "idle"); msg != "" {
+		t.Fatalf("idle message after /new %q", msg)
 	}
-	writer.History = append(writer.History, []byte(`{"role":"user","content":"saved"}`))
-	if err = writer.Save(); err != nil {
-		t.Fatal(err)
+	f.fail.Store(true)
+	f.run(t, "second question")
+	awaitReport(t, f, "error")
+	f.fail.Store(false)
+	sessions, _ := f.m.ctl.Sessions()
+	if len(sessions) == 0 {
+		t.Fatal("no session to resume")
 	}
-	m := newModel(writer, cwd)
-	defer m.ctl.Close()
-	for _, r := range "/help" {
-		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
-		m = next.(model)
-	}
-	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if len(m.entries) == 0 || !strings.Contains(m.entries[len(m.entries)-1].Text, "/new") {
-		t.Fatalf("help failed: %+v", m.entries)
-	}
-	m.input.SetValue("/new")
-	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m.input.SetValue("/quit")
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = next.(model)
-	if cmd == nil {
-		t.Fatal("/quit did not exit")
-	}
-	if sessions, _ := writer.Sessions(); len(sessions) != 1 {
-		t.Fatalf("unsent /new session was saved on /quit: %v", sessions)
+	f.command(t, "/resume "+sessions[len(sessions)-1].ID)
+	awaitReport(t, f, "idle")
+}
+
+func TestStatusEstimatesContextOfResumedHistory(t *testing.T) {
+	f := newFixture(t, true)
+	f.run(t, strings.Repeat("long text ", 4000))
+	f.command(t, "/new")
+	sessions, _ := f.m.ctl.Sessions()
+	f.command(t, "/resume "+sessions[len(sessions)-1].ID)
+	if _, right := f.m.status(); !strings.Contains(right, "ctx ~") || strings.Contains(right, "ctx ~0K") {
+		t.Fatalf("status right side = %q", right)
 	}
 }
 
-func TestRenameSessionPersistsTitle(t *testing.T) {
-	t.Setenv("DASHY_HOME", t.TempDir())
-	cwd := t.TempDir()
-	a, err := agent.New(cwd, agent.ConfigFiles{})
-	if err != nil {
+// The terminal title is the session title: the first line of the first message, then
+// the rename, and the first line again after a rename to nothing.
+func TestTerminalTitleFollowsFirstLineAndRename(t *testing.T) {
+	f := newFixture(t, true)
+	f.run(t, "  first line\nsecond line")
+	awaitTitle(t, f, "first line")
+	f.command(t, "/rename Plan")
+	awaitTitle(t, f, "Plan")
+	f.command(t, "/rename ")
+	awaitTitle(t, f, "first line")
+}
+
+// An open settings picker survives a notification that starts a turn: the toggle is
+// refused with a notice and the setting does not change.
+func TestPickerToggleRefusedWhenNotificationStartsTurn(t *testing.T) {
+	f := newFixture(t, true)
+	hold := make(chan struct{})
+	f.hold.Store(&hold)
+	defer close(hold)
+	f.m = openPickerCmd(t, f.m, "/settings")
+	if err := agent.Notify(f.project, f.a.SessionID(), "background result"); err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close()
-	a.History = append(a.History, []byte(`{"role":"user","content":"first message"}`))
-	if err = a.Save(); err != nil {
-		t.Fatal(err)
+	if !f.m.ctl.Deliver() {
+		t.Fatal("notification did not start a turn")
 	}
-	m := newModel(a, cwd)
-	defer m.ctl.Close()
-	run := func(text string) {
-		m.input.SetValue(text)
-		m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
-	}
-	title := func() string {
-		sessions, err := a.Sessions()
-		if err != nil || len(sessions) != 1 {
-			t.Fatalf("sessions: %v %v", sessions, err)
-		}
-		return sessions[0].Title
-	}
-	run("/rename")
-	if m.input.Value() != "/rename " {
-		t.Fatalf("bare /rename should prompt for a name, got %q", m.input.Value())
-	}
-	run("/rename  My   project ")
-	if got := title(); got != "My project" {
-		t.Fatalf("title after rename = %q", got)
-	}
-	id := strings.TrimSuffix(filepath.Base(a.HistoryPath), ".jsonl")
-	if err := a.NewSession(); err != nil {
-		t.Fatal(err)
-	}
-	if err := a.Resume(id); err != nil {
-		t.Fatal(err)
-	}
-	if err := a.Save(); err != nil {
-		t.Fatal(err)
-	}
-	if got := title(); got != "My project" {
-		t.Fatalf("title lost after resume and save = %q", got)
-	}
-	run("/rename ")
-	if got := title(); got != "first message" {
-		t.Fatalf("empty rename should restore default, got %q", got)
+	awaitRequest(t, f.m)
+	f.m = settle(f.m)
+	f.m = selectRow(t, f.m, "Auto compact")
+	before := f.m.ctl.Settings().AutoCompact
+	f.m = key(f.m, tea.KeyMsg{Type: tea.KeyEnter})
+	last := f.m.entries[len(f.m.entries)-1]
+	if f.m.ctl.Settings().AutoCompact != before || f.m.menuKind != pickerSettings || !strings.Contains(last.Text, "Wait for the active turn") {
+		t.Fatalf("picker %q, setting %v, last entry %+v", f.m.menuKind, f.m.ctl.Settings().AutoCompact, last)
 	}
 }

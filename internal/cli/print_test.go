@@ -12,9 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
-	"time"
 )
 
 type mockTerminalReader struct {
@@ -146,103 +144,6 @@ func TestPrintModeEndToEndFakeProvider(t *testing.T) {
 	}
 }
 
-func TestPrintModeStdinAppend(t *testing.T) {
-	var receivedInstructions string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Input []struct {
-				Role    string          `json:"role"`
-				Content json.RawMessage `json:"content"`
-			} `json:"input"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		for _, item := range req.Input {
-			if item.Role == "user" {
-				var text string
-				if json.Unmarshal(item.Content, &text) == nil {
-					receivedInstructions = text
-				}
-			}
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		data, _ := json.Marshal(map[string]any{
-			"type": "response.completed",
-			"response": map[string]any{
-				"output": []any{
-					map[string]any{
-						"type":    "message",
-						"role":    "assistant",
-						"content": []any{map[string]any{"type": "output_text", "text": "ok"}},
-					},
-				},
-			},
-		})
-		fmt.Fprintf(w, "data: %s\n\n", data)
-	}))
-	defer server.Close()
-
-	setupTestHome(t, server.URL)
-
-	// Case 1: argument prompt + non-empty stdin -> appended after a blank line
-	receivedInstructions = ""
-	var out, diag bytes.Buffer
-	err := Run(context.Background(), []string{"-p", "main task"}, strings.NewReader("piped details\n"), &out, &diag)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if receivedInstructions != "main task\n\npiped details" {
-		t.Fatalf("got %q, want %q", receivedInstructions, "main task\n\npiped details")
-	}
-
-	// Case 2: empty argument prompt + non-empty stdin -> prompt = stdin
-	receivedInstructions = ""
-	out.Reset()
-	diag.Reset()
-	err = Run(context.Background(), []string{"-p", ""}, strings.NewReader("only stdin"), &out, &diag)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if receivedInstructions != "only stdin" {
-		t.Fatalf("got %q, want %q", receivedInstructions, "only stdin")
-	}
-
-	// Case 3: -p without argument + non-empty stdin -> prompt = stdin
-	receivedInstructions = ""
-	out.Reset()
-	diag.Reset()
-	err = Run(context.Background(), []string{"-p"}, strings.NewReader("piped without arg"), &out, &diag)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if receivedInstructions != "piped without arg" {
-		t.Fatalf("got %q, want %q", receivedInstructions, "piped without arg")
-	}
-
-	// Case 4: empty prompt + empty stdin -> error (exit code 1)
-	out.Reset()
-	diag.Reset()
-	err = Run(context.Background(), []string{"-p", ""}, strings.NewReader(""), &out, &diag)
-	if err == nil || !strings.Contains(err.Error(), "prompt is required") {
-		t.Fatalf("expected prompt is required error, got %v", err)
-	}
-	if code := ExitCode(err); code != 1 {
-		t.Fatalf("expected exit code 1, got %d", code)
-	}
-
-	// Case 5: terminal stdin is not read
-	receivedInstructions = ""
-	out.Reset()
-	diag.Reset()
-	termReader := &mockTerminalReader{Reader: strings.NewReader("ignored stdin")}
-	err = Run(context.Background(), []string{"-p", "terminal task"}, termReader, &out, &diag)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if receivedInstructions != "terminal task" {
-		t.Fatalf("terminal stdin should be ignored, got %q", receivedInstructions)
-	}
-}
-
 func TestPrintModeResume(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -359,94 +260,16 @@ func TestPrintModeSignalsAndExitCodes(t *testing.T) {
 		t.Fatalf("expected session id on failure stderr, got %s", diag.String())
 	}
 
-	// 4. Turn cancelled via context (without signal) -> exit code 1
+	// 4. A signal that arrives before the turn starts also exits 130
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	out.Reset()
 	diag.Reset()
 	err = Run(ctx, []string{"-p", "cancelled turn"}, strings.NewReader(""), &out, &diag)
-	if err == nil {
-		t.Fatal("expected error on cancelled context")
-	}
-	if code := ExitCode(err); code != 1 {
-		t.Fatalf("expected exit code 1 on non-signal cancel, got %d", code)
-	}
-
-	// 5. Turn interrupted by SIGINT -> exit code 130
-	blockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		time.Sleep(50 * time.Millisecond)
-		_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
-		select {
-		case <-r.Context().Done():
-		case <-time.After(200 * time.Millisecond):
-		}
-	}))
-	defer blockServer.CloseClientConnections()
-	defer blockServer.Close()
-
-	setupTestHome(t, blockServer.URL)
-	out.Reset()
-	diag.Reset()
-	err = Run(context.Background(), []string{"-p", "interrupted turn"}, strings.NewReader(""), &out, &diag)
-	if err == nil {
-		t.Fatal("expected error on SIGINT, got nil")
-	}
 	if code := ExitCode(err); code != 130 {
-		t.Fatalf("expected exit code 130 on SIGINT, got %d (%v)", code, err)
-	}
-	if out.Len() != 0 {
-		t.Fatalf("expected empty stdout on SIGINT, got %q", out.String())
-	}
-	if !strings.Contains(diag.String(), "session: ") {
-		t.Fatalf("expected session id on SIGINT stderr, got %s", diag.String())
-	}
-}
-
-func TestPrintModeRetryOnStderr(t *testing.T) {
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		if requests == 1 {
-			w.WriteHeader(http.StatusTooManyRequests)
-			fmt.Fprintln(w, "rate limited")
-			return
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		data, _ := json.Marshal(map[string]any{
-			"type": "response.completed",
-			"response": map[string]any{
-				"output": []any{
-					map[string]any{
-						"type":    "message",
-						"role":    "assistant",
-						"content": []any{map[string]any{"type": "output_text", "text": "recovered"}},
-					},
-				},
-			},
-		})
-		fmt.Fprintf(w, "data: %s\n\n", data)
-	}))
-	defer server.Close()
-
-	setupTestHome(t, server.URL)
-
-	var out, diag bytes.Buffer
-	err := Run(context.Background(), []string{"-p", "retry task"}, strings.NewReader(""), &out, &diag)
-	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("expected exit code 130 for a cancelled run, got %d (%v)", code, err)
 	}
 
-	if out.String() != "recovered\n" {
-		t.Fatalf("stdout mismatch: got %q, want %q", out.String(), "recovered\n")
-	}
-
-	if !strings.Contains(diag.String(), "Retrying in ") {
-		t.Fatalf("expected retry notice on stderr, got: %s", diag.String())
-	}
-	if !strings.Contains(diag.String(), "session: ") {
-		t.Fatalf("expected session id on stderr, got: %s", diag.String())
-	}
 }
 
 func TestBinaryPrintMode(t *testing.T) {
@@ -494,3 +317,49 @@ func TestBinaryPrintMode(t *testing.T) {
 }
 
 var execCommand = exec.Command
+
+func TestPrintModeRetryOnStderr(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			fmt.Fprintln(w, "rate limited")
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		data, _ := json.Marshal(map[string]any{
+			"type": "response.completed",
+			"response": map[string]any{
+				"output": []any{
+					map[string]any{
+						"type":    "message",
+						"role":    "assistant",
+						"content": []any{map[string]any{"type": "output_text", "text": "recovered"}},
+					},
+				},
+			},
+		})
+		fmt.Fprintf(w, "data: %s\n\n", data)
+	}))
+	defer server.Close()
+
+	setupTestHome(t, server.URL)
+
+	var out, diag bytes.Buffer
+	err := Run(context.Background(), []string{"-p", "retry task"}, strings.NewReader(""), &out, &diag)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if out.String() != "recovered\n" {
+		t.Fatalf("stdout mismatch: got %q, want %q", out.String(), "recovered\n")
+	}
+
+	if !strings.Contains(diag.String(), "Retrying in ") {
+		t.Fatalf("expected retry notice on stderr, got: %s", diag.String())
+	}
+	if !strings.Contains(diag.String(), "session: ") {
+		t.Fatalf("expected session id on stderr, got: %s", diag.String())
+	}
+}

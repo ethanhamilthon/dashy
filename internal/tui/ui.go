@@ -42,7 +42,6 @@ type model struct {
 	cache                    []renderedEntry
 	inputValue               string
 	inputWidth, inputHeight  int
-	contextInput             *int64
 	sel                      *selection
 	inputSel                 *composerSelection
 	inputDrag                bool
@@ -73,7 +72,7 @@ type model struct {
 	reporter                 *osc7501.Reporter
 }
 
-func newModel(a *agent.Agent, cwd string) model {
+func newModel(a *agent.Agent, cwd string, reporter *osc7501.Reporter) model {
 	input := textarea.New()
 	input.Placeholder = "Ask anything, or type / for commands"
 	input.Prompt = ""
@@ -90,14 +89,8 @@ func newModel(a *agent.Agent, cwd string) model {
 	input.BlurredStyle = style
 	events := control.NewQueue[control.Event](0)
 	ctl := control.New(a, func(e control.Event) { events.Push(e) })
-	reporter := osc7501.New(os.Stdout)
-	if a != nil {
-		if t := a.Title(); t != "" {
-			reporter.SetTitle(t)
-		}
-	}
-	reporter.Idle()
 	m := model{ctl: ctl, events: events, input: input, viewport: viewport.New(80, 24), width: 80, height: 24, cwd: cwd, reporter: reporter}
+	reporter.HandleEvent(control.Event{Kind: "session", Title: ctl.Title()})
 	m.setEntries(ctl.History())
 	m.refresh(true)
 	return m
@@ -105,12 +98,7 @@ func newModel(a *agent.Agent, cwd string) model {
 
 // setEntries replaces the timeline with the controller's display journal.
 func (m *model) setEntries(records []entry) {
-	m.entries, m.cache, m.contextInput = records, nil, nil
-	for _, r := range m.entries {
-		if r.Meta != nil && r.Meta.RequestID != "" {
-			m.contextInput = r.Meta.ContextInput
-		}
-	}
+	m.entries, m.cache = records, nil
 }
 
 type followerTick struct{}
@@ -194,73 +182,33 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case fileScanMsg:
 		return m.handleFileScan(v)
 	case clipboardResult:
-		valBefore := m.input.Value()
-		curBefore := m.composerCursorOffset()
-		cmd := m.acceptClipboard(v)
-		valAfter := m.input.Value()
-		curAfter := m.composerCursorOffset()
-		changed := valAfter != valBefore
-		moved := curAfter != curBefore
-		if changed {
-			m.selected = 0
-			m.hideCompletion = false
-		}
-		var fileCmd tea.Cmd
-		if changed || moved {
-			m.fileDismissed = false
-			fileCmd = m.checkFileCompletion()
-		}
-		m.refresh(true)
-		return m, tea.Batch(cmd, fileCmd)
+		return m, m.edit(true, func() tea.Cmd { return m.acceptClipboard(v) })
 	case followerTick:
 		// Notifications that arrive while idle start a turn; busy turns accept them as steering.
 		m.ctl.Deliver()
 		return m, followerPulse()
 	case modelChoices:
-		if (m.menuKind != "model" && m.menuKind != "settings") || v.generation != m.menuGeneration {
+		if m.menuKind != pickerSettings || v.generation != m.menuGeneration {
 			return m, nil
 		}
 		if v.err != nil {
 			m.closePicker()
 			return m.reject(v.err)
 		}
+		m.pickerModels = v.models
+		m.rebuildSettingsMenu()
 		var failed []string
 		for name, err := range v.errs {
 			failed = append(failed, name+": "+err)
 		}
 		sort.Strings(failed)
-		if m.menuKind == "settings" {
-			m.pickerModels = v.models
-			m.rebuildSettingsMenu()
-			if len(v.models) == 0 {
-				if len(failed) > 0 {
-					m.add("error", "Could not list models.\n"+strings.Join(failed, "\n"))
-				} else if len(m.ctl.Settings().Providers) > 0 {
-					m.add("notice", "No models returned by providers.")
-				}
-			} else if len(failed) > 0 {
-				m.add("notice", "Some providers failed to list models:\n"+strings.Join(failed, "\n"))
-			}
-		} else {
-			if len(v.models) == 0 {
-				m.closePicker()
-				if len(failed) > 0 {
-					m.add("error", "Could not list models.\n"+strings.Join(failed, "\n"))
-				} else {
-					m.add("notice", "No models returned by providers.")
-				}
-			} else {
-				current := m.ctl.Settings()
-				for i, c := range v.models {
-					m.menu = append(m.menu, command{name: c.Model, description: c.Provider})
-					if c.Provider == current.Provider && c.Model == current.Model {
-						m.selected = i
-					}
-				}
-				if len(failed) > 0 {
-					m.add("notice", "Some providers failed to list models:\n"+strings.Join(failed, "\n"))
-				}
-			}
+		switch {
+		case len(v.models) == 0 && len(failed) > 0:
+			m.add("error", "Could not list models.\n"+strings.Join(failed, "\n"))
+		case len(v.models) == 0 && len(m.ctl.Settings().Providers) > 0:
+			m.add("notice", "No models returned by providers.")
+		case len(failed) > 0:
+			m.add("notice", "Some providers failed to list models:\n"+strings.Join(failed, "\n"))
 		}
 		m.refresh(true)
 		return m, nil
@@ -418,39 +366,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.submitInput(text)
 
 		}
-		valBefore := m.input.Value()
-		curBefore := m.composerCursorOffset()
-		cmd := m.updateInput(msg)
-		valAfter := m.input.Value()
-		curAfter := m.composerCursorOffset()
-		changed := valAfter != valBefore
-		moved := curAfter != curBefore
-		if changed {
-			m.selected = 0
-			m.hideCompletion = false
-		}
-		var fileCmd tea.Cmd
-		if changed || moved {
-			m.fileDismissed = false
-			fileCmd = m.checkFileCompletion()
-		}
-		m.refresh(follow || changed)
-		return m, tea.Batch(cmd, fileCmd)
+		return m, m.edit(follow, func() tea.Cmd { return m.updateInput(msg) })
 	}
-	valBefore := m.input.Value()
-	curBefore := m.composerCursorOffset()
-	cmd := m.updateInput(msg)
-	valAfter := m.input.Value()
-	curAfter := m.composerCursorOffset()
-	changed := valAfter != valBefore
-	moved := curAfter != curBefore
+	return m, m.edit(follow, func() tea.Cmd { return m.updateInput(msg) })
+}
+
+// edit applies a text change to the composer. Changed text restarts the completion
+// menu, and changed text or cursor movement rechecks the @path completion.
+func (m *model) edit(follow bool, change func() tea.Cmd) tea.Cmd {
+	valBefore, curBefore := m.input.Value(), m.composerCursorOffset()
+	cmd := change()
+	changed := m.input.Value() != valBefore
+	moved := m.composerCursorOffset() != curBefore
+	if changed {
+		m.selected, m.hideCompletion = 0, false
+	}
 	var fileCmd tea.Cmd
 	if changed || moved {
 		m.fileDismissed = false
 		fileCmd = m.checkFileCompletion()
 	}
 	m.refresh(follow || changed)
-	return m, tea.Batch(cmd, fileCmd)
+	return tea.Batch(cmd, fileCmd)
 }
 func (m model) View() string {
 	lines := strings.Split(m.viewport.View(), "\n")

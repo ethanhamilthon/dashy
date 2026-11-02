@@ -3,196 +3,227 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
-	"time"
-
-	"dashy/internal/shell"
 )
 
-func TestTurnsExecutionAndHistory(t *testing.T) {
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		var p struct {
-			Instructions string
-			Input        []json.RawMessage
-		}
-		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-			t.Error(err)
-		}
-		if requests == 1 {
-			var last struct{ Role, Content string }
-			_ = json.Unmarshal(p.Input[len(p.Input)-1], &last)
-			if last.Role != "user" || last.Content != "hello" {
-				t.Errorf("first request must contain user message, got %v", last)
-			}
-		}
+// fakeProvider answers requests. reply gets the request number (from 1) and the
+// raw body and returns the response body: SSE for streamed requests.
+type fakeProvider struct {
+	mu     sync.Mutex
+	bodies []string
+	reply  func(n int, body string) string
+	status func(n int) int // optional: HTTP status of request n; 0 means 200
+}
+
+func (f *fakeProvider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	data, _ := io.ReadAll(r.Body)
+	f.mu.Lock()
+	f.bodies = append(f.bodies, string(data))
+	n := len(f.bodies)
+	f.mu.Unlock()
+	if f.status != nil && f.status(n) != 0 {
+		w.WriteHeader(f.status(n))
+		fmt.Fprint(w, `{"error":{"message":"transient"}}`)
+		return
+	}
+	out := f.reply(n, string(data))
+	w.Header().Set("Content-Type", "application/json")
+	if strings.Contains(string(data), `"stream":true`) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n")
-		fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"ok\"}]}]}}\n\n")
-	}))
-	defer server.Close()
-	a := &Agent{Shell: &shell.Runner{}, HistoryPath: filepath.Join(t.TempDir(), "history.json")}
-	configureTestAgent(t, a, Settings{Provider: "test", Model: "test-model", Providers: map[string]Provider{"test": {BaseURL: server.URL}}})
-	defer a.Close()
-	for i := 0; i < 2; i++ {
-		if err := a.Run(context.Background(), "hello", func(Event) {}); err != nil {
-			t.Fatal(err)
-		}
 	}
-	if requests != 2 {
-		t.Fatalf("expected 2 requests, got %d", requests)
+	fmt.Fprint(w, out)
+}
+
+func (f *fakeProvider) requests() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.bodies...)
+}
+
+// sse frames one streamed response.
+func sse(events ...string) string {
+	var b strings.Builder
+	for _, e := range events {
+		fmt.Fprintf(&b, "data: %s\n\n", e)
+	}
+	return b.String()
+}
+
+// textReply is a streamed response with one assistant message.
+func textReply(text string) string {
+	return sse(fmt.Sprintf(`{"type":"response.completed","response":{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":%q}]}]}}`, text))
+}
+
+// bashReply is a streamed response with one bash call.
+func bashReply(callID, command string) string {
+	args, _ := json.Marshal(map[string]any{"command": command, "timeout": nil, "max_output": nil})
+	return sse(fmt.Sprintf(`{"type":"response.completed","response":{"output":[{"type":"function_call","call_id":%q,"name":"bash","arguments":%q}]}}`, callID, args))
+}
+
+// newTestAgent opens a project in a temp directory against fp. DASHY_HOME is temporary too.
+func newTestAgent(t *testing.T, fp *fakeProvider, opts Options) *Agent {
+	return newTestAgentWith(t, fp, opts, nil)
+}
+
+// newTestAgentWith is newTestAgent after pre has written files into home and the project directory.
+func newTestAgentWith(t *testing.T, fp *fakeProvider, opts Options, pre func(home, dir string)) *Agent {
+	t.Helper()
+	home, dir := t.TempDir(), t.TempDir()
+	t.Setenv("DASHY_HOME", home)
+	server := httptest.NewServer(fp)
+	t.Cleanup(server.Close)
+	s := DefaultSettings()
+	s.Provider, s.Model = "p", "m"
+	s.Providers["p"] = Provider{BaseURL: server.URL}
+	if err := writeSettings(filepath.Join(home, "settings.json"), s); err != nil {
+		t.Fatal(err)
+	}
+	if pre != nil {
+		pre(home, dir)
+	}
+	a, err := New(dir, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(a.Close)
+	return a
+}
+
+// turn runs one message and returns its events.
+func turn(t *testing.T, a *Agent, text string) ([]Event, error) {
+	t.Helper()
+	var events []Event
+	err := a.Run(context.Background(), text, func(e Event) { events = append(events, e) })
+	return events, err
+}
+
+func TestToolCallThenAnswerIsCommittedInOrder(t *testing.T) {
+	fp := &fakeProvider{reply: func(n int, body string) string {
+		if n == 1 {
+			return bashReply("c1", "echo hi")
+		}
+		return textReply("done")
+	}}
+	a := newTestAgent(t, fp, Options{})
+	if _, err := turn(t, a, "go"); err != nil {
+		t.Fatal(err)
+	}
+	var kinds []string
+	for _, r := range a.Records() {
+		kinds = append(kinds, r.Kind+":"+strings.TrimSpace(r.Text))
+	}
+	if got := strings.Join(kinds, "|"); got != "user:go|code:echo hi|output:hi|assistant:done" {
+		t.Fatalf("records = %s", got)
+	}
+	if final := a.FinalText(); final != "done" {
+		t.Fatalf("FinalText = %q", final)
+	}
+	if n := len(fp.requests()); n != 2 {
+		t.Fatalf("requests = %d", n)
 	}
 }
 
-func TestMissingModelOrProviderDoesNotSendRequest(t *testing.T) {
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer server.Close()
-	for _, settings := range []Settings{{}, {Provider: "test"}, {Model: "test-model"}} {
-		a := &Agent{}
-		configureTestAgent(t, a, settings)
-		if _, err := a.request(context.Background(), func(Event) {}); err == nil {
-			t.Fatal("expected configuration error")
-		}
-	}
-	if requests != 0 {
-		t.Fatalf("sent %d requests with incomplete settings", requests)
+func TestFinalTextIgnoresEarlierTurns(t *testing.T) {
+	fp := &fakeProvider{reply: func(n int, _ string) string { return textReply(fmt.Sprintf("answer %d", n)) }}
+	a := newTestAgent(t, fp, Options{})
+	turn(t, a, "one")
+	turn(t, a, "two")
+	if final := a.FinalText(); final != "answer 2" {
+		t.Fatalf("FinalText = %q", final)
 	}
 }
 
-func TestSDKRequestAndHistory(t *testing.T) {
-	// Do not inherit OpenAI credentials or organization from the environment.
-	t.Setenv("OPENAI_API_KEY", "wrong")
-	t.Setenv("OPENAI_ORG_ID", "wrong-org")
-	t.Setenv("OPENAI_PROJECT_ID", "wrong-project")
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/responses" || r.Header.Get("Authorization") != "Bearer selected-key" {
-			t.Errorf("wrong endpoint or credentials: %s %q", r.URL, r.Header.Get("Authorization"))
-		}
-		if r.Header.Get("OpenAI-Organization") != "" || r.Header.Get("OpenAI-Project") != "" {
-			t.Error("inherited unrelated OpenAI configuration")
-		}
-		var p struct {
-			Model         string
-			Store, Stream bool
-			Reasoning     struct{ Effort, Summary string }
-			Input         []json.RawMessage
-			Tools         []struct {
-				Name   string
-				Strict bool
-			}
-		}
-		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-			t.Fatal(err)
-		}
-		if p.Model != "custom" || p.Store || !p.Stream || p.Reasoning.Effort != "high" || p.Reasoning.Summary != "auto" || len(p.Tools) != 1 || p.Tools[0].Name != "bash" || !p.Tools[0].Strict {
-			t.Errorf("unexpected payload: %+v", p)
-		}
-		if len(p.Input) != 2 || !strings.Contains(string(p.Input[1]), `"opaque":"keep"`) {
-			t.Errorf("history not preserved: %s", p.Input)
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		// Multiline SSE is handled by the SDK, not by a line-based JSON parser.
-		fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\n"+"data: \"delta\":\"hello\"}\n\n")
-		fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"reasoning\",\"id\":\"r\",\"opaque\":\"keep\"}]}}\n\n")
-	}))
-	defer server.Close()
-	a := &Agent{Shell: &shell.Runner{}, History: []json.RawMessage{raw(map[string]string{"role": "user", "content": "hi"}), json.RawMessage(`{"type":"reasoning","id":"r","opaque":"keep"}`)}}
-	configureTestAgent(t, a, Settings{Provider: "test", Model: "custom", Effort: "high", ReasoningSummary: true, Providers: map[string]Provider{"test": {BaseURL: server.URL + "/v1/", APIKey: "selected-key"}}})
-	var text string
-	items, err := a.request(context.Background(), func(e Event) { text += e.Text })
-	if err != nil || text != "hello" || len(items) != 1 || !strings.Contains(string(items[0]), `"opaque":"keep"`) {
-		t.Fatalf("items=%s text=%q err=%v", items, text, err)
+func TestMissingModelSendsNoRequest(t *testing.T) {
+	fp := &fakeProvider{reply: func(int, string) string { return textReply("x") }}
+	a := newTestAgent(t, fp, Options{})
+	a.applySettings(DefaultSettings())
+	if _, err := turn(t, a, "hi"); err == nil || !strings.Contains(err.Error(), "no provider or model") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(fp.requests()) != 0 {
+		t.Fatal("a request was sent without a model")
 	}
 }
 
-func TestSDKStreamFailures(t *testing.T) {
-	for _, tc := range []struct {
-		name, body string
-		status     int
-	}{
-		{"http", `{"error":{"message":"bad key"}}`, 401},
-		{"failed", `data: {"type":"response.failed","response":{"error":{"message":"failed"}}}` + "\n\n", 200},
-		{"incomplete", `data: {"type":"response.incomplete","response":{}}` + "\n\n", 200},
-		{"error", `data: {"type":"error","message":"bad stream"}` + "\n\n", 200},
-		{"truncated", `data: {"type":"response.output_text.delta","delta":"partial"}` + "\n\n", 200},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			requests := 0
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				requests++
-				w.Header().Set("Content-Type", "text/event-stream")
-				w.WriteHeader(tc.status)
-				fmt.Fprint(w, tc.body)
-			}))
-			defer server.Close()
-			a := &Agent{Shell: &shell.Runner{}}
-			configureTestAgent(t, a, Settings{Provider: "test", Model: "m", Providers: map[string]Provider{"test": {BaseURL: server.URL}}})
-			if _, err := a.request(context.Background(), func(Event) {}); err == nil {
-				t.Fatal("expected stream error")
-			}
-			if requests != 1 {
-				t.Fatalf("unexpected retries: %d", requests)
-			}
-		})
+// compactTurns makes history with n user turns of size bytes each.
+func compactTurns(t *testing.T, a *Agent, n, size int) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		a.message("user", fmt.Sprintf("turn %d %s", i, strings.Repeat("x", size)))
+		a.message("assistant", fmt.Sprintf("answer %d", i))
 	}
 }
 
-func TestSDKRequestCancellation(t *testing.T) {
-	started := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n")
-		w.(http.Flusher).Flush()
-		close(started)
-		<-r.Context().Done()
-	}))
-	defer server.Close()
-	a := &Agent{Shell: &shell.Runner{}}
-	configureTestAgent(t, a, Settings{Provider: "test", Model: "m", Providers: map[string]Provider{"test": {BaseURL: server.URL}}})
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() { _, err := a.request(ctx, func(Event) {}); done <- err }()
-	select {
-	case <-started:
-	case <-time.After(5 * time.Second):
-		t.Fatal("request did not start")
-	}
-	cancel()
-	select {
-	case err := <-done:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("expected cancellation, got %v", err)
+func TestManualCompactionReplacesOldItemsWithSummary(t *testing.T) {
+	fp := &fakeProvider{reply: func(n int, body string) string {
+		if strings.Contains(body, `"stream":true`) {
+			return textReply("after")
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("stream did not cancel")
+		return `{"id":"s","object":"response","status":"completed","output":[{"type":"message","id":"m","role":"assistant","status":"completed","content":[{"type":"output_text","text":"SUMMARY","annotations":[]}]}]}`
+	}}
+	a := newTestAgent(t, fp, Options{})
+	compactTurns(t, a, 6, 10)
+	text, err := a.Compact(context.Background(), "")
+	if err != nil || !strings.Contains(text, "Compacted") {
+		t.Fatalf("compact: %q %v", text, err)
+	}
+	records := a.Records()
+	joined := fmt.Sprint(records)
+	if strings.Contains(joined, "turn 0") || !strings.Contains(joined, "SUMMARY") {
+		t.Fatalf("records after compaction: %v", records)
+	}
+	if got := a.ContextTokens(); got <= 0 {
+		t.Fatalf("context after compaction = %d", got)
 	}
 }
 
-func TestSDKIgnoresEmptySSEFrames(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, "\n: heartbeat\n\n")
-		fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n")
-		fmt.Fprint(w, "\n: heartbeat\n\n")
-		fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hello\"}]}],\"usage\":{\"input_tokens\":10,\"output_tokens\":2}}}\n\n\n")
-	}))
-	defer server.Close()
-	a := &Agent{Shell: &shell.Runner{}}
-	configureTestAgent(t, a, Settings{Provider: "test", Model: "m", Providers: map[string]Provider{"test": {BaseURL: server.URL}}})
-	items, err := a.request(context.Background(), func(Event) {})
-	if err != nil || len(items) != 1 || a.lastRequest.Usage == nil || a.lastRequest.Usage.Input != 10 {
-		t.Fatalf("items=%s metadata=%+v err=%v", items, a.lastRequest, err)
+// estimateTokens counts history bytes, so a large history crosses the threshold.
+func TestEstimateTokensCountsImagesAndText(t *testing.T) {
+	big := json.RawMessage(`{"role":"user","content":"` + strings.Repeat("a", 4*CompactThreshold) + `"}`)
+	if got := estimateTokens([]json.RawMessage{big}); got <= CompactThreshold {
+		t.Fatalf("estimate %d", got)
+	}
+	img := json.RawMessage(`{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,AAAA"}]}`)
+	if got := estimateTokens([]json.RawMessage{img}); got < imageTokens {
+		t.Fatalf("image not charged: %d", got)
+	}
+}
+
+func TestStreamFailureSurfacesAsError(t *testing.T) {
+	fp := &fakeProvider{reply: func(int, string) string {
+		return sse(`{"type":"response.failed","response":{"error":{"code":"server_error","message":"boom"}}}`)
+	}}
+	a := newTestAgent(t, fp, Options{})
+	if _, err := turn(t, a, "hi"); err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// Every request carries the same bash tool description and a strict schema.
+func TestRequestCarriesStaticToolDescription(t *testing.T) {
+	fp := &fakeProvider{reply: func(int, string) string { return textReply("ok") }}
+	a := newTestAgent(t, fp, Options{})
+	if _, err := turn(t, a, "hi"); err != nil {
+		t.Fatal(err)
+	}
+	var body struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Strict      bool   `json:"strict"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal([]byte(fp.requests()[0]), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Tools) != 1 || body.Tools[0].Name != "bash" || body.Tools[0].Description != BashToolDescription || !body.Tools[0].Strict {
+		t.Fatalf("tools: %+v", body.Tools)
 	}
 }

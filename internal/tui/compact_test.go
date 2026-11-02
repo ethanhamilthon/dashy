@@ -51,7 +51,7 @@ func TestSendDuringCompactionIsRefused(t *testing.T) {
 // TestCompactWithGuidanceRunsFromEnter: text after /compact is the guidance,
 // not an ordinary chat message.
 func TestCompactWithGuidanceRunsFromEnter(t *testing.T) {
-	m, _ := testModel(t, nil)
+	m, _ := testModel(t)
 	m.input.SetValue("/compact keep the API decisions")
 	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
 	m = awaitIdle(t, m)

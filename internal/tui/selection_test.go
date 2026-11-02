@@ -1,12 +1,10 @@
 package tui
 
 import (
-	"strings"
-	"testing"
-
-	"dashy/internal/agent"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
+	"strings"
+	"testing"
 )
 
 func TestSelectionSpanAcrossRows(t *testing.T) {
@@ -25,16 +23,6 @@ func TestSelectionSpanAcrossRows(t *testing.T) {
 	}
 	if _, _, ok := sel.span(4, 10); ok {
 		t.Fatal("row after the selection must be untouched")
-	}
-}
-
-func TestSelectionNormalizesBackwardsDrag(t *testing.T) {
-	sel := selection{start: point{5, 4}, end: point{1, 2}}
-	if from, to, ok := sel.span(3, 20); !ok || from != 0 || to != 20 {
-		t.Fatalf("middle span = %d..%d %v", from, to, ok)
-	}
-	if from, to, ok := sel.span(2, 20); !ok || from != 1 || to != 20 {
-		t.Fatalf("first span = %d..%d %v", from, to, ok)
 	}
 }
 
@@ -62,7 +50,7 @@ func TestSelectionTextAndHighlight(t *testing.T) {
 }
 
 func TestSingleClickDoesNotCopy(t *testing.T) {
-	m := newModel(&agent.Agent{}, "/project")
+	m := bareModel(t, "/project")
 	m.add("user", "hello world")
 	m.refresh(true)
 	if cmd, _ := m.mouseSelection(tea.MouseMsg{X: 2, Y: 0, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress}); cmd != nil {

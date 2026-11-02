@@ -48,14 +48,10 @@ func formatMetadata(meta *agent.Metadata, kind string) string {
 	}
 	return fmt.Sprintf("  ↑%s ↓%s · %s · cache %s", input, output, duration, cache)
 }
+
+// formatContext is the prompt size in thousands of tokens, as in "ctx ~12K".
 func formatContext(n int64) string {
-	if n >= 999500 {
-		return strings.TrimSuffix(fmt.Sprintf("%.1f", float64(n)/1000000), ".0") + "M"
-	}
-	if n >= 1000 {
-		return fmt.Sprintf("%.0fK", float64(n)/1000)
-	}
-	return fmt.Sprint(n)
+	return fmt.Sprintf("%dK", (n+500)/1000)
 }
 
 // shortPath writes the home directory as ~ so the status bar stays compact.

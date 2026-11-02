@@ -2,16 +2,24 @@ package tui
 
 import (
 	"context"
-	"fmt"
 	"sort"
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"dashy/internal/agent"
 	"dashy/internal/control"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
-// modelChoices carries the result of listing models for the /settings picker.
+// Picker kinds. "settings" lists the settings rows and every model; "login" lists
+// providers, the provider part of /settings.
+const (
+	pickerSettings = "settings"
+	pickerLogin    = "login"
+	pickerSetup    = "setup" // provider prompts after "Add provider"
+)
+
+// modelChoices carries the result of listing models for the settings picker.
 type modelChoices struct {
 	generation int
 	models     []control.ModelInfo
@@ -30,16 +38,12 @@ func (m *model) openPicker(kind string) tea.Cmd {
 	m.menu = nil
 	m.input.Reset()
 	m.menuGeneration++
-	if kind == "login" {
-		settings := m.ctl.Settings()
-		for name := range settings.Providers {
+	if kind == pickerLogin {
+		for name := range m.ctl.Settings().Providers {
 			m.menu = append(m.menu, command{name: name, description: "Provider"})
 		}
 		sort.Slice(m.menu, func(i, j int) bool { return m.menu[i].name < m.menu[j].name })
 		m.menu = append(m.menu, command{name: "Add", icon: "+", description: "Create provider", label: "+ Add provider"})
-		if dest := m.ctl.PrimaryConfig(); dest != "" {
-			m.add("notice", fmt.Sprintf("Credentials destination: %s", dest))
-		}
 		return nil
 	}
 	m.effort = 0
@@ -48,10 +52,8 @@ func (m *model) openPicker(kind string) tea.Cmd {
 			m.effort = i
 		}
 	}
-	if kind == "settings" {
-		m.pickerModels = nil
-		m.rebuildSettingsMenu()
-	}
+	m.pickerModels = nil
+	m.rebuildSettingsMenu()
 	ctx, cancel := context.WithCancel(context.Background())
 	m.menuCancel = cancel
 	generation, ctl := m.menuGeneration, m.ctl
@@ -64,35 +66,28 @@ func (m *model) openPicker(kind string) tea.Cmd {
 	}
 }
 
+// rebuildSettingsMenu lists the settings rows followed by the models known so far.
 func (m *model) rebuildSettingsMenu() {
 	s := m.ctl.Settings()
 	m.menu = []command{
-		{name: "Reasoning summary", icon: "*", label: fmt.Sprintf("Reasoning summary: %s", boolStr(s.ReasoningSummary))},
-		{name: "Auto compact", icon: "*", label: fmt.Sprintf("Auto compact: %s", boolStr(s.AutoCompact))},
-		{name: "Show lines", icon: "*", label: fmt.Sprintf("Show lines: %s", fallback(s.ShowLines, "short"))},
+		{name: "Reasoning summary", icon: "*", label: "Reasoning summary: " + onOff(s.ReasoningSummary)},
+		{name: "Auto compact", icon: "*", label: "Auto compact: " + onOff(s.AutoCompact)},
+		{name: "Show lines", icon: "*", label: "Show lines: " + s.ShowLines},
 		{name: "Add provider", icon: "+", description: "Create provider", label: "+ Add provider"},
 	}
 	for _, c := range m.pickerModels {
-		cmd := command{name: c.Model, description: c.Provider, label: fmt.Sprintf("%s  %s", c.Model, c.Provider)}
-		m.menu = append(m.menu, cmd)
+		m.menu = append(m.menu, command{name: c.Model, description: c.Provider, label: c.Model + "  " + c.Provider})
 		if c.Provider == s.Provider && c.Model == s.Model {
 			m.selected = len(m.menu) - 1
 		}
 	}
 }
 
-func boolStr(v bool) string {
+func onOff(v bool) string {
 	if v {
 		return "on"
 	}
 	return "off"
-}
-
-func fallback(v, def string) string {
-	if v == "" {
-		return def
-	}
-	return v
 }
 
 func (m *model) closePicker() {
@@ -109,6 +104,8 @@ func (m *model) closePicker() {
 	m.input.Reset()
 }
 
+// pickerKey handles keys while a picker is open. Rejected operations keep the
+// picker open and show the reason.
 func (m model) pickerKey(key tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	if m.menuKind == "" {
 		return m, nil, false
@@ -117,7 +114,7 @@ func (m model) pickerKey(key tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	case "esc", "ctrl+c":
 		m.closePicker()
 	case "left", "right":
-		if m.menuKind != "model" && m.menuKind != "settings" {
+		if m.menuKind != pickerSettings {
 			return m, nil, false
 		}
 		delta := 1
@@ -126,8 +123,7 @@ func (m model) pickerKey(key tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		}
 		m.effort = (m.effort + delta + len(agent.Efforts)) % len(agent.Efforts)
 	case "up", "down", "tab":
-		matches := m.completions()
-		if len(matches) > 0 {
+		if matches := m.completions(); len(matches) > 0 {
 			delta := 1
 			if key.String() == "up" {
 				delta = -1
@@ -138,57 +134,10 @@ func (m model) pickerKey(key tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		if m.pasting {
 			return m, nil, true
 		}
-		if m.menuKind == "setup" {
+		if m.menuKind == pickerSetup {
 			return m.finishSetup()
 		}
-		matches := m.completions()
-		if len(matches) == 0 {
-			return m, nil, true
-		}
-		chosen := matches[m.selected%len(matches)]
-		choice, kind := chosen.name, m.menuKind
-		if (kind == "login" || kind == "settings") && (choice == "Add" || choice == "Add provider" || chosen.icon == "+") {
-			m.menuKind = "setup"
-			m.menu = nil
-			m.selected = 0
-			m.input.Reset()
-			m.input.Placeholder = "Provider name"
-			if dest := m.ctl.PrimaryConfig(); dest != "" {
-				m.add("notice", fmt.Sprintf("Credentials will be saved to %s", dest))
-			}
-			break
-		}
-		if kind == "settings" {
-			switch choice {
-			case "Reasoning summary":
-				_ = m.ctl.ToggleReasoningSummary()
-				m.rebuildSettingsMenu()
-				m.refresh(true)
-				return m, nil, true
-			case "Auto compact":
-				_ = m.ctl.ToggleAutoCompact()
-				m.rebuildSettingsMenu()
-				m.refresh(true)
-				return m, nil, true
-			case "Show lines":
-				_ = m.ctl.CycleShowLines()
-				m.rebuildSettingsMenu()
-				m.refresh(true)
-				return m, nil, true
-			}
-		}
-		var err error
-		if kind == "model" || kind == "settings" {
-			provider := chosen.description
-			err = m.ctl.SelectModel(provider, choice, agent.Efforts[m.effort])
-		} else {
-			err = m.ctl.SelectProvider(choice)
-		}
-		m.closePicker()
-		if err != nil {
-			next, cmd := m.reject(err)
-			return next, cmd, true
-		}
+		return m.pickerEnter()
 	default:
 		return m, nil, false
 	}
@@ -196,8 +145,57 @@ func (m model) pickerKey(key tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	return m, nil, true
 }
 
-// finishSetup collects the provider setup prompts and adds the provider. The
-// API key is optional, so an empty third step is valid.
+// pickerEnter applies the selected row. Toggles keep the picker open; a rejected
+// toggle shows its reason. A chosen model or provider closes the picker.
+func (m model) pickerEnter() (tea.Model, tea.Cmd, bool) {
+	matches := m.completions()
+	if len(matches) == 0 {
+		return m, nil, true
+	}
+	chosen := matches[m.selected%len(matches)]
+	if chosen.name == "Add" || chosen.name == "Add provider" {
+		m.menuKind = pickerSetup
+		m.menu = nil
+		m.selected = 0
+		m.input.Reset()
+		m.input.Placeholder = "Provider name"
+		m.refresh(true)
+		return m, nil, true
+	}
+	var toggle error
+	switch chosen.name {
+	case "Reasoning summary":
+		toggle = m.ctl.ToggleReasoningSummary()
+	case "Auto compact":
+		toggle = m.ctl.ToggleAutoCompact()
+	case "Show lines":
+		toggle = m.ctl.CycleShowLines()
+	}
+	if m.menuKind == pickerSettings && chosen.icon == "*" {
+		m.rebuildSettingsMenu()
+		m.refresh(true)
+		if toggle != nil {
+			next, cmd := m.reject(toggle)
+			return next, cmd, true
+		}
+		return m, nil, true
+	}
+	var err error
+	if m.menuKind == pickerLogin {
+		err = m.ctl.SelectProvider(chosen.name)
+	} else {
+		err = m.ctl.SelectModel(chosen.description, chosen.name, agent.Efforts[m.effort])
+	}
+	m.closePicker()
+	if err != nil {
+		next, cmd := m.reject(err)
+		return next, cmd, true
+	}
+	m.refresh(true)
+	return m, nil, true
+}
+
+// finishSetup collects the provider setup prompts and adds the provider. The API key is optional.
 func (m model) finishSetup() (tea.Model, tea.Cmd, bool) {
 	value := strings.TrimSpace(m.input.Value())
 	if value == "" && len(m.setup) != 2 {
@@ -205,8 +203,6 @@ func (m model) finishSetup() (tea.Model, tea.Cmd, bool) {
 	}
 	m.setup = append(m.setup, value)
 	m.input.Reset()
-	m.selected = 0
-	m.menu = nil
 	prompts := []string{"Provider name", "HTTP(S) base URL", "API key (optional)"}
 	if len(m.setup) < 3 {
 		m.input.Placeholder = prompts[len(m.setup)]
@@ -215,10 +211,10 @@ func (m model) finishSetup() (tea.Model, tea.Cmd, bool) {
 	}
 	err := m.ctl.AddProvider(m.setup[0], m.setup[1], m.setup[2])
 	m.closePicker()
-	m.refresh(true)
 	if err != nil {
 		next, cmd := m.reject(err)
 		return next, cmd, true
 	}
+	m.refresh(true)
 	return m, nil, true
 }

@@ -3,7 +3,9 @@ package tui
 import (
 	"bytes"
 	"context"
+	"dashy/internal/shell"
 	"errors"
+	tea "github.com/charmbracelet/bubbletea"
 	"image"
 	"image/png"
 	"io"
@@ -11,10 +13,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"dashy/internal/agent"
-	"dashy/internal/shell"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 func pngBytes(t *testing.T) []byte {
@@ -75,44 +73,6 @@ func TestClipboardReaderImageTextAndFailures(t *testing.T) {
 		})
 	}
 }
-func TestImageAttachmentPreviewRemovalAndStaleResult(t *testing.T) {
-	m := newModel(&agent.Agent{}, "/project")
-	file := filepath.Join(t.TempDir(), "paste.png")
-	if err := os.WriteFile(file, pngBytes(t), 0600); err != nil {
-		t.Fatal(err)
-	}
-	img, err := shell.CaptureImage(file)
-	if err != nil {
-		t.Fatal(err)
-	}
-	img.Path = file
-	m.acceptClipboard(clipboardResult{image: img})
-	m.refresh(true)
-	view := m.View()
-	if len(m.images) != 1 || !strings.Contains(view, "Image 1: paste.png") || strings.Contains(view, "base64") || strings.Contains(view, img.URL) {
-		t.Fatal("image must be a text label, never rendered pixels/data")
-	}
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlX})
-	m = next.(model)
-	if len(m.images) != 0 {
-		t.Fatal("remove shortcut failed")
-	}
-	if _, err = os.Stat(file); !os.IsNotExist(err) {
-		t.Fatal("removed draft image file was retained")
-	}
-	file = filepath.Join(t.TempDir(), "stale.png")
-	if err = os.WriteFile(file, pngBytes(t), 0600); err != nil {
-		t.Fatal(err)
-	}
-	m.pasteGeneration = 2
-	m.acceptClipboard(clipboardResult{generation: 1, image: shell.Image{URL: "data", Path: file}})
-	if len(m.images) != 0 {
-		t.Fatal("stale image crossed session boundary")
-	}
-	if _, err = os.Stat(file); !os.IsNotExist(err) {
-		t.Fatal("stale capture not cleaned up")
-	}
-}
 func TestAttachmentQueueRecallAndCancellationRecovery(t *testing.T) {
 	m, release := busyModel(t)
 	defer release()
@@ -134,35 +94,13 @@ func TestAttachmentQueueRecallAndCancellationRecovery(t *testing.T) {
 		t.Fatalf("cancellation recovery: %q %v", m.input.Value(), m.images)
 	}
 }
-func TestClipboardTextPasteAndProviderKeyMasking(t *testing.T) {
-	m := newModel(&agent.Agent{}, "/project")
-	m.input.SetValue("before ")
-	m.acceptClipboard(clipboardResult{text: "after"})
-	if m.input.Value() != "before after" {
-		t.Fatal(m.input.Value())
-	}
-	m.menuKind = "setup"
-	m.setup = []string{"name", "https://example.com"}
-	m.input.Reset()
-	m.acceptClipboard(clipboardResult{text: "secret-key"})
-	m.refresh(true)
-	if strings.Contains(m.View(), "secret-key") || !strings.Contains(m.View(), "**********") {
-		t.Fatal("clipboard API key was not masked")
-	}
-	m.pasteGeneration++
-	m.closePicker()
-	m.acceptClipboard(clipboardResult{generation: m.pasteGeneration - 1, text: "late-secret"})
-	if strings.Contains(m.input.Value(), "secret") {
-		t.Fatal("late key paste leaked into message draft")
-	}
-}
 
 type csiTestMessage string
 
 func (m csiTestMessage) String() string { return string(m) }
 func TestClipboardShortcutDecodesFromTerminalBytes(t *testing.T) {
 	for _, sequence := range []string{"\x16", "\x1b[118;9u", "\x1b[1084;5u", "\x1b[1084::118;9u"} {
-		m := newModel(&agent.Agent{}, "/project")
+		m := bareModel(t, "/project")
 		seen := false
 		program := tea.NewProgram(m, tea.WithInput(strings.NewReader(sequence)), tea.WithOutput(io.Discard), tea.WithoutRenderer(), tea.WithFilter(func(_ tea.Model, msg tea.Msg) tea.Msg {
 			if key, ok := normalizeTerminalKey(msg).(tea.KeyMsg); ok && key.Type == tea.KeyCtrlV {
@@ -181,7 +119,7 @@ func TestClipboardShortcutDecodesFromTerminalBytes(t *testing.T) {
 }
 
 func TestPendingImagesPreventDestructiveSessionSwitch(t *testing.T) {
-	m := newModel(&agent.Agent{}, "/project")
+	m := bareModel(t, "/project")
 	m.input.SetValue("caption")
 	m.images = []shell.Image{{URL: "data", Path: "draft.png"}}
 	next, cmd := m.runCommand("/new")

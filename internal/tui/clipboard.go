@@ -174,9 +174,9 @@ func (m *model) acceptClipboard(result clipboardResult) tea.Cmd {
 			m.add("notice", "Images can only be pasted into a message draft.")
 			return nil
 		}
-		if len(m.images)+m.ctl.Status().Images >= 8 {
+		if len(m.images)+m.ctl.Status().Images >= agent.MaxPendingImages {
 			_ = os.Remove(result.image.Path)
-			m.add("error", "At most eight clipboard images may be pending. Remove or submit images first.")
+			m.add("error", fmt.Sprintf("At most %d new images per request. Remove or submit images first.", agent.MaxPendingImages))
 		} else {
 			m.images = append(m.images, result.image)
 		}

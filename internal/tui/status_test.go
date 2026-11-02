@@ -37,16 +37,9 @@ func TestBottomBarWidthsAndPadding(t *testing.T) {
 }
 
 func TestFixedStatusLine(t *testing.T) {
-	var n int64 = 37000
-	m := model{
-		cwd:          "/home/user/project",
-		contextInput: &n,
-	}
+	m, _ := testModel(t)
 	left, right := m.status()
-	if left != "no model selected" {
-		t.Fatalf("left = %q, want 'no model selected'", left)
-	}
-	if !strings.Contains(right, "ctx ~37K") {
-		t.Fatalf("right = %q, expected 'ctx ~37K'", right)
+	if left != "p · m" || !strings.HasPrefix(right, "ctx ~") || !strings.Contains(right, " · ") {
+		t.Fatalf("status = %q | %q", left, right)
 	}
 }

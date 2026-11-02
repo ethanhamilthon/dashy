@@ -12,7 +12,7 @@ import (
 )
 
 func TestWorkingIndicatorLifecycleAndScrolling(t *testing.T) {
-	idle, _ := testModel(t, nil)
+	idle, _ := testModel(t)
 	if idle.workingBlock() != "" {
 		t.Fatal("idle indicator shown")
 	}
@@ -94,7 +94,7 @@ func TestCancelledTurnRestoresUnsentSteeringIntoComposer(t *testing.T) {
 func TestSteeringQueueFullKeepsInput(t *testing.T) {
 	m, _ := busyModel(t)
 	for i := 0; i < 64; i++ {
-		if err := m.ctl.Steer(agent.Input{Text: "first"}); err != nil {
+		if err := m.ctl.Input(agent.Input{Text: "first"}); err != nil {
 			t.Fatal(err)
 		}
 	}

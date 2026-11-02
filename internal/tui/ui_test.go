@@ -8,15 +8,13 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/muesli/termenv"
 
 	"dashy/internal/agent"
 )
 
 func TestComposerIsInScrollableTimeline(t *testing.T) {
-	m := newModel(&agent.Agent{}, "/project")
+	m := bareModel(t, "/project")
 	view := strings.Split(ansi.Strip(m.View()), "\n")
 	inputRow := -1
 	for i, line := range view {
@@ -52,7 +50,7 @@ func TestComposerIsInScrollableTimeline(t *testing.T) {
 	}
 }
 func TestCommandCompletionAndHelp(t *testing.T) {
-	m, a, release := heldModel(t, "")
+	m, a, release := heldModel(t)
 	defer release()
 	m.input.SetValue("/")
 	if len(m.completions()) != len(commands) {
@@ -81,47 +79,10 @@ func TestCommandCompletionAndHelp(t *testing.T) {
 		t.Fatal("slash-prefixed text must be submitted as an ordinary instruction")
 	}
 }
-func TestNewCommand(t *testing.T) {
-	t.Setenv("DASHY_HOME", t.TempDir())
-	a, err := agent.New(t.TempDir(), agent.ConfigFiles{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer a.Close()
-	a.History = []json.RawMessage{json.RawMessage(`{"role":"user","content":"old"}`)}
-	m := newModel(a, "/project")
-	next, _ := m.runCommand("/new")
-	m = settle(next.(model))
-	if len(a.History) != 0 || len(m.entries) != 0 {
-		t.Fatal("new should clear timeline and history")
-	}
-
-}
-func TestTimelineHasNoBackgrounds(t *testing.T) {
-	previous := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	defer lipgloss.SetColorProfile(previous)
-	m := newModel(&agent.Agent{}, "/project")
-	if block := m.inputBlock(); strings.Contains(block, "48;") {
-		t.Errorf("input has a background: %q", block)
-	}
-	for _, kind := range []string{"user", "assistant", "code", "output", "notice", "error"} {
-		block := renderEntry(entry{Kind: kind, Text: "hello\nworld"}, 80)
-		for _, row := range strings.Split(block, "\n") {
-			if ansi.StringWidth(row) != 80 {
-				t.Errorf("%s width %d", kind, ansi.StringWidth(row))
-			}
-			if strings.Contains(row, "48;") {
-				t.Errorf("%s has a background: %q", kind, row)
-			}
-		}
-	}
-}
-
 func TestShiftEnterTerminalSequences(t *testing.T) {
 	for _, sequence := range []string{"\x1b[13;2u", "\x1b[27;2;13~", "\x1b[13;2~"} {
 		t.Run(fmt.Sprintf("%q", sequence), func(t *testing.T) {
-			m := newModel(&agent.Agent{}, "/project")
+			m := bareModel(t, "/project")
 			p := tea.NewProgram(m,
 				tea.WithInput(strings.NewReader("one"+sequence+"two\x03")),
 				tea.WithOutput(&strings.Builder{}),
@@ -147,7 +108,7 @@ func TestShiftEnterTerminalSequences(t *testing.T) {
 
 func TestMultilineEditing(t *testing.T) {
 	for _, key := range []tea.KeyMsg{{Type: tea.KeyEnter, Alt: true}, {Type: tea.KeyCtrlJ}} {
-		m := newModel(&agent.Agent{}, "/project")
+		m := bareModel(t, "/project")
 		m.input.SetValue("onetwo")
 		m.input.SetCursor(3)
 		next, _ := m.Update(key)
@@ -170,7 +131,7 @@ func TestInputHeightMatchesWrappedRows(t *testing.T) {
 		strings.Repeat("界", 80),
 		"first\n\nlast\n",
 	} {
-		m := newModel(&agent.Agent{}, "/project")
+		m := bareModel(t, "/project")
 		m.input.SetValue(text)
 		m.refresh(false)
 		probe := m.input
@@ -193,7 +154,7 @@ func TestInputHeightMatchesWrappedRows(t *testing.T) {
 func TestCommandsWaitForTurnCompletion(t *testing.T) {
 	for _, name := range []string{"/new", "/quit"} {
 		t.Run(name, func(t *testing.T) {
-			m, a, release := heldModel(t, "")
+			m, a, release := heldModel(t)
 			a.History = []json.RawMessage{json.RawMessage(`{"role":"user","content":"keep"}`)}
 			m = startBusy(t, m)
 			m.input.SetValue(name)

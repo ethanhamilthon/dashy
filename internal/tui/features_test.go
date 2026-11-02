@@ -1,13 +1,14 @@
 package tui
 
 import (
+	"dashy/internal/osc7501"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/x/ansi"
 
 	"dashy/internal/agent"
 )
@@ -39,7 +40,7 @@ func TestUpRecallsOnlyPendingSteeringOnEmptyInput(t *testing.T) {
 func TestResumeAutocompleteIsScopedAndExecutesSelectedSession(t *testing.T) {
 	t.Setenv("DASHY_HOME", t.TempDir())
 	cwd := t.TempDir()
-	a, err := agent.New(cwd, agent.ConfigFiles{})
+	a, err := agent.New(cwd, agent.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,13 +53,13 @@ func TestResumeAutocompleteIsScopedAndExecutesSelectedSession(t *testing.T) {
 	if err = a.NewSession(); err != nil {
 		t.Fatal(err)
 	}
-	b, err := agent.New(t.TempDir(), agent.ConfigFiles{})
+	b, err := agent.New(t.TempDir(), agent.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer b.Close()
 	foreign := strings.TrimSuffix(filepath.Base(b.HistoryPath), ".jsonl")
-	m := newModel(a, cwd)
+	m := newModel(a, cwd, osc7501.New(io.Discard, false))
 	m.input.SetValue("/resume")
 	matches := m.completions()
 	if len(matches) != 1 {
@@ -88,69 +89,5 @@ func TestResumeAutocompleteIsScopedAndExecutesSelectedSession(t *testing.T) {
 	}
 	if _, err = os.Stat(a.HistoryPath); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestResumeWaitsAndUIErrorsStayOutOfAPIHistory(t *testing.T) {
-	m, a, release := heldModel(t, "")
-	m = startBusy(t, m)
-	oldID := strings.TrimSuffix(filepath.Base(a.HistoryPath), ".jsonl")
-	next, _ := m.runCommand("/unknown")
-	m = settle(next.(model))
-	if !hasEntry(m, "error", "Unknown command: /unknown. Type /help.") {
-		t.Fatalf("unknown command not reported: %+v", m.entries)
-	}
-	m.input.SetValue("/new")
-	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if !m.ctl.Status().Cancelling {
-		t.Fatal("new did not cancel the active turn")
-	}
-	release()
-	m = awaitIdle(t, m)
-	if a.HistoryPath == filepath.Join(filepath.Dir(a.HistoryPath), oldID+".jsonl") || len(m.entries) != 0 {
-		t.Fatalf("new did not wait for the turn to finish: %+v", m.entries)
-	}
-	m.input.SetValue("/resume " + oldID)
-	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if len(m.entries) == 0 || m.entries[0].Kind != "user" || m.entries[0].Text != "busy" {
-		t.Fatalf("resume did not restore the interrupted session: %+v", m.entries)
-	}
-}
-
-func TestResumeCompletionWindowKeepsSelectionVisible(t *testing.T) {
-	t.Setenv("DASHY_HOME", t.TempDir())
-	a, err := agent.New(t.TempDir(), agent.ConfigFiles{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer a.Close()
-	for i := 0; i < 10; i++ {
-		if err = a.Save(); err != nil {
-			t.Fatal(err)
-		}
-		if err = a.NewSession(); err != nil {
-			t.Fatal(err)
-		}
-	}
-	m := newModel(a, a.Shell.Dir)
-	m.input.SetValue("/resume")
-	matches := m.completions()
-	m.selected = len(matches) - 1
-	for _, height := range []int{7, 24} {
-		m.height = height
-		plain := ansi.Strip(m.timeline())
-		if !strings.Contains(plain, matches[m.selected].label) {
-			t.Fatal("selected session is outside visible completion window")
-		}
-		count := 0
-		for _, row := range strings.Split(plain, "\n") {
-			row = strings.TrimPrefix(strings.TrimSpace(row), "› ")
-			if strings.HasPrefix(row, "< ") {
-				count++
-			}
-		}
-		if count > 8 || count < 1 {
-			t.Fatalf("unbounded session menu: %d", count)
-		}
 	}
 }

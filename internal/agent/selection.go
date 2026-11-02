@@ -4,103 +4,32 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 )
 
-type Selection struct {
-	Provider string `json:"provider"`
-	Model    string `json:"model"`
-	Effort   string `json:"effort"`
-}
-
-func (a *Agent) selection() *Selection {
-	return &Selection{a.settings.Provider, a.settings.Model, a.settings.Effort}
-}
-
-func (a *Agent) SessionInfo() map[string]any { return a.SessionInfoFor(a.Records()) }
-
-// SessionInfoFor describes the session using a display snapshot, so callers that
-// must not read a.records while a turn runs can pass their own copy.
-func (a *Agent) SessionInfoFor(records []Record) map[string]any {
-	var size any
-	for _, r := range records {
-		if r.Meta != nil && r.Meta.RequestID != "" {
-			size = nil
-			if r.Meta.ContextInput != nil {
-				size = *r.Meta.ContextInput
-			}
-		}
-	}
-	return map[string]any{
-		"id":       strings.TrimSuffix(filepath.Base(a.HistoryPath), ".jsonl"),
-		"cwd":      a.Shell.Dir,
-		"model":    a.settings.Model,
-		"provider": a.settings.Provider,
-		"effort":   a.settings.Effort,
-		"ctx_size": size,
-		"title":    a.Title(),
-	}
-}
-
-// SelectionConfig is the settings file.
-// Title returns the effective session title: the custom rename title if set,
-// else the first user message text, or "" if none.
-func (a *Agent) Title() string {
-	if a.title != "" {
-		return a.title
-	}
-	for _, r := range a.records {
-		if r.Kind == "user" && strings.TrimSpace(r.Text) != "" {
-			return strings.Join(strings.Fields(r.Text), " ")
-		}
-	}
-	return ""
-}
-
-func (a *Agent) SelectionConfig() string {
-	return a.PrimaryConfig()
-}
-
-// Select updates the provider, model, and effort in settings.
+// Select sets the provider, model and reasoning effort, and saves them.
 func (a *Agent) Select(provider, model, effort string) error {
 	next := a.Settings()
 	next.Provider, next.Model, next.Effort = provider, model, effort
-	if err := a.applyAndSave(next); err != nil {
-		return err
-	}
-	if a.HasSavedSession() {
-		if err := a.Save(); err != nil {
-			return err
-		}
-	}
-	return nil
+	return a.applyAndSave(next)
 }
 
 // ModelChoice is a model offered by one configured provider.
 type ModelChoice struct{ Provider, Model string }
 
-// AllModels lists models from every configured provider concurrently.
-func AllModels(ctx context.Context, providers map[string]Provider, environment ...map[string]string) (choices []ModelChoice, errs map[string]error) {
+// AllModels lists the models of every provider concurrently. Failures are reported per provider.
+func AllModels(ctx context.Context, providers map[string]Provider) (choices []ModelChoice, errs map[string]error) {
 	type result struct {
 		name   string
 		models []string
 		err    error
 	}
-	var env map[string]string
-	if len(environment) > 0 {
-		env = environment[0]
-	}
 	results := make(chan result, len(providers))
 	for name, p := range providers {
 		go func(name string, p Provider) {
 			if p.APIKey == "" && p.APIKeyEnv != "" {
-				if env != nil {
-					p.APIKey = env[p.APIKeyEnv]
-				} else {
-					p.APIKey = os.Getenv(p.APIKeyEnv)
-				}
+				p.APIKey = os.Getenv(p.APIKeyEnv)
 			}
 			client := newClient(p)
 			page := client.Models.ListAutoPaging(ctx)
@@ -131,7 +60,7 @@ func AllModels(ctx context.Context, providers map[string]Provider, environment .
 	return choices, errs
 }
 
-// AddProvider registers a provider in the session.
+// AddProvider registers a new provider and saves the settings.
 func (a *Agent) AddProvider(name string, provider Provider) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -141,13 +70,11 @@ func (a *Agent) AddProvider(name string, provider Provider) error {
 		return fmt.Errorf("provider %q already exists", name)
 	}
 	next := a.Settings()
-	if next.Providers == nil {
-		next.Providers = map[string]Provider{}
-	}
 	next.Providers[name] = provider
 	return a.applyAndSave(next)
 }
 
+// SetReasoningSummary, SetAutoCompact and CycleShowLines change one display or behaviour setting and save it.
 func (a *Agent) SetReasoningSummary(enabled bool) error {
 	next := a.Settings()
 	next.ReasoningSummary = enabled
@@ -162,44 +89,9 @@ func (a *Agent) SetAutoCompact(enabled bool) error {
 
 func (a *Agent) CycleShowLines() error {
 	next := a.Settings()
-	switch next.ShowLines {
-	case "short":
-		next.ShowLines = "medium"
-	case "medium":
-		next.ShowLines = "full"
-	default:
+	next.ShowLines = map[string]string{"short": "medium", "medium": "full"}[next.ShowLines]
+	if next.ShowLines == "" {
 		next.ShowLines = "short"
 	}
 	return a.applyAndSave(next)
-}
-
-func (a *Agent) bashParameters() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"command": map[string]any{"type": "string"},
-			"timeout": map[string]any{
-				"type":        []string{"integer", "null"},
-				"description": fmt.Sprintf("seconds, default %d, maximum %d", DefaultShellTimeout, DefaultShellMaxTimeout),
-			},
-			"max_output": map[string]any{
-				"type":        []string{"integer", "null"},
-				"description": fmt.Sprintf("output bytes to keep, default %d (first half + last half); 0 = no truncation", DefaultShellMaxOutput),
-			},
-		},
-		"required":             []string{"command", "timeout", "max_output"},
-		"additionalProperties": false,
-	}
-}
-
-// shellEnv is exported into the shell before every call.
-// Spec: exported to the agent's bash tool calls: DASHY_SESSION_ID, DASHY_ENDPOINT
-// Never export provider/model/effort/ctx/cwd/state/event variables.
-func (a *Agent) shellEnv() map[string]string {
-	env := make(map[string]string, 2)
-	if a.socketPath != "" {
-		env["DASHY_ENDPOINT"] = a.socketPath
-	}
-	env["DASHY_SESSION_ID"] = a.sessionID()
-	return env
 }

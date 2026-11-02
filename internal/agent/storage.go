@@ -15,37 +15,40 @@ import (
 	"time"
 )
 
+// Session files hold one history item per line plus at most one {"meta":{...}}
+// line for the custom title.
 type sessionMeta struct {
-	Title string `json:"title,omitempty"`
+	Meta *struct {
+		Title string `json:"title"`
+	} `json:"meta"`
 }
 
-type sessionMetaLine struct {
-	Meta sessionMeta `json:"meta"`
-}
-
-func (a *Agent) openProject(cwd string, target ...string) error {
-	absolute, err := filepath.Abs(cwd)
+// openProject selects the sessions directory of dir and opens or creates the session.
+func (a *Agent) openProject(dir string) error {
+	absolute, err := filepath.Abs(dir)
 	if err != nil {
 		return err
 	}
-	a.Shell.Dir = filepath.Clean(absolute)
-	a.sessionsDir, err = projectDirectory(cwd, a.home)
-	if err != nil {
+	a.Shell.Dir = absolute
+	hash := sha256.Sum256([]byte(absolute))
+	a.sessionsDir = filepath.Join(a.home, "projects", hex.EncodeToString(hash[:]))
+	if err := os.MkdirAll(a.sessionsDir, 0700); err != nil {
 		return err
 	}
-	if len(target) == 0 || target[0] == "" || target[0] == "new" {
+	if a.opts.Resume == "" {
 		return a.createSession()
 	}
-	return a.openSession(target[0])
+	a.promptSource = "resume"
+	return a.openSession(a.opts.Resume)
 }
 
 func (a *Agent) openSession(id string) error {
-	if id == "" || filepath.Base(id) != id || strings.ContainsAny(id, `/\\`) {
+	if id == "" || filepath.Base(id) != id || strings.ContainsAny(id, `/\`) {
 		return fmt.Errorf("invalid session ID: %s", id)
 	}
 	path := filepath.Join(a.sessionsDir, id+".jsonl")
 	info, err := os.Lstat(path)
-	if os.IsNotExist(err) || err == nil && !info.Mode().IsRegular() {
+	if os.IsNotExist(err) || (err == nil && !info.Mode().IsRegular()) {
 		return fmt.Errorf("session not found in this project: %s", id)
 	}
 	if err != nil {
@@ -63,18 +66,16 @@ func (a *Agent) openSession(id string) error {
 }
 
 func (a *Agent) createSession() error {
-	if err := os.MkdirAll(a.sessionsDir, 0700); err != nil {
-		return err
-	}
 	var id [8]byte
 	if _, err := rand.Read(id[:]); err != nil {
 		return err
 	}
-	a.HistoryPath = filepath.Join(a.sessionsDir, time.Now().UTC().Format("20060102T150405.000000000Z")+"-"+hex.EncodeToString(id[:])+".jsonl")
+	name := time.Now().UTC().Format("20060102T150405.000000000Z") + "-" + hex.EncodeToString(id[:]) + ".jsonl"
+	a.HistoryPath = filepath.Join(a.sessionsDir, name)
 	return a.acquire()
 }
 
-// SessionSummary is the resume picker view of a saved session.
+// SessionSummary is the /resume view of a saved session.
 type SessionSummary struct {
 	ID    string
 	Title string
@@ -84,9 +85,6 @@ type SessionSummary struct {
 
 // Sessions returns saved sessions of this project, most recently updated first.
 func (a *Agent) Sessions() ([]SessionSummary, error) {
-	if a.sessionsDir == "" {
-		return nil, nil
-	}
 	entries, err := os.ReadDir(a.sessionsDir)
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -103,8 +101,7 @@ func (a *Agent) Sessions() ([]SessionSummary, error) {
 		if err != nil {
 			return nil, err
 		}
-		path := filepath.Join(a.sessionsDir, e.Name())
-		summary := sessionSummary(path)
+		summary := sessionSummary(filepath.Join(a.sessionsDir, e.Name()))
 		summary.ID, summary.Mod = strings.TrimSuffix(e.Name(), ".jsonl"), info.ModTime()
 		sessions = append(sessions, summary)
 	}
@@ -117,17 +114,8 @@ func (a *Agent) Sessions() ([]SessionSummary, error) {
 	return sessions, nil
 }
 
-// Rename sets the session title shown by /resume; an empty name restores the
-// default (the first user message). Unsent sessions keep it until first save.
-func (a *Agent) Rename(name string) error {
-	a.title = strings.Join(strings.Fields(name), " ")
-	if !a.HasSavedSession() {
-		return nil
-	}
-	return a.Save()
-}
-
-// sessionSummary reads the title (from meta or the first user message).
+// sessionSummary reads the title and model of a session file. The title is the
+// custom title if there is one, else the first line of the first user message.
 func sessionSummary(path string) SessionSummary {
 	var summary SessionSummary
 	file, err := os.Open(path)
@@ -142,36 +130,65 @@ func sessionSummary(path string) SessionSummary {
 		if len(line) == 0 || line[0] != '{' {
 			continue
 		}
-		var metaLine struct {
-			Meta *struct {
-				Title string `json:"title"`
-			} `json:"meta"`
-		}
-		if json.Unmarshal(line, &metaLine) == nil && metaLine.Meta != nil {
-			if metaLine.Meta.Title != "" {
-				summary.Title = metaLine.Meta.Title
+		var meta sessionMeta
+		if json.Unmarshal(line, &meta) == nil && meta.Meta != nil {
+			if meta.Meta.Title != "" {
+				summary.Title = meta.Meta.Title
 				return summary
 			}
 			continue
 		}
-		for _, r := range RecordsForItem(line) {
-			if r.Kind == "user" {
-				summary.Title = strings.Join(strings.Fields(r.Text), " ")
-				return summary
+		if summary.Title == "" {
+			for _, r := range RecordsForItem(line) {
+				if r.Kind == "user" {
+					summary.Title = FirstLine(r.Text)
+					break
+				}
 			}
 		}
 	}
 	return summary
 }
 
+// CustomTitle is the title set by /rename, or "" when the default applies.
+func (a *Agent) CustomTitle() string { return a.title }
+
+// Rename sets the custom title; an empty name restores the default (the first
+// user message). The change is saved at once for a saved session.
+func (a *Agent) Rename(name string) error {
+	a.title = strings.Join(strings.Fields(name), " ")
+	if !a.HasSavedSession() {
+		return nil
+	}
+	return a.Save()
+}
+
+// FirstLine is the first non-empty line of text, trimmed.
+func FirstLine(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
+// DefaultTitle is the first line of the first user message in records.
+func DefaultTitle(records []Record) string {
+	for _, r := range records {
+		if r.Kind == "user" {
+			if line := FirstLine(r.Text); line != "" {
+				return line
+			}
+		}
+	}
+	return ""
+}
+
 func (a *Agent) sessionData() ([]byte, error) {
 	var buffer bytes.Buffer
 	if a.title != "" {
-		meta, err := json.Marshal(sessionMetaLine{
-			Meta: sessionMeta{
-				Title: a.title,
-			},
-		})
+		meta, err := json.Marshal(map[string]any{"meta": map[string]string{"title": a.title}})
 		if err != nil {
 			return nil, err
 		}
@@ -189,6 +206,7 @@ func (a *Agent) sessionData() ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
+// readSession loads history and the custom title. A torn last line is dropped.
 func (a *Agent) readSession() error {
 	data, err := os.ReadFile(a.HistoryPath)
 	if err != nil {
@@ -205,36 +223,25 @@ func (a *Agent) readSession() error {
 		if len(line) == 0 {
 			continue
 		}
-		var metaLine struct {
-			Meta *struct {
-				Title string `json:"title"`
-			} `json:"meta"`
-		}
-		if err := json.Unmarshal(line, &metaLine); err != nil || line[0] != '{' {
+		var meta sessionMeta
+		if err := json.Unmarshal(line, &meta); err != nil || line[0] != '{' {
 			if i == len(lines)-1 {
-				// Torn last line tolerated: drop it.
-				break
+				break // torn last line
 			}
-			if err != nil {
-				return fmt.Errorf("session line %d: %w", i+1, err)
-			}
-			return fmt.Errorf("session line %d: invalid JSON object", i+1)
+			return fmt.Errorf("session line %d is not a JSON object", i+1)
 		}
-		if metaLine.Meta != nil {
-			if metaLine.Meta.Title != "" {
-				title = metaLine.Meta.Title
-			}
+		if meta.Meta != nil {
+			title = meta.Meta.Title
 			continue
 		}
 		history = append(history, append(json.RawMessage(nil), line...))
 	}
-	a.History = history
-	a.title = title
+	a.History, a.title = history, title
 	return nil
 }
 
 func writePrivate(path string, data []byte) error {
-	file, err := os.CreateTemp(filepath.Dir(path), ".history-*")
+	file, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
 	if err != nil {
 		return err
 	}
@@ -250,13 +257,4 @@ func writePrivate(path string, data []byte) error {
 		return err
 	}
 	return os.Rename(temp, path)
-}
-
-func projectDirectory(cwd, home string) (string, error) {
-	absolute, err := filepath.Abs(cwd)
-	if err != nil {
-		return "", err
-	}
-	hash := sha256.Sum256([]byte(filepath.Clean(absolute)))
-	return filepath.Join(home, "projects", hex.EncodeToString(hash[:])), nil
 }

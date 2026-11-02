@@ -1,6 +1,6 @@
-// Package control is the application controller for the terminal interface.
-// It coordinates turns for the TUI, serializes mutations and reports progress
-// as ordered events.
+// Package control coordinates turns for the terminal interface: turn state,
+// cancellation, the steering queue and session switching. Operations are plain
+// typed methods; events report what happened, in order.
 package control
 
 import (
@@ -17,19 +17,18 @@ type Event struct {
 	Kind      string         // started, agent, notice, error, done or session
 	Turn      string         // operation identifier
 	Operation string         // started, done, session: turn or compact
-	Source    string         // started: user, notify, queued or compact
+	Source    string         // started: user, notify or queued
 	Agent     *agent.Event   // agent: the unmodified event from the agent
-	Text      string         // notice and error text
+	Text      string         // started: the input text; notice and error: the text
 	Status    string         // done: ok, error or cancelled
-	Error     string         // done: failure text, informational for turns
+	Error     string         // done: failure text
 	Message   string         // done (compact): summary or cancellation text
-	Unsent    []agent.Input  // done: queued or retried inputs not accepted by the model
-	Session   map[string]any // session: description of the active session
-	Records   []agent.Record // session: display journal after the change
+	Unsent    []agent.Input  // done: queued inputs the model did not accept
+	Records   []agent.Record // session: display records after the change
+	Title     string         // session title after this event (rename, else first user line)
 }
 
-// Error is a structured rejection. Code is stable for interfaces; Message is
-// user-facing and never contains credentials.
+// Error is a structured rejection. Code is stable; Message is user-facing and never contains credentials.
 type Error struct {
 	Code    string
 	Message string
@@ -43,8 +42,8 @@ func fail(code, format string, args ...any) error {
 
 // CommandInfo describes one slash command.
 type CommandInfo struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	Name        string
+	Description string
 }
 
 var commandList = []CommandInfo{
@@ -61,57 +60,43 @@ var commandList = []CommandInfo{
 // Commands returns the slash commands in completion order.
 func Commands() []CommandInfo { return append([]CommandInfo(nil), commandList...) }
 
-// Help renders the command reference. keyboard holds interface-specific key
-// bindings.
+// Help renders the command reference followed by keyboard bindings.
 func Help(keyboard string) string {
 	var help strings.Builder
 	for _, cmd := range commandList {
 		fmt.Fprintf(&help, "%-9s %s\n", cmd.Name, cmd.Description)
 	}
-	if keyboard != "" {
-		help.WriteString("\n" + keyboard + "\n")
-	}
+	help.WriteString("\n" + keyboard + "\n")
 	help.WriteString("\nHost access: the bash tool runs commands with your permissions; not an OS security sandbox.")
 	return help.String()
 }
 
 // SessionInfo describes one saved session of this project.
 type SessionInfo struct {
-	ID      string    `json:"id"`
-	Title   string    `json:"title"`
-	Model   string    `json:"model"`
-	Updated time.Time `json:"updated"`
+	ID      string
+	Title   string
+	Model   string
+	Updated time.Time
 }
 
 // ModelInfo is one model offered by a configured provider.
 type ModelInfo struct {
-	Provider string `json:"provider"`
-	Model    string `json:"model"`
+	Provider string
+	Model    string
 }
 
-// ModelList is the result of listing available models. Errors maps provider
-// names to redacted failure messages.
+// ModelList is the result of listing models. Errors maps provider names to redacted failures.
 type ModelList struct {
-	Models []ModelInfo       `json:"models"`
-	Errors map[string]string `json:"errors"`
+	Models []ModelInfo
+	Errors map[string]string
 }
 
-// ProviderInfo describes a configured provider. Credentials are reported as
-// presence only; the key itself is never returned.
-type ProviderInfo struct {
-	Name             string `json:"name"`
-	BaseURL          string `json:"base_url"`
-	APIKeyEnv        string `json:"api_key_env,omitempty"`
-	APIKeyConfigured bool   `json:"api_key_configured"`
-}
-
-// Status is a consistent snapshot of the active operation for interfaces.
+// Status is a consistent snapshot of the active operation.
 type Status struct {
 	Busy       bool
 	Cancelling bool
 	Compacting bool
-	Turn       string
 	Started    time.Time
 	Queued     []agent.Input
-	Images     int // images in the running turn and in the queue
+	Images     int // new images the next model request will carry, including steering and dashy view
 }

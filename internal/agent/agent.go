@@ -61,12 +61,10 @@ dashy commands you can run from the shell:
 
 Every call has DASHY_SESSION_ID and DASHY_ENDPOINT set.`
 
-const bashToolDescription = BashToolDescription
-
 var codeField = regexp.MustCompile(`"command"\s*:\s*"`)
 
-// Decode only the complete prefix of a JSON string, withholding split escapes,
-// UTF-8 characters and surrogate pairs until the next delta completes them.
+// partialCode decodes only the complete prefix of a JSON string, withholding split
+// escapes, UTF-8 characters and surrogate pairs until the next delta completes them.
 func partialCode(arguments string) string {
 	loc := codeField.FindStringIndex(arguments)
 	if loc == nil {
@@ -83,99 +81,86 @@ func partialCode(arguments string) string {
 			continue
 		}
 		if json.Unmarshal([]byte(candidate+`"`), &text) == nil {
-			if len(candidate) >= 6 {
-				tail := strings.ToLower(candidate[len(candidate)-6:])
-				if strings.HasPrefix(tail, `\ud`) && strings.ContainsAny(tail[3:4], "89ab") {
-					slashes := 0
-					for i := len(candidate) - 6; i >= 0 && candidate[i] == '\\'; i-- {
-						slashes++
-					}
-					if slashes%2 == 1 {
-						continue
-					}
-				}
-			}
 			return text
 		}
 	}
 	return ""
 }
 
-type Agent struct {
-	listener         net.Listener
-	socketPath       string
-	NoSocket         bool
-	inbox            chan string
-	views            chan shell.Image
-	owner            *os.File
-	settings         Settings
-	Shell            *shell.Runner
-	History          []json.RawMessage
-	HistoryPath      string
-	System           string
-	LocalConfig      string
-	Sources          []Source
-	primaryConfig    string
-	client           openai.Client
-	records          []Record
-	title            string // set by /rename; "" means the first user message
-	lastRequest      Metadata
-	files            ConfigFiles
-	home             string
-	sessionsDir      string
-	promptFrozen     bool
-	promptSource     string
-	mode             string
-	compactKeepTurns int
-	compactThreshold int64
+// Options selects the configuration and session of an agent.
+type Options struct {
+	Config   string // --config FILE, relative to the project directory
+	NoGlobal bool   // --no-global
+	Resume   string // --resume ID; "" starts a new session
+	Print    bool   // -p: no session socket, DASHY_MODE=print
 }
 
-// New opens the project in dir with configuration from files (zero value: default
-// lookup). target optionally resumes a saved session id.
-func New(dir string, files ConfigFiles, target ...string) (*Agent, error) {
-	config, err := configDir(dir)
+// Agent holds one session: its history, settings, prompt and ownership lock.
+type Agent struct {
+	opts         Options
+	home         string // DASHY_HOME
+	settings     Settings
+	client       openai.Client
+	Shell        *shell.Runner
+	History      []json.RawMessage
+	HistoryPath  string
+	sessionsDir  string
+	owner        *os.File
+	promptFiles  []string // AGENTS.md files selected at startup, /new or /resume
+	prompt       string   // assembled system prompt, frozen once assembled
+	promptFrozen bool
+	promptSource string // startup, new or resume (DASHY_SOURCE)
+	records      []Record
+	title        string // custom title set by /rename; "" means the first user message
+	lastRequest  Metadata
+	listener     net.Listener
+	socketPath   string
+	inbox        chan string
+	views        chan shell.Image
+	slots        *imageSlots // shared allowance of new images per model request
+}
+
+// New opens the project in dir. Options.Resume optionally resumes a saved session.
+func New(dir string, opts Options) (*Agent, error) {
+	home, err := DashyHome(dir)
 	if err != nil {
 		return nil, err
 	}
-	cfg, err := loadConfiguration(config, dir, files)
-	if err != nil {
+	a := &Agent{opts: opts, home: home, promptSource: "startup", Shell: &shell.Runner{Dir: dir}, slots: &imageSlots{}}
+	a.Shell.Env = a.shellEnv
+	if err := a.loadConfig(dir); err != nil {
 		return nil, err
 	}
-	mode := files.Mode
-	if mode == "" {
-		mode = "tui"
-	}
-	source := "startup"
-	if len(target) > 0 && target[0] != "" && target[0] != "new" {
-		source = "resume"
-	}
-	a := &Agent{
-		files:         files,
-		home:          config,
-		mode:          mode,
-		promptSource:  source,
-		NoSocket:      mode == "print",
-		System:        cfg.system,
-		LocalConfig:   cfg.local,
-		Sources:       cfg.sources,
-		primaryConfig: cfg.primary,
-		Shell:         &shell.Runner{Dir: dir},
-	}
-	a.applySettings(cfg.settings)
-	_ = CleanAttachments(filepath.Join(config, "attachments"))
-	if err := a.openProject(dir, target...); err != nil {
+	_ = CleanAttachments(a.AttachmentsDir())
+	if err := a.openProject(dir); err != nil {
 		a.release()
 		return nil, err
 	}
-	a.Shell.Env = a.shellEnv
 	return a, nil
 }
 
+// loadConfig reads settings and selects the AGENTS.md files for the project in dir.
+func (a *Agent) loadConfig(dir string) error {
+	settings, err := LoadSettings(a.SettingsPath())
+	if err != nil {
+		return err
+	}
+	files, err := instructionFiles(a.home, dir, a.opts)
+	if err != nil {
+		return err
+	}
+	a.applySettings(settings)
+	a.promptFiles = files
+	return nil
+}
+
 func raw(v any) json.RawMessage { data, _ := json.Marshal(v); return data }
+
 func (a *Agent) message(role, text string) {
 	a.History = append(a.History, raw(map[string]any{"role": role, "content": text}))
 }
 
+// Save writes the session file atomically.
 func (a *Agent) Save() error {
 	if err := os.MkdirAll(filepath.Dir(a.HistoryPath), 0700); err != nil {
 		return err
@@ -187,17 +172,22 @@ func (a *Agent) Save() error {
 	return writePrivate(a.HistoryPath, data)
 }
 
+// Run is RunInput for a text message.
 func (a *Agent) Run(ctx context.Context, text string, emit func(Event), steering ...*Steering) error {
 	return a.RunInput(ctx, Input{Text: text}, emit, steering...)
 }
 
+// RunInput runs one turn: the input, then model requests and bash calls until the
+// model stops. Events describe display changes; history is saved as it grows.
 func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event), steering ...*Steering) (err error) {
 	if a.records == nil {
 		a.records = a.Records()
 	}
 	forward := emit
 	emit = func(e Event) {
-		a.records = ApplyEvent(a.records, e)
+		if e.Kind != "reset" { // reset already rebuilt a.records from the history
+			a.records = ApplyEvent(a.records, e)
+		}
 		forward(e)
 	}
 
@@ -227,7 +217,6 @@ func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event), ste
 	// Only the turn goroutine mutates history. Steering waits until all outputs
 	// for the current response have been committed, preserving call/output pairs.
 	acceptSteering := func() bool {
-		accepted := false
 		if ctx.Err() != nil {
 			return false
 		}
@@ -238,6 +227,7 @@ func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event), ste
 		for _, text := range a.Notifications() {
 			instructions = append(instructions, Input{Text: text})
 		}
+		accepted := false
 		for _, instruction := range instructions {
 			if strings.TrimSpace(instruction.Text) != "" || len(instruction.Images) > 0 {
 				a.addInput(instruction, emit, true)
@@ -259,7 +249,6 @@ func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event), ste
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-
 		acceptSteering()
 		if images := a.viewed(); len(images) > 0 {
 			text := "<notify>\nImages queued by dashy view." + imageOriginals(images) + "\n</notify>"
@@ -270,11 +259,7 @@ func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event), ste
 			a.History = append(a.History, raw(map[string]any{"role": "user", "content": content}))
 			emit(Event{Kind: "notice", Text: text})
 		}
-		compacted := len(a.History)
 		a.compactIfNeeded(ctx, emit)
-		if len(a.History) < compacted {
-			a.records = a.Records()
-		}
 		if e := a.Save(); e != nil {
 			return fmt.Errorf("could not save history: %w", e)
 		}
@@ -291,8 +276,7 @@ func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event), ste
 			sort.Ints(indexes)
 			durableHistory = append([]json.RawMessage(nil), baseHistory...)
 			for _, i := range indexes {
-				part := finished[int64(i)]
-				durableHistory = append(durableHistory, part)
+				durableHistory = append(durableHistory, finished[int64(i)])
 			}
 			snapshot := *a
 			snapshot.History = durableHistory
@@ -332,11 +316,10 @@ func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event), ste
 				m := meta
 				if r.Kind == "assistant" {
 					m.Duration = time.Since(turnStart)
+					m.Usage = nil
 					if usageKnown {
 						u := total
 						m.Usage = &u
-					} else {
-						m.Usage = nil
 					}
 				}
 				emit(Event{Kind: r.Kind, Text: r.Text, ID: a.itemID(int64(i)), Meta: &m, Final: true})
@@ -394,20 +377,18 @@ func (a *Agent) runTool(ctx context.Context, name, arguments string) shell.Resul
 		Timeout   *int64 `json:"timeout"`
 		MaxOutput *int64 `json:"max_output"`
 	}
-	timeout := time.Duration(DefaultShellTimeout) * time.Second
-	maxTimeout := time.Duration(DefaultShellMaxTimeout) * time.Second
-	limit := DefaultShellMaxOutput
+	timeout := time.Duration(ShellTimeout) * time.Second
+	limit := ShellOutput
 	err := json.Unmarshal([]byte(arguments), &args)
 	if err == nil && args.Timeout != nil {
-		maxSec := int64(maxTimeout / time.Second)
-		if *args.Timeout <= 0 || *args.Timeout > maxSec {
-			err = fmt.Errorf("timeout must be 1..%d seconds", maxSec)
+		if *args.Timeout <= 0 || *args.Timeout > ShellMaxTimeout {
+			err = fmt.Errorf("timeout must be 1..%d seconds", ShellMaxTimeout)
 		} else {
 			timeout = time.Duration(*args.Timeout) * time.Second
 		}
 	}
 	if err == nil && args.MaxOutput != nil {
-		if *args.MaxOutput < 0 || *args.MaxOutput > int64(math.MaxInt) {
+		if *args.MaxOutput < 0 || *args.MaxOutput > int64(math.MaxInt32) {
 			err = fmt.Errorf("max_output must be >= 0 bytes (0 = no truncation)")
 		} else {
 			limit = int(*args.MaxOutput)
@@ -415,7 +396,7 @@ func (a *Agent) runTool(ctx context.Context, name, arguments string) shell.Resul
 	}
 	if err == nil {
 		var result shell.Result
-		if result, err = a.Shell.ExecuteLimit(ctx, args.Command, timeout, limit); err == nil {
+		if result, err = a.Shell.Execute(ctx, args.Command, timeout, limit); err == nil {
 			return result
 		}
 	}
@@ -427,12 +408,16 @@ func (a *Agent) itemID(index int64) string {
 	return fmt.Sprintf("%s-%d", a.lastRequest.RequestID, index)
 }
 
+// request sends the history and returns the completed response items.
 func (a *Agent) request(ctx context.Context, emit func(Event), checkpoints ...func(int64, json.RawMessage) error) (items []json.RawMessage, err error) {
 	defer func() { err = a.safeError(err) }()
 	if strings.TrimSpace(a.settings.Model) == "" || strings.TrimSpace(a.settings.Provider) == "" {
-		return nil, fmt.Errorf("no provider or model selected: use /login to add a provider, then choose a model with /settings")
+		return nil, fmt.Errorf("no provider or model selected: use /settings to choose a model (or /login to add a provider)")
 	}
-	prompt := a.instructions()
+	prompt, err := a.instructions(ctx)
+	if err != nil {
+		return nil, err
+	}
 	input := make(responses.ResponseInputParam, len(a.History))
 	for i, item := range a.History {
 		if !json.Valid(item) {
@@ -447,8 +432,8 @@ func (a *Agent) request(ctx context.Context, emit func(Event), checkpoints ...fu
 		Store:        openai.Bool(false),
 		Tools: []responses.ToolUnionParam{{OfFunction: &responses.FunctionToolParam{
 			Name:        "bash",
-			Description: openai.String(bashToolDescription),
-			Parameters:  a.bashParameters(),
+			Description: openai.String(BashToolDescription),
+			Parameters:  bashParameters(),
 			Strict:      openai.Bool(true),
 		}}},
 	}
@@ -483,8 +468,7 @@ func (a *Agent) request(ctx context.Context, emit func(Event), checkpoints ...fu
 					return nil, err
 				}
 			}
-
-			// Some providers deliver complete message.content without text deltas.
+			// Some providers deliver complete arguments without argument deltas.
 			if event.Item.Type == "function_call" {
 				names[event.OutputIndex] = event.Item.Name
 				if event.Item.Arguments.OfString != "" {
@@ -495,9 +479,11 @@ func (a *Agent) request(ctx context.Context, emit func(Event), checkpoints ...fu
 					continue
 				}
 			}
-
-			for _, record := range RecordsForItem(json.RawMessage(event.Item.RawJSON())) {
-				emit(Event{Kind: record.Kind, Text: record.Text, ID: a.itemID(event.OutputIndex), Final: true, Provisional: event.Type == "response.output_item.added"})
+			// Display of a finished item is emitted by RunInput when the response commits.
+			if event.Type == "response.output_item.added" {
+				for _, record := range RecordsForItem(json.RawMessage(event.Item.RawJSON())) {
+					emit(Event{Kind: record.Kind, Text: record.Text, ID: a.itemID(event.OutputIndex), Final: true, Provisional: true})
+				}
 			}
 		case "response.output_text.delta":
 			emit(Event{Kind: "delta", Text: event.Delta, ID: a.itemID(event.OutputIndex), Provisional: true})
@@ -514,7 +500,7 @@ func (a *Agent) request(ctx context.Context, emit func(Event), checkpoints ...fu
 				if event.Response.Usage.InputTokensDetails.JSON.CachedTokens.Valid() {
 					cached = event.Response.Usage.InputTokensDetails.CachedTokens
 				}
-				a.lastRequest.Usage = &Usage{Input: event.Response.Usage.InputTokens, Output: event.Response.Usage.OutputTokens, Cached: cached}
+				a.lastRequest.Usage = &Usage{Input: n, Output: event.Response.Usage.OutputTokens, Cached: cached}
 			}
 			completed = make([]json.RawMessage, len(event.Response.Output))
 			for i, item := range event.Response.Output {
@@ -533,10 +519,59 @@ func (a *Agent) request(ctx context.Context, emit func(Event), checkpoints ...fu
 	return completed, nil
 }
 
-func (a *Agent) sessionID() string {
+// ContextTokens is the size of the next prompt: the provider's count for the latest
+// request, or an estimate from the history when no usage is known (resumed sessions).
+func (a *Agent) ContextTokens() int64 {
+	if a.lastRequest.ContextInput != nil {
+		return *a.lastRequest.ContextInput
+	}
+	return estimateTokens(a.History)
+}
+
+// FinalText is the assistant text of the latest response: the message items after
+// the last tool output, within the current turn. Only committed history is read.
+func (a *Agent) FinalText() string {
+	var texts []string
+	for i := len(a.History) - 1; i >= 0; i-- {
+		var v struct {
+			Role, Type string
+		}
+		if json.Unmarshal(a.History[i], &v) != nil || v.Role == "user" || v.Type == "function_call" || v.Type == "function_call_output" {
+			break
+		}
+		for _, r := range RecordsForItem(a.History[i]) {
+			if r.Kind == "assistant" && r.Text != "" {
+				texts = append([]string{r.Text}, texts...)
+			}
+		}
+	}
+	return strings.Join(texts, "\n")
+}
+
+// PromptFiles lists the AGENTS.md files selected for the session, in prompt order.
+func (a *Agent) PromptFiles() []string { return append([]string(nil), a.promptFiles...) }
+
+// SessionID is the ID of the active session.
+func (a *Agent) SessionID() string {
 	return strings.TrimSuffix(filepath.Base(a.HistoryPath), ".jsonl")
 }
 
-func (a *Agent) SessionID() string {
-	return a.sessionID()
+// bashParameters is the strict JSON schema of the bash tool.
+func bashParameters() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"command": map[string]any{"type": "string"},
+			"timeout": map[string]any{
+				"type":        []string{"integer", "null"},
+				"description": fmt.Sprintf("seconds, default %d, maximum %d", ShellTimeout, ShellMaxTimeout),
+			},
+			"max_output": map[string]any{
+				"type":        []string{"integer", "null"},
+				"description": fmt.Sprintf("output bytes to keep, default %d (first half + last half); 0 = no truncation", ShellOutput),
+			},
+		},
+		"required":             []string{"command", "timeout", "max_output"},
+		"additionalProperties": false,
+	}
 }

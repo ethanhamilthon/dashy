@@ -65,7 +65,7 @@ func (m model) completions() []command {
 		var matches []command
 		for _, c := range m.menu {
 			haystack := c.name
-			if m.menuKind == "model" || m.menuKind == "settings" {
+			if m.menuKind == pickerSettings {
 				haystack += " " + c.description + " " + c.label
 			}
 			if strings.Contains(strings.ToLower(haystack), strings.ToLower(text)) {
@@ -190,9 +190,9 @@ func (m model) runCommand(name string) (tea.Model, tea.Cmd) {
 		if m.ctl.Status().Busy {
 			return m.stop("notice", "Wait for the active turn before changing settings.")
 		}
-		kind := strings.TrimPrefix(verb[0], "/")
-		if kind == "settings" {
-			kind = "model"
+		kind := pickerSettings
+		if verb[0] == "/login" {
+			kind = pickerLogin
 		}
 		cmd := m.openPicker(kind)
 		m.refresh(true)

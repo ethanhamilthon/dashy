@@ -4,18 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
 	"dashy/internal/agent"
-	"dashy/internal/shell"
 )
-
-// maxPendingImages bounds images waiting in the queue plus the running turn.
-const maxPendingImages = 8
 
 // Controller coordinates turns for the TUI. One operation (a turn or a
 // compaction) is active at a time; inputs arriving meanwhile become steering.
@@ -31,9 +25,11 @@ type Controller struct {
 	idle     chan struct{} // closed when active ends; nil while idle
 	deferred *deferredAction
 	journal  []agent.Record // display journal, the same records the agent persists
+	custom   string         // /rename title
+	first    string         // first line of the first user message
+	ctx      int64          // context size shown in the status line
 	closing  bool
 	shut     bool
-	reason   string
 	closed   chan struct{}
 }
 
@@ -45,10 +41,7 @@ type operation struct {
 	cancel    context.CancelFunc
 	started   time.Time
 	steering  *agent.Steering
-	images    []shell.Image // submitted images, restored when the turn is withdrawn
 	cancelled bool
-	retry     bool
-	retryText string
 }
 
 // deferredAction is a session change or quit waiting for the active operation.
@@ -62,38 +55,54 @@ func New(a *agent.Agent, emit func(Event)) *Controller {
 	if emit == nil {
 		emit = func(Event) {}
 	}
-	return &Controller{a: a, emit: emit, journal: a.Records(), closed: make(chan struct{})}
+	c := &Controller{a: a, emit: emit, journal: a.Records(), closed: make(chan struct{})}
+	c.custom = a.CustomTitle()
+	c.first = agent.DefaultTitle(c.journal)
+	c.ctx = a.ContextTokens()
+	return c
 }
 
-// view runs fn under the lock, so state is never read mid-change.
 func (c *Controller) view(fn func()) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	fn()
 }
 
-// Closed is closed after a quit or shutdown has saved the session.
+// Closed is closed after a quit has saved the session.
 func (c *Controller) Closed() <-chan struct{} { return c.closed }
-
-// Reason reports why the controller closed, or "" while it is open.
-func (c *Controller) Reason() (reason string) {
-	c.view(func() { reason = c.reason })
-	return reason
-}
 
 // Status reports the active operation.
 func (c *Controller) Status() (s Status) {
 	c.view(func() {
-		s = Status{Images: c.pendingImages()}
+		s = Status{Images: c.a.PendingImages()}
 		if c.active != nil {
 			s.Busy, s.Cancelling = true, c.active.cancelled
-			s.Compacting, s.Turn, s.Started = c.active.kind == "compact", c.active.id, c.active.started
+			s.Compacting, s.Started = c.active.kind == "compact", c.active.started
 			if c.active.steering != nil {
 				s.Queued = c.active.steering.Pending()
 			}
 		}
 	})
 	return s
+}
+
+// Title is the custom title if one is set, else the first line of the first user message.
+func (c *Controller) Title() (title string) {
+	c.view(func() { title = c.titleLocked() })
+	return title
+}
+
+func (c *Controller) titleLocked() string {
+	if c.custom != "" {
+		return c.custom
+	}
+	return c.first
+}
+
+// Context is the size of the next prompt in tokens, as shown in the status line.
+func (c *Controller) Context() (tokens int64) {
+	c.view(func() { tokens = c.ctx })
+	return tokens
 }
 
 // History returns the display journal of the session.
@@ -114,33 +123,11 @@ func (c *Controller) Settings() (s agent.Settings) {
 	return s
 }
 
-// Title returns the current session title.
-func (c *Controller) Title() string {
-	var title string
-	c.view(func() {
-		if c.a != nil {
-			title = c.a.Title()
-		}
-	})
-	return title
-}
+// SettingsPath is the file that stores settings.
+func (c *Controller) SettingsPath() string { return c.a.SettingsPath() }
 
-// AttachmentsDir returns the attachments directory.
-func (c *Controller) AttachmentsDir() string {
-	return c.a.AttachmentsDir()
-}
-
-// HistoryPath is the file that stores the active session.
-func (c *Controller) HistoryPath() (path string) {
-	c.view(func() { path = c.a.HistoryPath })
-	return path
-}
-
-// PrimaryConfig is the configuration file that receives settings changes.
-func (c *Controller) PrimaryConfig() (path string) {
-	c.view(func() { path = c.a.PrimaryConfig() })
-	return path
-}
+// AttachmentsDir is where pasted and viewed images are saved.
+func (c *Controller) AttachmentsDir() string { return c.a.AttachmentsDir() }
 
 // Deliver starts a turn for pending external notifications when idle.
 func (c *Controller) Deliver() (started bool) {
@@ -163,34 +150,31 @@ func (c *Controller) Run(ctx context.Context) error {
 	}
 }
 
-// Wait blocks until no operation is active or ctx ends.
-func (c *Controller) Wait(ctx context.Context) error {
-	for {
-		var idle chan struct{}
-		c.view(func() { idle = c.idle })
-		if idle == nil {
-			return nil
-		}
-		select {
-		case <-idle:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-}
-
 // Close cancels any active operation and waits for it to finish. It does not save.
 func (c *Controller) Close() {
 	c.view(func() {
 		c.closing = true
 		if c.active != nil {
-			c.cancelActiveLocked()
+			c.active.cancelled = true
+			c.active.cancel()
 		}
 	})
-	_ = c.Wait(context.Background())
+	c.wait()
 }
 
-func (c *Controller) closeLocked(reason string) error {
+func (c *Controller) wait() {
+	for {
+		var idle chan struct{}
+		c.view(func() { idle = c.idle })
+		if idle == nil {
+			return
+		}
+		<-idle
+	}
+}
+
+// closeLocked saves the session and marks the controller closed.
+func (c *Controller) closeLocked() error {
 	if c.shut {
 		return nil
 	}
@@ -202,40 +186,35 @@ func (c *Controller) closeLocked(reason string) error {
 			return err
 		}
 	}
-	c.shut, c.reason = true, reason
+	c.shut = true
 	close(c.closed)
 	return nil
 }
 
-func (c *Controller) beginTurnLocked(input agent.Input, source string) string {
+func (c *Controller) beginTurnLocked(input agent.Input, source string) {
 	c.count++
-	turnID := fmt.Sprintf("turn-%d", c.count)
 	ctx, cancel := context.WithCancel(context.Background())
-	images := append([]shell.Image(nil), input.Images...)
 	op := &operation{
-		id:       turnID,
+		id:       fmt.Sprintf("turn-%d", c.count),
 		kind:     "turn",
 		ctx:      ctx,
 		cancel:   cancel,
 		started:  time.Now(),
 		steering: &agent.Steering{},
-		images:   images,
 	}
 	c.active = op
 	c.idle = make(chan struct{})
-	c.publish(Event{Kind: "started", Turn: turnID, Operation: "turn", Source: source, Text: input.Text})
+	c.publish(Event{Kind: "started", Turn: op.id, Operation: "turn", Source: source, Text: input.Text})
 	go c.runTurn(op, input)
-	return turnID
 }
 
 func (c *Controller) beginCompactLocked(prompt string) {
 	c.count++
-	turnID := fmt.Sprintf("compact-%d", c.count)
 	ctx, cancel := context.WithCancel(context.Background())
-	op := &operation{id: turnID, kind: "compact", ctx: ctx, cancel: cancel, started: time.Now()}
+	op := &operation{id: fmt.Sprintf("compact-%d", c.count), kind: "compact", ctx: ctx, cancel: cancel, started: time.Now()}
 	c.active = op
 	c.idle = make(chan struct{})
-	c.publish(Event{Kind: "started", Turn: turnID, Operation: "compact", Source: "compact", Text: prompt})
+	c.publish(Event{Kind: "started", Turn: op.id, Operation: "compact", Source: "compact", Text: prompt})
 	go c.runCompact(op, prompt)
 }
 
@@ -246,21 +225,26 @@ func (c *Controller) endLocked(op *operation) {
 	c.idle = nil
 }
 
-func (c *Controller) cancelActiveLocked() {
-	c.active.cancelled = true
-	c.active.cancel()
-}
-
 func (c *Controller) runTurn(op *operation, input agent.Input) {
 	err := c.a.RunInput(op.ctx, input, func(e agent.Event) { c.observe(op, e) }, op.steering)
 	c.finishTurn(op, err)
 }
 
+func (c *Controller) runCompact(op *operation, prompt string) {
+	text, err := c.a.Compact(op.ctx, prompt)
+	c.finishCompact(op, text, err)
+}
+
 // observe applies one agent event to controller state before reporting it.
 func (c *Controller) observe(op *operation, e agent.Event) {
 	c.view(func() {
-		if e.Kind == "withdraw" {
-			op.retry, op.retryText = true, e.Text
+		if e.Meta != nil && e.Meta.ContextInput != nil {
+			c.ctx = *e.Meta.ContextInput
+		}
+		if e.Kind == "reset" {
+			// Automatic compaction replaced the history at a safe point: rebuild the display from it.
+			c.publish(Event{Kind: "session", Turn: op.id, Operation: "compact", Records: c.a.Records()})
+			return
 		}
 		c.publish(Event{Kind: "agent", Turn: op.id, Agent: &e})
 	})
@@ -280,24 +264,21 @@ func (c *Controller) finishTurn(op *operation, err error) {
 		if status == "cancelled" {
 			c.publish(Event{Kind: "notice", Text: "Turn cancelled."})
 		}
+		c.ctx = c.a.ContextTokens()
 		pending := op.steering.TakeInputs()
 		promote := status == "ok" && len(pending) > 0 && c.deferred == nil && !c.closing
 		var unsent []agent.Input
-		var next agent.Input
-		var rest []agent.Input
-		if promote {
-			next, rest = pending[0], pending[1:]
-		} else {
-			if op.retry {
-				unsent = append(unsent, agent.Input{Text: op.retryText, Images: op.images})
+		if !promote {
+			unsent = pending
+			for _, in := range unsent {
+				c.a.ReleaseImages(len(in.Images))
 			}
-			unsent = append(unsent, pending...)
 		}
 		c.endLocked(op)
 		c.publish(Event{Kind: "done", Turn: op.id, Operation: "turn", Status: status, Error: text, Unsent: unsent})
 		if promote {
-			c.beginTurnLocked(next, "queued")
-			for _, in := range rest {
+			c.beginTurnLocked(pending[0], "queued")
+			for _, in := range pending[1:] {
 				c.active.steering.PushInput(in)
 			}
 			return
@@ -318,8 +299,8 @@ func (c *Controller) finishCompact(op *operation, text string, err error) {
 		}
 		c.endLocked(op)
 		if status == "ok" {
-			records := c.a.Records()
-			c.publish(Event{Kind: "session", Records: records, Session: c.a.SessionInfoFor(records), Operation: "compact"})
+			c.ctx = c.a.ContextTokens()
+			c.publish(Event{Kind: "session", Turn: op.id, Operation: "compact", Records: c.a.Records()})
 		}
 		if status == "error" {
 			c.publish(Event{Kind: "error", Text: failure})
@@ -344,7 +325,7 @@ func (c *Controller) settleLocked(unsent []agent.Input) {
 		return
 	}
 	if d.kind == "quit" {
-		if err := c.closeLocked("quit"); err != nil {
+		if err := c.closeLocked(); err != nil {
 			c.publish(Event{Kind: "error", Text: err.Error()})
 		}
 		return
@@ -367,8 +348,9 @@ func (c *Controller) switchLocked(kind, id string) error {
 	if err != nil {
 		return err
 	}
-	records := c.a.Records()
-	c.publish(Event{Kind: "session", Records: records, Session: c.a.SessionInfoFor(records)})
+	c.custom = c.a.CustomTitle()
+	c.ctx = c.a.ContextTokens()
+	c.publish(Event{Kind: "session", Records: c.a.Records()})
 	return nil
 }
 
@@ -388,16 +370,21 @@ func (c *Controller) deliverLocked() bool {
 	return true
 }
 
-// publish records an event in the display journal and emits it.
+// publish records an event in the display journal, stamps the title and emits it.
 func (c *Controller) publish(e Event) {
 	switch e.Kind {
 	case "agent":
 		c.journal = agent.ApplyEvent(c.journal, *e.Agent)
+		if e.Agent.Kind == "user" && c.first == "" {
+			c.first = agent.FirstLine(e.Agent.Text)
+		}
 	case "notice", "error":
 		c.journal = agent.ApplyEvent(c.journal, agent.Event{Kind: e.Kind, Text: e.Text})
 	case "session":
 		c.journal = slices.Clone(e.Records)
+		c.first = agent.DefaultTitle(e.Records)
 	}
+	e.Title = c.titleLocked()
 	c.emit(e)
 }
 
@@ -426,40 +413,9 @@ func (c *Controller) setupError() error {
 	return fail("setup_required", "%s", hint)
 }
 
-func (c *Controller) pendingImages() int {
-	n := 0
+func (c *Controller) requireIdle(msg string) error {
 	if c.active != nil {
-		n += len(c.active.images)
-		if c.active.steering != nil {
-			for _, in := range c.active.steering.Pending() {
-				n += len(in.Images)
-			}
-		}
+		return fail("busy", "%s", msg)
 	}
-	return n
-}
-
-// redact removes credentials from text returned to a caller.
-func redact(text string, secrets ...string) string {
-	for _, secret := range secrets {
-		if secret != "" {
-			text = strings.ReplaceAll(text, secret, "[redacted]")
-		}
-	}
-	return text
-}
-
-// providerSecrets lists every configured credential so error text can be scrubbed.
-func providerSecrets(s agent.Settings, extra ...string) []string {
-	secrets := append([]string(nil), extra...)
-	for _, p := range s.Providers {
-		secrets = append(secrets, p.APIKey, os.Getenv(p.APIKeyEnv))
-	}
-	return secrets
-}
-
-// Sources lists the configuration files in effect, lowest priority first.
-func (c *Controller) Sources() (sources []agent.Source) {
-	c.view(func() { sources = slices.Clone(c.a.Sources) })
-	return sources
+	return nil
 }

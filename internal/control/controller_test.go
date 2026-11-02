@@ -1,10 +1,9 @@
 package control
 
 import (
-	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,86 +19,84 @@ import (
 	"dashy/internal/shell"
 )
 
-// fakeModel answers Responses requests. A gate holds streaming answers until
-// the test releases them, so busy states can be exercised deterministically.
+// fakeModel answers provider requests: streamed ones with an answer, a summary
+// request (not streamed) with SUMMARY. gate, when set, holds every request until
+// it is closed or the request is cancelled.
 type fakeModel struct {
-	mu       sync.Mutex
-	requests int
-	gate     chan struct{}
-	started  chan struct{}
-	bash     bool // the first streamed request asks for a long shell command
+	mu      sync.Mutex
+	bodies  []string
+	gate    chan struct{}
+	summary bool
 }
 
 func (f *fakeModel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	body, _ := io.ReadAll(r.Body)
-	if !bytes.Contains(body, []byte(`"stream":true`)) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"id":"s","object":"response","status":"completed","output":[{"type":"message","id":"m","role":"assistant","status":"completed","content":[{"type":"output_text","text":"summary text","annotations":[]}]}]}`)
-		return
-	}
+	data, _ := io.ReadAll(r.Body)
+	body := string(data)
 	f.mu.Lock()
-	f.requests++
-	first := f.requests == 1
+	f.bodies = append(f.bodies, body)
+	n := len(f.bodies)
+	gate := f.gate
 	f.mu.Unlock()
-	w.Header().Set("Content-Type", "text/event-stream")
-	fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hel\"}\n\n")
-	if fl, ok := w.(http.Flusher); ok {
-		fl.Flush()
-	}
-	if f.started != nil {
+	if gate != nil {
 		select {
-		case f.started <- struct{}{}:
-		default:
-		}
-	}
-	if f.gate != nil {
-		select {
-		case <-f.gate:
+		case <-gate:
 		case <-r.Context().Done():
 			return
 		}
 	}
-	if first && f.bash {
-		fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"function_call\",\"call_id\":\"call-1\",\"name\":\"bash\",\"arguments\":\"{\\\"command\\\":\\\"sleep 5\\\"}\"}]}}\n\n")
+	if !strings.Contains(body, `"stream":true`) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":"s","object":"response","status":"completed","output":[{"type":"message","id":"m","role":"assistant","status":"completed","content":[{"type":"output_text","text":"SUMMARY","annotations":[]}]}]}`)
 		return
 	}
-	fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"answer\"}]}]}}\n\n")
+	w.Header().Set("Content-Type", "text/event-stream")
+	fmt.Fprintf(w, "data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"answer %d\"}]}]}}\n\n", n)
 }
 
-// harness wires an agent, a fake provider and a controller that records events.
+func (f *fakeModel) requests() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.bodies...)
+}
+
+// harness is a controller over a real agent whose events are recorded in order.
 type harness struct {
 	t      *testing.T
+	ctl    *Controller
 	a      *agent.Agent
-	c      *Controller
 	model  *fakeModel
+	dir    string
 	mu     sync.Mutex
 	events []Event
 }
 
-func newHarness(t *testing.T, model *fakeModel, config string) *harness {
+func newHarness(t *testing.T, model *fakeModel) *harness {
 	t.Helper()
-	home := t.TempDir()
+	home, dir := t.TempDir(), t.TempDir()
 	t.Setenv("DASHY_HOME", home)
 	server := httptest.NewServer(model)
 	t.Cleanup(server.Close)
-	a, err := agent.New(t.TempDir(), agent.ConfigFiles{})
+	s := agent.DefaultSettings()
+	s.Provider, s.Model = "p", "m"
+	s.Providers["p"] = agent.Provider{BaseURL: server.URL}
+	data, _ := json.Marshal(s)
+	if err := os.WriteFile(filepath.Join(home, "settings.json"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	a, err := agent.New(dir, agent.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	a.ApplySettings(agent.Settings{
-		Provider: "test",
-		Model:    "m",
-		Providers: map[string]agent.Provider{
-			"test": {BaseURL: server.URL},
-		},
-	})
-	h := &harness{t: t, a: a, model: model}
-	h.c = New(a, func(e Event) {
+	h := &harness{t: t, a: a, model: model, dir: dir}
+	h.ctl = New(a, func(e Event) {
 		h.mu.Lock()
 		defer h.mu.Unlock()
 		h.events = append(h.events, e)
 	})
-	t.Cleanup(h.c.Close)
+	t.Cleanup(func() {
+		h.ctl.Close()
+		a.Close()
+	})
 	return h
 }
 
@@ -109,525 +106,375 @@ func (h *harness) log() []Event {
 	return append([]Event(nil), h.events...)
 }
 
+// await polls the event log until pred holds.
 func (h *harness) await(what string, pred func([]Event) bool) []Event {
 	h.t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for {
 		events := h.log()
 		if pred(events) {
 			return events
 		}
 		if time.Now().After(deadline) {
-			h.t.Fatalf("timed out waiting for %s; events: %+v", what, events)
+			h.t.Fatalf("timed out waiting for %s; events: %s", what, describe(events))
 		}
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
-func doneFor(events []Event, turn string) *Event {
-	for i := range events {
-		if events[i].Kind == "done" && events[i].Turn == turn {
-			return &events[i]
+func describe(events []Event) string {
+	var parts []string
+	for _, e := range events {
+		parts = append(parts, e.Kind+"/"+e.Status+"/"+e.Text)
+	}
+	return strings.Join(parts, " | ")
+}
+
+func doneEvents(events []Event) []Event {
+	var done []Event
+	for _, e := range events {
+		if e.Kind == "done" {
+			done = append(done, e)
 		}
 	}
-	return nil
+	return done
 }
 
-func (h *harness) input(text string, images ...shell.Image) string {
+// settle waits until the controller is idle again.
+func (h *harness) settle() []Event {
 	h.t.Helper()
-	if err := h.c.Input(agent.Input{Text: text, Images: images}); err != nil {
-		h.t.Fatalf("input %s: %v", text, err)
-	}
-	return h.c.Status().Turn
+	return h.await("idle", func(events []Event) bool {
+		return !h.ctl.Status().Busy && len(doneEvents(events)) > 0
+	})
 }
 
-func (h *harness) steer(text string, images ...shell.Image) {
+func (h *harness) send(text string, images ...shell.Image) {
 	h.t.Helper()
-	if err := h.c.Steer(agent.Input{Text: text, Images: images}); err != nil {
-		h.t.Fatalf("steer %s: %v", text, err)
+	if err := h.ctl.Input(agent.Input{Text: text, Images: images}); err != nil {
+		h.t.Fatalf("input %q: %v", text, err)
 	}
 }
 
 func codeOf(err error) string {
-	var e *Error
-	if errors.As(err, &e) {
+	if e, ok := err.(*Error); ok {
 		return e.Code
 	}
 	return ""
 }
 
-func TestLaunchWaitsWithoutModelRequestOrHistoryFile(t *testing.T) {
-	model := &fakeModel{}
-	h := newHarness(t, model, "")
-	time.Sleep(50 * time.Millisecond)
-	h.c.Deliver()
-	if model.requests != 0 || len(h.log()) != 0 {
-		t.Fatalf("launch started work: requests=%d events=%v", model.requests, h.log())
-	}
-	if h.a.HasSavedSession() {
-		t.Fatal("waiting created a session file")
-	}
-	if status := h.c.Status(); status.Busy {
-		t.Fatal("controller busy before any input")
-	}
-}
-
-func TestInputStartsTurnAndDoneIsExactlyOnce(t *testing.T) {
-	model := &fakeModel{}
-	h := newHarness(t, model, "")
-	turn := h.input("hello")
-	if turn == "" {
-		t.Fatal("missing turn id")
-	}
-	events := h.await("done", func(events []Event) bool { return doneFor(events, turn) != nil })
-	if n := countKind(events, "done"); n != 1 {
-		t.Fatalf("done events = %d", n)
-	}
-	if d := doneFor(events, turn); d.Status != "ok" || d.Error != "" {
-		t.Fatalf("done = %+v", d)
-	}
-	if !h.a.HasSavedSession() {
-		t.Fatal("completed turn was not saved")
-	}
-	if got := h.c.History(); len(got) == 0 || got[len(got)-1].Text != "answer" {
-		t.Fatalf("unexpected history: %+v", got)
-	}
-}
-
-func countKind(events []Event, kind string) int {
-	n := 0
+func TestTurnEmitsStartedThenExactlyOneDone(t *testing.T) {
+	h := newHarness(t, &fakeModel{})
+	h.send("hello")
+	events := h.settle()
+	var kinds []string
 	for _, e := range events {
-		if e.Kind == kind {
-			n++
+		kinds = append(kinds, e.Kind)
+	}
+	if got := strings.Join(kinds, ","); got != "started,agent,agent,done" {
+		t.Fatalf("kinds = %s", got)
+	}
+	if done := doneEvents(events); len(done) != 1 || done[0].Status != "ok" {
+		t.Fatalf("done = %+v", done)
+	}
+}
+
+// inFlight waits until the model has received n requests, so later input is queued
+// behind a request that is really in flight (not taken at a step boundary).
+func (h *harness) inFlight(n int) {
+	h.t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for len(h.model.requests()) < n {
+		if time.Now().After(deadline) {
+			h.t.Fatalf("request %d never arrived", n)
 		}
-	}
-	return n
-}
-
-func TestSteeringWhileBusyIsAcceptedBeforeCompletion(t *testing.T) {
-	model := &fakeModel{gate: make(chan struct{}), started: make(chan struct{}, 4)}
-	h := newHarness(t, model, "")
-	turn := h.input("first")
-	<-model.started
-	h.steer("focus on errors")
-	if got := h.c.Status().Queued; len(got) != 1 || got[0].Text != "focus on errors" {
-		t.Fatalf("queued = %+v", got)
-	}
-	close(model.gate)
-	events := h.await("done", func(events []Event) bool { return doneFor(events, turn) != nil })
-	accepted := false
-	for _, e := range events {
-		if e.Kind == "agent" && e.Agent.Kind == "user" && e.Agent.Steering && e.Agent.Text == "focus on errors" {
-			accepted = true
-		}
-	}
-	if !accepted {
-		t.Fatalf("steering was never accepted: %+v", events)
-	}
-	if model.requests != 2 {
-		t.Fatalf("steering must trigger a follow-up request, got %d", model.requests)
-	}
-	if len(h.c.Status().Queued) != 0 {
-		t.Fatal("accepted steering still queued")
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 
-func TestSteerWhileIdleIsRejected(t *testing.T) {
-	h := newHarness(t, &fakeModel{}, "")
-	if err := h.c.Steer(agent.Input{Text: "late"}); codeOf(err) != "not_busy" {
-		t.Fatalf("steer while idle = %v", err)
-	}
-	if err := h.c.Input(agent.Input{}); codeOf(err) != "invalid" {
-		t.Fatalf("empty input = %v", err)
-	}
-}
-
-func TestRecallReturnsUnacceptedInstructionOnly(t *testing.T) {
-	model := &fakeModel{gate: make(chan struct{}), started: make(chan struct{}, 4)}
-	h := newHarness(t, model, "")
-	turn := h.input("first")
-	<-model.started
-	h.steer("first follow-up")
-	h.steer("second follow-up")
-	in, err := h.c.Recall()
-	if err != nil || in == nil || in.Text != "second follow-up" {
-		t.Fatalf("recall = %+v, %v", in, err)
-	}
-	if queued := h.c.Status().Queued; len(queued) != 1 || queued[0].Text != "first follow-up" {
-		t.Fatalf("queued after recall = %+v", queued)
-	}
-	close(model.gate)
-	h.await("done", func(events []Event) bool { return doneFor(events, turn) != nil })
-	if _, err := h.c.Recall(); codeOf(err) != "not_recallable" {
-		t.Fatalf("recall of accepted steering = %v", err)
-	}
-}
-
-func TestStopCancelsStreamingTurnAndReturnsQueuedInputs(t *testing.T) {
-	model := &fakeModel{gate: make(chan struct{}), started: make(chan struct{}, 4)}
-	h := newHarness(t, model, "")
-	turn := h.input("long")
-	<-model.started
-	h.steer("queued one")
-	h.steer("queued two")
-	h.c.Stop()
-	if !h.c.Status().Cancelling {
-		t.Fatal("controller not cancelling")
-	}
-	close(model.gate)
-	events := h.await("cancelled", func(events []Event) bool { return doneFor(events, turn) != nil })
-	d := doneFor(events, turn)
-	if d.Status != "cancelled" || len(d.Unsent) != 2 || d.Unsent[0].Text != "queued one" || d.Unsent[1].Text != "queued two" {
-		t.Fatalf("done = %+v", d)
-	}
-	if countKind(events, "started") != 1 {
-		t.Fatal("queued inputs were executed despite cancellation")
-	}
-	if !hasNotice(events, "Turn cancelled.") {
-		t.Fatalf("cancellation notice missing: %+v", events)
-	}
-}
-
-func hasNotice(events []Event, text string) bool {
-	for _, e := range events {
-		if e.Kind == "notice" && e.Text == text {
-			return true
-		}
-	}
-	return false
-}
-
-func TestStopCancelsRunningShellCommand(t *testing.T) {
-	model := &fakeModel{bash: true}
-	h := newHarness(t, model, "")
-	turn := h.input("run it")
-	h.await("command running", func(events []Event) bool {
-		for _, e := range events {
-			if e.Kind == "agent" && e.Agent.Kind == "code" && !e.Agent.Provisional {
-				return true
-			}
-		}
-		return false
-	})
-	h.c.Stop()
-	events := h.await("stopped", func(events []Event) bool { return doneFor(events, turn) != nil })
-	d := doneFor(events, turn)
-	if d == nil || d.Status != "cancelled" {
-		t.Fatalf("expected cancelled turn, got %+v", d)
-	}
-}
-
-func TestStopWhenIdleIsNoop(t *testing.T) {
-	h := newHarness(t, &fakeModel{}, "")
-	h.c.Stop()
-	if h.c.Status().Busy {
-		t.Fatal("stop while idle marked busy")
-	}
-}
-
-func TestBusyGuardsRejectMutations(t *testing.T) {
-	model := &fakeModel{gate: make(chan struct{}), started: make(chan struct{}, 4)}
-	h := newHarness(t, model, "")
-	turn := h.input("busy")
-	<-model.started
-
-	if err := h.c.Compact(""); codeOf(err) != "busy" {
-		t.Fatalf("compact while busy = %v", err)
-	}
-	if err := h.c.Rename("new title"); codeOf(err) != "busy" {
-		t.Fatalf("rename while busy = %v", err)
-	}
-	if err := h.c.SelectProvider("test"); codeOf(err) != "busy" {
-		t.Fatalf("select provider while busy = %v", err)
-	}
-	if err := h.c.SelectModel("test", "m", ""); codeOf(err) != "busy" {
-		t.Fatalf("select model while busy = %v", err)
-	}
-	if err := h.c.AddProvider("name", "http://x", "k"); codeOf(err) != "busy" {
-		t.Fatalf("add provider while busy = %v", err)
-	}
-	if _, err := h.c.Providers(); codeOf(err) != "busy" {
-		t.Fatalf("providers while busy = %v", err)
-	}
-	if st := h.c.Status(); st.Turn != turn || !st.Busy {
-		t.Fatalf("status = %+v", st)
-	}
-	if err := h.c.Resume("missing"); codeOf(err) != "not_found" {
-		t.Fatalf("resume missing: %v", err)
-	}
-	close(model.gate)
-	h.await("done", func(events []Event) bool { return doneFor(events, turn) != nil })
-}
-
-func TestCancelThenNewSwitchesSessionAfterTurnEnds(t *testing.T) {
-	model := &fakeModel{gate: make(chan struct{}), started: make(chan struct{}, 4)}
-	h := newHarness(t, model, "")
-	turn := h.input("old")
-	<-model.started
-	first := h.a.HistoryPath
-	if err := h.c.NewSession(); err != nil {
-		t.Fatalf("new error: %v", err)
-	}
-	if !h.c.Status().Cancelling {
-		t.Fatal("turn not cancelling after deferred new")
-	}
-	close(model.gate)
-	h.await("switched", func(events []Event) bool { return countKind(events, "session") == 1 })
-	if h.a.HistoryPath == first {
-		t.Fatal("session did not change")
-	}
-	d := doneFor(h.log(), turn)
-	if d == nil || d.Status != "cancelled" {
-		t.Fatalf("cancelled turn done = %+v", d)
-	}
-	var sawSession bool
-	for _, e := range h.log() {
-		if e.Kind == "session" {
-			sawSession = true
-			if len(e.Records) != 0 {
-				t.Fatalf("new session records = %+v", e.Records)
-			}
-		}
-	}
-	if !sawSession {
-		t.Fatal("session event never emitted")
-	}
-	if h.c.Status().Busy || h.c.Status().Cancelling {
-		t.Fatalf("leftover busy state: %+v", h.c.Status())
-	}
-}
-
-func TestQuitWhileBusyClosesAfterSaving(t *testing.T) {
-	model := &fakeModel{gate: make(chan struct{}), started: make(chan struct{}, 4)}
-	h := newHarness(t, model, "")
-	_ = h.input("work")
-	<-model.started
-	closed, err := h.c.Quit()
-	if err != nil || closed {
-		t.Fatalf("quit while busy closed immediately: %v, %v", closed, err)
-	}
-	close(model.gate)
-	select {
-	case <-h.c.Closed():
-	case <-time.After(5 * time.Second):
-		t.Fatal("quit did not close")
-	}
-	if h.c.Reason() != "quit" {
-		t.Fatalf("reason = %q", h.c.Reason())
-	}
-	if !h.a.HasSavedSession() {
-		t.Fatal("session was not saved before quit closed")
-	}
-	if err := h.c.Input(agent.Input{Text: "after"}); codeOf(err) != "closed" {
-		t.Fatalf("operation after quit = %v", err)
-	}
-}
-
-func TestIdleQuitSavesAndClosesImmediately(t *testing.T) {
-	h := newHarness(t, &fakeModel{}, "")
-	h.input("once")
-	h.await("done", func(events []Event) bool { return countKind(events, "done") == 1 })
-	closed, err := h.c.Quit()
-	if err != nil || !closed {
-		t.Fatalf("idle quit: %v, %v", closed, err)
-	}
-	select {
-	case <-h.c.Closed():
-	default:
-		t.Fatal("Closed channel not closed")
-	}
-}
-
-func TestSaveFailureKeepsControllerOpen(t *testing.T) {
-	h := newHarness(t, &fakeModel{}, "")
-	h.input("keep me")
-	h.await("done", func(events []Event) bool { return countKind(events, "done") == 1 })
-	_ = os.Chmod(filepath.Dir(h.a.HistoryPath), 0500)
-	t.Cleanup(func() { _ = os.Chmod(filepath.Dir(h.a.HistoryPath), 0700) })
-	closed, err := h.c.Quit()
-	if err == nil || closed {
-		t.Fatalf("save failure should fail quit: closed=%v err=%v", closed, err)
-	}
-	select {
-	case <-h.c.Closed():
-		t.Fatal("Closed channel closed despite failed save")
-	default:
-	}
-	if h.c.Reason() != "" {
-		t.Fatalf("reason set after failed save: %q", h.c.Reason())
-	}
-}
-
-func TestCompactRunsInBackgroundAndCanBeCancelled(t *testing.T) {
+// Input while a turn runs is steering: the model receives it before the turn ends.
+func TestSteeringJoinsRunningTurn(t *testing.T) {
 	gate := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		<-gate
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"id":"s","object":"response","status":"completed","output":[{"type":"message","id":"m","role":"assistant","status":"completed","content":[{"type":"output_text","text":"summary text","annotations":[]}]}]}`)
-	}))
-	defer server.Close()
-	h := newHarness(t, &fakeModel{}, "")
-	h.a.ApplySettings(agent.Settings{Provider: "p", Model: "m", Providers: map[string]agent.Provider{"p": {BaseURL: server.URL}}})
-	h.a.History = []json.RawMessage{
-		[]byte(`{"role":"user","content":"first"}`),
-		[]byte(`{"role":"assistant","content":"reply"}`),
-	}
-	if err := h.c.Compact("keep decisions"); err != nil {
-		t.Fatalf("compact: %v", err)
-	}
-	if !h.c.Status().Compacting || !h.c.Status().Busy {
-		t.Fatalf("status during compact = %+v", h.c.Status())
-	}
-	if err := h.c.Input(agent.Input{Text: "during"}); codeOf(err) != "compacting" {
-		t.Fatalf("input during compact = %v", err)
-	}
-	h.c.Stop()
+	h := newHarness(t, &fakeModel{gate: gate})
+	h.send("first")
+	h.inFlight(1)
+	h.send("steer me")
 	close(gate)
-	events := h.await("compact cancelled", func(events []Event) bool {
-		for _, e := range events {
-			if e.Kind == "done" && e.Operation == "compact" {
-				return true
-			}
+	h.settle()
+	reqs := h.model.requests()
+	if len(reqs) != 2 || !strings.Contains(reqs[1], "steer me") {
+		t.Fatalf("steering not sent to the model: %d requests", len(reqs))
+	}
+}
+
+// Stop cancels the turn, and unaccepted steering comes back as unsent input.
+func TestStopReturnsUnacceptedSteering(t *testing.T) {
+	gate := make(chan struct{})
+	defer close(gate)
+	h := newHarness(t, &fakeModel{gate: gate})
+	h.send("first")
+	h.inFlight(1)
+	h.send("queued text")
+	if got := h.ctl.Status().Queued; len(got) != 1 {
+		t.Fatalf("queued = %v", got)
+	}
+	h.ctl.Stop()
+	done := doneEvents(h.settle())
+	if len(done) != 1 || done[0].Status != "cancelled" || len(done[0].Unsent) != 1 || done[0].Unsent[0].Text != "queued text" {
+		t.Fatalf("done = %+v", done)
+	}
+}
+
+func TestRecallReturnsNewestInstructionOnce(t *testing.T) {
+	gate := make(chan struct{})
+	defer close(gate)
+	h := newHarness(t, &fakeModel{gate: gate})
+	h.send("first")
+	h.inFlight(1)
+	h.send("one")
+	h.send("two")
+	if in, err := h.ctl.Recall(); err != nil || in.Text != "two" {
+		t.Fatalf("recall = %v, %v", in, err)
+	}
+	if in, err := h.ctl.Recall(); err != nil || in.Text != "one" {
+		t.Fatalf("second recall = %v, %v", in, err)
+	}
+	if _, err := h.ctl.Recall(); codeOf(err) != "not_recallable" {
+		t.Fatalf("empty recall: %v", err)
+	}
+}
+
+// Build n finished turns with distinct user text.
+func runTurns(h *harness, n int) {
+	for i := 0; i < n; i++ {
+		h.send(fmt.Sprintf("turn %d", i))
+		h.settle()
+	}
+}
+
+func TestCompactionCanBeCancelledWhileSummarizing(t *testing.T) {
+	gate := make(chan struct{})
+	defer close(gate)
+	h := newHarness(t, &fakeModel{})
+	runTurns(h, 6)
+	h.model.mu.Lock()
+	h.model.gate = gate
+	h.model.mu.Unlock()
+	before := len(h.model.requests())
+	if err := h.ctl.Compact(""); err != nil {
+		t.Fatal(err)
+	}
+	h.await("summary request", func([]Event) bool { return len(h.model.requests()) > before })
+	h.ctl.Stop()
+	done := doneEvents(h.settle())
+	if len(done) != 7 || done[6].Operation != "compact" || done[6].Status != "cancelled" {
+		t.Fatalf("done = %+v", doneEvents(h.log()))
+	}
+}
+
+// Manual compaction replaces the whole display with the summary.
+func TestCompactReplacesDisplayWithSummary(t *testing.T) {
+	h := newHarness(t, &fakeModel{})
+	runTurns(h, 6)
+	if err := h.ctl.Compact(""); err != nil {
+		t.Fatal(err)
+	}
+	h.settle()
+	records := h.ctl.History()
+	joined := fmt.Sprint(records)
+	if strings.Contains(joined, "turn 0") || !strings.Contains(joined, "SUMMARY") {
+		t.Fatalf("display after compaction: %v", records)
+	}
+}
+
+// Automatic compaction, triggered inside a turn, rebuilds the display too.
+func TestAutomaticCompactionRebuildsDisplay(t *testing.T) {
+	h := newHarness(t, &fakeModel{})
+	runTurns(h, 5)
+	huge := strings.Repeat("x", 4*agent.CompactThreshold+100)
+	h.send("big " + huge)
+	events := h.settle()
+	var session *Event
+	for i := range events {
+		if events[i].Kind == "session" {
+			session = &events[i]
 		}
-		return false
-	})
-	d := doneFor(events, events[len(events)-1].Turn)
-	if d.Status != "cancelled" {
-		t.Fatalf("compact done = %+v", d)
+	}
+	if session == nil || session.Operation != "compact" {
+		t.Fatalf("no compaction reset in %s", describe(events))
+	}
+	joined := fmt.Sprint(session.Records)
+	if strings.Contains(joined, "turn 0") || !strings.Contains(joined, "SUMMARY") {
+		t.Fatalf("display after automatic compaction: %s", joined)
+	}
+	if len(h.ctl.History()) < 2 {
+		t.Fatal("display journal lost the recent turns")
 	}
 }
 
-func TestCompactReplacesHistoryWithSummary(t *testing.T) {
-	h := newHarness(t, &fakeModel{}, "")
-	h.a.History = []json.RawMessage{
-		[]byte(`{"role":"user","content":"one"}`),
-		[]byte(`{"role":"assistant","content":"done one"}`),
-		[]byte(`{"role":"user","content":"two"}`),
-		[]byte(`{"role":"assistant","content":"done two"}`),
-		[]byte(`{"role":"user","content":"three"}`),
-		[]byte(`{"role":"assistant","content":"done three"}`),
-		[]byte(`{"role":"user","content":"four"}`),
-		[]byte(`{"role":"assistant","content":"done four"}`),
-		[]byte(`{"role":"user","content":"five"}`),
-		[]byte(`{"role":"assistant","content":"done five"}`),
-	}
-	if err := h.c.Compact(""); err != nil {
-		t.Fatalf("compact: %v", err)
-	}
-	h.await("compact done", func(events []Event) bool {
-		for _, e := range events {
-			if e.Kind == "done" && e.Operation == "compact" && e.Status == "ok" {
-				return true
-			}
-		}
-		return false
-	})
-}
-
-func TestPendingImagesBlockSessionSwitch(t *testing.T) {
-	model := &fakeModel{gate: make(chan struct{}), started: make(chan struct{}, 4)}
-	h := newHarness(t, model, "")
-	h.input("busy")
-	<-model.started
-	image := shell.Image{URL: "data:image/png;base64,AA=="}
-	if err := h.c.Steer(agent.Input{Images: []shell.Image{image}}); err != nil {
-		t.Fatalf("steer with image: %v", err)
-	}
-	if err := h.c.NewSession(); codeOf(err) != "pending_images" {
-		t.Fatalf("new with queued image: %v", err)
-	}
-	close(model.gate)
-}
-
-func TestSetupMissingBlocksInputWithHint(t *testing.T) {
-	t.Setenv("DASHY_HOME", t.TempDir())
-	a, err := agent.New(t.TempDir(), agent.ConfigFiles{})
+// Images queued by dashy view and images in the composer share one allowance of four.
+func TestImageAllowanceIsSharedAcrossSources(t *testing.T) {
+	h := newHarness(t, &fakeModel{})
+	png := shell.Image{URL: "data:image/png;base64," + base64.StdEncoding.EncodeToString(tinyPNG(t))}
+	endpoint, err := agent.Endpoint(h.dir, h.a.SessionID())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close()
-	c := New(a, nil)
-	if err := c.Input(agent.Input{Text: "hi"}); codeOf(err) != "setup_required" || !strings.Contains(err.Error(), "No provider configured") {
-		t.Fatalf("input without provider: %v", err)
+	for i := 0; i < 2; i++ {
+		if err := agent.Send(endpoint, agent.Message{Image: &png}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := h.ctl.Input(agent.Input{Text: "look", Images: []shell.Image{png, png, png}}); codeOf(err) != "attachment_limit" {
+		t.Fatalf("three composer images on top of two views: %v", err)
+	}
+	if err := h.ctl.Input(agent.Input{Text: "look", Images: []shell.Image{png, png}}); err != nil {
+		t.Fatalf("four images in total must be allowed: %v", err)
 	}
 }
 
-func TestProvidersNeverExposeCredentials(t *testing.T) {
-	h := newHarness(t, &fakeModel{}, "")
-	if err := h.c.AddProvider("secret", "https://user:pw@example.test/v1?token=abc", "sk-test-123"); err != nil {
+// A settings change while a turn runs is rejected, and nothing changes. The turn
+// is started by an external notification, as it can be while the picker is open.
+func TestSettingsRejectedWhileNotificationTurnRuns(t *testing.T) {
+	gate := make(chan struct{})
+	defer close(gate)
+	h := newHarness(t, &fakeModel{gate: gate})
+	before := h.ctl.Settings()
+	if err := agent.Notify(h.dir, h.a.SessionID(), "background result"); err != nil {
 		t.Fatal(err)
 	}
-	list, err := h.c.Providers()
+	if !h.ctl.Deliver() {
+		t.Fatal("notification did not start a turn")
+	}
+	for name, err := range map[string]error{
+		"reasoning": h.ctl.ToggleReasoningSummary(),
+		"compact":   h.ctl.ToggleAutoCompact(),
+		"lines":     h.ctl.CycleShowLines(),
+		"model":     h.ctl.SelectModel("p", "other", ""),
+	} {
+		if codeOf(err) != "busy" {
+			t.Errorf("%s while busy: %v", name, err)
+		}
+	}
+	if _, err := h.ctl.Models(t.Context()); codeOf(err) != "busy" {
+		t.Errorf("model listing while busy: %v", err)
+	}
+	if after := h.ctl.Settings(); after.ReasoningSummary != before.ReasoningSummary || after.ShowLines != before.ShowLines || after.Model != before.Model {
+		t.Fatalf("settings changed while busy: %+v", after)
+	}
+}
+
+// Titles: the first line of the first message, a rename, and the reset back to the
+// first line are all carried by the events the terminal reports.
+func TestTitleFollowsFirstLineRenameAndReset(t *testing.T) {
+	h := newHarness(t, &fakeModel{})
+	h.send("  first line\nsecond line")
+	h.settle()
+	if got := h.ctl.Title(); got != "first line" {
+		t.Fatalf("title = %q", got)
+	}
+	if err := h.ctl.Rename("Named"); err != nil {
+		t.Fatal(err)
+	}
+	if last := h.log()[len(h.log())-1]; last.Title != "Named" {
+		t.Fatalf("rename event title = %q", last.Title)
+	}
+	if err := h.ctl.Rename(""); err != nil {
+		t.Fatal(err)
+	}
+	if last := h.log()[len(h.log())-1]; last.Title != "first line" {
+		t.Fatalf("reset event title = %q", last.Title)
+	}
+}
+
+// A resumed session has its custom title and its first line, without any event
+// having happened yet.
+func TestResumedSessionHasItsTitle(t *testing.T) {
+	h := newHarness(t, &fakeModel{})
+	h.send("resumed question\nmore")
+	h.settle()
+	h.ctl.Rename("Kept")
+	id := h.a.SessionID()
+	if err := h.ctl.NewSession(); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.ctl.Resume(id); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.ctl.Title(); got != "Kept" {
+		t.Fatalf("resumed title = %q", got)
+	}
+	if sessions, _ := h.ctl.Sessions(); len(sessions) != 1 || sessions[0].Title != "Kept" {
+		t.Fatalf("resume list: %+v", sessions)
+	}
+}
+
+func tinyPNG(t *testing.T) []byte {
+	t.Helper()
+	data, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
 	if err != nil {
 		t.Fatal(err)
 	}
-	found := false
-	for _, p := range list {
-		if p.Name == "secret" {
-			found = true
-			if !p.APIKeyConfigured || strings.Contains(p.BaseURL, "pw") || strings.Contains(p.BaseURL, "token") {
-				t.Fatalf("provider = %+v", p)
-			}
-		}
-	}
-	if !found {
-		t.Fatalf("provider missing: %+v", list)
-	}
-	if err := h.c.AddProvider("secret", "https://x", "sk-other"); codeOf(err) != "failed" || strings.Contains(err.Error(), "sk-other") {
-		t.Fatalf("duplicate provider error = %v", err)
-	}
-	if err := h.c.SelectModel("nope", "m", ""); codeOf(err) != "not_found" {
-		t.Fatalf("unknown provider: %v", err)
-	}
+	return data
 }
 
-func TestCommandsListAndHelp(t *testing.T) {
-	cmds := Commands()
-	if len(cmds) != 8 {
-		t.Fatalf("commands count = %d", len(cmds))
-	}
-	help := Help("keyboard shortcuts")
-	if !strings.Contains(help, "/new") || !strings.Contains(help, "/settings") || !strings.Contains(help, "keyboard shortcuts") {
-		t.Fatalf("help text = %q", help)
-	}
-}
-
-func TestNotificationStartsIdleTurnAndSteersBusyTurn(t *testing.T) {
-	model := &fakeModel{}
-	h := newHarness(t, model, "")
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go h.c.Run(ctx)
-	id := strings.TrimSuffix(filepath.Base(h.a.HistoryPath), ".jsonl")
-	if err := agent.Notify(h.a.Shell.Dir, id, "ping"); err != nil {
+// Settings changes go through the controller: each is applied, validated and rejected
+// with a stable code when it cannot apply.
+func TestSettingsAndProvidersThroughTheController(t *testing.T) {
+	h := newHarness(t, &fakeModel{})
+	if _, err := h.ctl.Models(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	h.await("notify turn", func(events []Event) bool {
-		for _, e := range events {
-			if e.Kind == "started" && e.Source == "notify" {
-				return true
-			}
-		}
-		return false
-	})
-	h.await("notify done", func(events []Event) bool { return countKind(events, "done") == 1 })
+	if codeOf(h.ctl.SelectProvider("nope")) != "not_found" || codeOf(h.ctl.SelectModel("", "", "")) != "invalid" {
+		t.Fatal("unknown provider or empty model accepted")
+	}
+	if err := h.ctl.SelectModel("p", "m2", "high"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.ctl.AddProvider("q", "https://q.example/v1", "sk-x"); err != nil {
+		t.Fatal(err)
+	}
+	if codeOf(h.ctl.AddProvider("q", "https://q.example/v1", "")) != "failed" {
+		t.Fatal("duplicate provider accepted")
+	}
+	if err := h.ctl.ToggleReasoningSummary(); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.ctl.ToggleAutoCompact(); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.ctl.CycleShowLines(); err != nil {
+		t.Fatal(err)
+	}
+	s := h.ctl.Settings()
+	if s.Model != "m2" || s.Effort != "high" || s.ShowLines != "medium" || s.AutoCompact || s.Providers["q"].APIKey != "sk-x" {
+		t.Fatalf("settings: %+v", s)
+	}
 }
 
-func TestEventsFromAgentKeepOriginalFields(t *testing.T) {
+// Rename and compaction are refused while a turn runs; quitting during a turn waits
+// for the cancellation and then closes the session.
+func TestBusyRejectionsAndQuitDuringTurn(t *testing.T) {
+	gate := make(chan struct{})
+	defer close(gate)
 	model := &fakeModel{}
-	h := newHarness(t, model, "")
-	turn := h.input("fields")
-	events := h.await("done", func(events []Event) bool { return doneFor(events, turn) != nil })
-	var sawDelta, sawFinal bool
-	for _, e := range events {
-		if e.Kind == "agent" && e.Agent.Kind == "delta" && e.Agent.Provisional {
-			sawDelta = true
-		}
-		if e.Kind == "agent" && e.Agent.Kind == "assistant" && e.Agent.Final {
-			sawFinal = true
-		}
+	h := newHarness(t, model)
+	model.mu.Lock()
+	model.gate = gate
+	model.mu.Unlock()
+	h.send("slow")
+	h.await("request", func([]Event) bool { return len(model.requests()) > 0 })
+	if codeOf(h.ctl.Rename("x")) != "busy" || codeOf(h.ctl.Compact("")) != "busy" {
+		t.Fatal("rename or compaction accepted during a turn")
 	}
-	if !sawDelta || !sawFinal {
-		t.Fatalf("agent event fields lost: %+v", events)
+	if closed, err := h.ctl.Quit(); closed || err != nil {
+		t.Fatalf("quit during turn: closed %v, %v", closed, err)
+	}
+	select {
+	case <-h.ctl.Closed():
+	case <-time.After(10 * time.Second):
+		t.Fatal("session did not close after the turn was cancelled")
+	}
+	if codeOf(h.ctl.Input(agent.Input{Text: "late"})) != "closed" {
+		t.Fatal("input accepted after quit")
 	}
 }

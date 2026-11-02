@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/openai/openai-go/v3"
@@ -12,8 +13,7 @@ import (
 )
 
 const (
-	// tokenBytes is a rough bytes-per-token ratio for mixed prose, code and JSON.
-	tokenBytes   = 4
+	tokenBytes   = 4    // rough bytes per token for mixed prose, code and JSON
 	imageTokens  = 1200 // charged per image so base64 payloads cannot dominate
 	summaryLimit = 1200
 )
@@ -21,32 +21,12 @@ const (
 const summaryInstruction = "Summarize this conversation so work can continue. " +
 	"Keep decisions, file paths, commands, results and open questions. Do not use tools."
 
-// stripDataURLs drops inline base64 payloads so an image is charged a fixed cost
-// instead of megabytes of encoded pixels.
-func stripDataURLs(text string) string {
-	var out strings.Builder
-	for {
-		start := strings.Index(text, `"data:`)
-		if start < 0 {
-			break
-		}
-		end := strings.IndexByte(text[start+6:], '"')
-		if end < 0 {
-			break
-		}
-		out.WriteString(text[:start+1])
-		out.WriteString("data:image")
-		text = text[start+6+end:]
-	}
-	out.WriteString(text)
-	return out.String()
-}
+var dataURLPayload = regexp.MustCompile(`data:image/[^"]*`)
 
 // estimateTokens approximates the prompt size of the whole history.
 func estimateTokens(history []json.RawMessage) int64 {
 	var total int64
 	for _, item := range history {
-		text := stripDataURLs(string(item))
 		var v struct{ Content []struct{ Type string } }
 		if json.Unmarshal(item, &v) == nil {
 			for _, part := range v.Content {
@@ -55,7 +35,7 @@ func estimateTokens(history []json.RawMessage) int64 {
 				}
 			}
 		}
-		total += int64(len(text)) / tokenBytes
+		total += int64(len(dataURLPayload.ReplaceAllString(string(item), "data:image"))) / tokenBytes
 	}
 	return total
 }
@@ -63,10 +43,7 @@ func estimateTokens(history []json.RawMessage) int64 {
 // userTurn reports whether item starts a new conversational turn.
 func userTurn(item json.RawMessage) bool {
 	var v struct{ Role, Type string }
-	if json.Unmarshal(item, &v) != nil {
-		return false
-	}
-	if v.Role != "user" || v.Type == "function_call_output" {
+	if json.Unmarshal(item, &v) != nil || v.Role != "user" || v.Type == "function_call_output" {
 		return false
 	}
 	records := RecordsForItem(item)
@@ -87,21 +64,7 @@ func turnStart(history []json.RawMessage, turns int) int {
 	return 0
 }
 
-// instructions is the system prompt used by every request.
-func (a *Agent) instructions() string {
-	if a.promptFrozen {
-		return a.System
-	}
-	if a.System != "" {
-		a.promptFrozen = true
-		return a.System
-	}
-	a.System = a.assemblePrompt()
-	a.promptFrozen = true
-	return a.System
-}
-
-// summarize condenses the old part into one summary written under the session instructions.
+// summarize condenses old items into one summary text.
 func (a *Agent) summarize(ctx context.Context, old []json.RawMessage, prompt string) (string, error) {
 	var text strings.Builder
 	for _, item := range old {
@@ -110,12 +73,16 @@ func (a *Agent) summarize(ctx context.Context, old []json.RawMessage, prompt str
 		}
 	}
 	instruction := summaryInstruction
-	if prompt = strings.TrimSpace(prompt); prompt != "" {
+	if prompt != "" {
 		instruction += " Instruction: " + prompt
+	}
+	system, err := a.instructions(ctx)
+	if err != nil {
+		return "", err
 	}
 	request := responses.ResponseNewParams{
 		Model:           a.settings.Model,
-		Instructions:    openai.String(a.instructions()),
+		Instructions:    openai.String(system),
 		Store:           openai.Bool(false),
 		MaxOutputTokens: openai.Int(summaryLimit),
 		Input: responses.ResponseNewParamsInputUnion{OfInputItemList: responses.ResponseInputParam{
@@ -150,60 +117,44 @@ func (a *Agent) summarize(ctx context.Context, old []json.RawMessage, prompt str
 }
 
 // Compact replaces everything before the last CompactKeepTurns turns with one summary.
-// Callers ensure an idle session.
+// Callers guarantee an idle session.
 func (a *Agent) Compact(ctx context.Context, prompt string) (string, error) {
-	return a.compact(ctx, prompt, "manual")
-}
-
-func (a *Agent) compact(ctx context.Context, prompt, reason string) (text string, err error) {
-	keep := a.compactKeepTurns
-	if keep <= 0 {
-		keep = CompactKeepTurns
-	}
-	cut := turnStart(a.History, keep)
-	// Compacting an existing summary would replace it with another summary.
-	// json.Marshal escapes "<", so the marker is matched without the brackets.
-	if cut == 0 || cut == 1 && strings.Contains(string(a.History[0]), "compact_summary") {
+	cut := turnStart(a.History, CompactKeepTurns)
+	// Compacting an existing summary would only replace it with another summary.
+	if cut == 0 || (cut == 1 && strings.Contains(string(a.History[0]), "compact_summary")) {
 		return "Nothing to compact.", nil
 	}
 	old := a.History[:cut]
-	defer func() {
-		err = a.safeError(err)
-	}()
-	summary, err := a.summarize(ctx, old, prompt)
+	summary, err := a.summarize(ctx, old, strings.TrimSpace(prompt))
 	if err != nil {
-		return "", err
+		return "", a.safeError(err)
 	}
 	item := raw(map[string]any{"role": "user", "content": "<compact_summary>\n" + summary + "\n</compact_summary>"})
-	history := a.History
+	history, records := a.History, a.records
 	a.History = append([]json.RawMessage{item}, a.History[cut:]...)
-	a.records = nil
+	a.records = recordsOf(a.History)
 	if err := a.Save(); err != nil {
-		a.History = history
+		a.History, a.records = history, records
 		return "", err
 	}
-	return fmt.Sprintf("Compacted %d items into a summary; kept the last %d turns.", len(old), keep), nil
+	a.lastRequest = Metadata{} // the next size is estimated from the new history
+	return fmt.Sprintf("Compacted %d items into a summary; kept the last %d turns.", len(old), CompactKeepTurns), nil
 }
 
 // compactIfNeeded summarizes older turns before a request would exceed the token budget.
+// A successful compaction emits a reset so the display is rebuilt from the new history.
 func (a *Agent) compactIfNeeded(ctx context.Context, emit func(Event)) {
-	if !a.settings.AutoCompact {
+	if !a.settings.AutoCompact || estimateTokens(a.History) <= CompactThreshold {
 		return
 	}
-	limit := a.compactThreshold
-	if limit <= 0 {
-		limit = CompactThreshold
-	}
-	if estimateTokens(a.History) <= limit {
-		return
-	}
-	result, err := a.compact(ctx, "", "auto")
+	result, err := a.Compact(ctx, "")
 	if err != nil {
 		emit(Event{Kind: "error", Text: "Compaction failed: " + err.Error()})
 		return
 	}
+	emit(Event{Kind: "reset"})
 	emit(Event{Kind: "notice", Text: result})
-	if estimateTokens(a.History) > limit {
+	if estimateTokens(a.History) > CompactThreshold {
 		emit(Event{Kind: "notice", Text: "Compaction could not reach threshold; older turns have been summarized."})
 	}
 }

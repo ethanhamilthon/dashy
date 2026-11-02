@@ -6,335 +6,250 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
-
-	"dashy/internal/shell"
+	"sync"
+	"time"
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/text"
+
+	"dashy/internal/shell"
 )
 
-var dashyBlockTimeout = DashyBlockTimeout
+const (
+	blockOutput     = 64 * 1024 // combined stdout+stderr capture budget of one dashy block
+	blockStderrTail = 4 * 1024  // the stderr part of that budget, kept as a tail
+	blockTailLines  = 5         // lines of stderr shown in a failure
+)
+
+var blockTimeout = 30 * time.Second // a variable only so tests can shorten it
 
 type dashyBlock struct {
-	start  int
-	end    int
-	script string
+	start, end int // byte range replaced by the block output, fence lines included
+	script     string
 }
 
+// parseDashyBlocks finds top-level fenced blocks whose info string is exactly "dashy".
+// Blocks nested in other blocks or quotes, and other info strings, are ignored.
 func parseDashyBlocks(source []byte) []dashyBlock {
 	doc := goldmark.DefaultParser().Parse(text.NewReader(source))
 	var blocks []dashyBlock
-	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
-		if !entering {
-			return ast.WalkContinue, nil
-		}
+	for n := doc.FirstChild(); n != nil; n = n.NextSibling() {
 		cb, ok := n.(*ast.FencedCodeBlock)
-		if !ok {
-			return ast.WalkContinue, nil
+		if !ok || cb.Info == nil || string(cb.Info.Text(source)) != "dashy" {
+			continue
 		}
-		// Blocks nested inside other blocks/quotes-of-code are NOT run
-		if cb.Parent() == nil || cb.Parent().Kind() != ast.KindDocument {
-			return ast.WalkContinue, nil
-		}
-		if cb.Info == nil {
-			return ast.WalkContinue, nil
-		}
-		infoText := string(cb.Info.Text(source))
-		if infoText != "dashy" {
-			return ast.WalkContinue, nil
-		}
-		infoSeg := cb.Info.Segment
-		start := infoSeg.Start
+		start := cb.Info.Segment.Start
 		for start > 0 && source[start-1] != '\n' {
 			start--
 		}
-		idx := start
-		for idx < infoSeg.Start && (source[idx] == ' ' || source[idx] == '\t') {
-			idx++
+		opening := bytes.TrimLeft(source[start:cb.Info.Segment.Start], " ")
+		if len(opening) == 0 {
+			continue
 		}
-		if idx >= infoSeg.Start {
-			return ast.WalkContinue, nil
+		fence := opening[0]
+		fenceLen := bytes.IndexFunc(opening, func(r rune) bool { return r != rune(fence) })
+		if fenceLen < 0 {
+			fenceLen = len(opening)
 		}
-		fenceChar := source[idx]
-		fenceLen := 0
-		for idx < infoSeg.Start && source[idx] == fenceChar {
-			fenceLen++
-			idx++
+		// goldmark ends the body at the first closing fence, so the first matching line after it is that fence.
+		end, pos := len(source), cb.Info.Segment.Stop
+		if lines := cb.Lines(); lines.Len() > 0 {
+			pos = lines.At(lines.Len() - 1).Stop
 		}
-		script := string(cb.Lines().Value(source))
-		var afterBody int
-		if cb.Lines().Len() > 0 {
-			lastSeg := cb.Lines().At(cb.Lines().Len() - 1)
-			afterBody = lastSeg.Stop
-		} else {
-			afterBody = infoSeg.Stop
-			for afterBody < len(source) && source[afterBody] != '\n' {
-				afterBody++
+		for pos < len(source) && end == len(source) {
+			lineEnd := bytes.IndexByte(source[pos:], '\n')
+			if lineEnd < 0 {
+				lineEnd = len(source) - pos
 			}
-			if afterBody < len(source) && source[afterBody] == '\n' {
-				afterBody++
+			line := source[pos : pos+lineEnd]
+			if isClosingFence(line, fence, fenceLen) {
+				end = pos + lineEnd
 			}
+			pos += lineEnd + 1
 		}
-		end := len(source)
-		if afterBody < len(source) {
-			pos := afterBody
-			for pos < len(source) {
-				lineStart := pos
-				for pos < len(source) && source[pos] != '\n' {
-					pos++
-				}
-				lineEnd := pos
-				if lineEnd > lineStart && source[lineEnd-1] == '\r' {
-					lineEnd--
-				}
-				if pos < len(source) && source[pos] == '\n' {
-					pos++
-				}
-				p := lineStart
-				spaces := 0
-				for p < lineEnd && source[p] == ' ' && spaces < 3 {
-					spaces++
-					p++
-				}
-				cCount := 0
-				for p < lineEnd && source[p] == fenceChar {
-					cCount++
-					p++
-				}
-				if cCount >= fenceLen {
-					allSpace := true
-					for p < lineEnd {
-						if source[p] != ' ' && source[p] != '\t' {
-							allSpace = false
-							break
-						}
-						p++
-					}
-					if allSpace {
-						end = lineEnd
-						break
-					}
-				}
-			}
-		}
-		blocks = append(blocks, dashyBlock{start: start, end: end, script: script})
-		return ast.WalkContinue, nil
-	})
+		blocks = append(blocks, dashyBlock{start: start, end: end, script: string(cb.Lines().Value(source))})
+	}
 	return blocks
 }
 
-func substituteBlocks(source []byte, blocks []dashyBlock, repls []string) string {
-	var buf strings.Builder
-	last := 0
-	for i, b := range blocks {
-		buf.Write(source[last:b.start])
-		buf.WriteString(repls[i])
-		last = b.end
+func isClosingFence(line []byte, fence byte, length int) bool {
+	trimmed := bytes.TrimLeft(line, " ")
+	if len(line)-len(trimmed) > 3 {
+		return false
 	}
-	buf.Write(source[last:])
-	return buf.String()
+	count := bytes.IndexFunc(trimmed, func(r rune) bool { return r != rune(fence) })
+	if count < 0 {
+		count = len(trimmed)
+	}
+	return count >= length && len(bytes.Trim(trimmed[count:], " \t\r")) == 0
 }
 
-type limitWriter struct {
-	limit int
-	buf   bytes.Buffer
+// blockOutputs captures stdout as a prefix and stderr as a short tail, within one budget.
+type blockOutputs struct {
+	mu     sync.Mutex
+	stdout []byte
+	stderr []byte
 }
 
-func newLimitWriter(limit int) *limitWriter {
-	return &limitWriter{limit: limit}
+type blockWriter struct {
+	o      *blockOutputs
+	stderr bool
 }
 
-func (w *limitWriter) Write(p []byte) (int, error) {
-	n := len(p)
-	remaining := w.limit - w.buf.Len()
-	if remaining > 0 {
-		if len(p) > remaining {
-			p = p[:remaining]
+func (w blockWriter) Write(p []byte) (int, error) {
+	w.o.mu.Lock()
+	defer w.o.mu.Unlock()
+	if w.stderr {
+		w.o.stderr = append(w.o.stderr, p...)
+		if len(w.o.stderr) > blockStderrTail {
+			w.o.stderr = w.o.stderr[len(w.o.stderr)-blockStderrTail:]
 		}
-		w.buf.Write(p)
+	} else if room := blockOutput - blockStderrTail - len(w.o.stdout); room > 0 {
+		w.o.stdout = append(w.o.stdout, p[:min(len(p), room)]...)
 	}
-	return n, nil
+	return len(p), nil
 }
 
-func (w *limitWriter) String() string {
-	return w.buf.String()
+// tail returns the last lines of stderr, or "" when there is none.
+func (o *blockOutputs) tail() string {
+	lines := strings.Split(strings.TrimSpace(string(o.stderr)), "\n")
+	if len(lines) > blockTailLines {
+		lines = lines[len(lines)-blockTailLines:]
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
-func shortTail(s string, maxLines int) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return ""
+func blockFailure(reason string, out *blockOutputs) string {
+	text := fmt.Sprintf("[dashy block failed: %s]", reason)
+	if tail := out.tail(); tail != "" {
+		text += "\n" + tail
 	}
-	lines := strings.Split(s, "\n")
-	if len(lines) > maxLines {
-		lines = lines[len(lines)-maxLines:]
-	}
-	return strings.Join(lines, "\n")
+	return text
 }
 
-func formatDashyBlockFailure(reason, stderr string) string {
-	res := fmt.Sprintf("[dashy block failed: %s]", reason)
-	if tail := shortTail(stderr, 5); tail != "" {
-		res += "\n" + tail
-	}
-	return res
-}
-
-func (a *Agent) dashyBlockEnv(mode, source string) []string {
-	envMap := make(map[string]string)
-	for _, entry := range os.Environ() {
-		if k, v, ok := strings.Cut(entry, "="); ok {
-			if k == "BASH_ENV" || k == "DASHY_ENDPOINT" || k == "DASHY_MODE" || k == "DASHY_SOURCE" || k == "DASHY_SESSION_ID" || k == "DASHY_HOME" {
-				continue
-			}
-			envMap[k] = v
-		}
-	}
-	envMap["DASHY_MODE"] = mode
-	envMap["DASHY_SOURCE"] = source
-	envMap["DASHY_SESSION_ID"] = a.sessionID()
-	envMap["DASHY_HOME"] = a.home
-
-	list := make([]string, 0, len(envMap))
-	for k, v := range envMap {
-		list = append(list, k+"="+v)
-	}
-	sort.Strings(list)
-	return list
-}
-
-func (a *Agent) runDashyBlock(script string) string {
-	dir := ""
-	if a.Shell != nil {
-		dir = a.Shell.Dir
-	}
-	if dir == "" {
-		dir, _ = os.Getwd()
-	}
-
-	timeout := dashyBlockTimeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+// runBlock executes one dashy block. A block failure is returned as prompt text;
+// only cancellation of the turn is an error, because the turn itself must stop.
+func (a *Agent) runBlock(turn context.Context, script, mode, source string) (string, error) {
+	ctx, cancel := context.WithTimeout(turn, blockTimeout)
 	defer cancel()
-
-	mode := a.mode
-	if mode == "" {
-		mode = "tui"
+	env := map[string]string{
+		"DASHY_MODE": mode, "DASHY_SOURCE": source,
+		"DASHY_SESSION_ID": a.SessionID(), "DASHY_HOME": a.home,
 	}
-	source := a.promptSource
-	if source == "" {
-		source = "startup"
+	out := &blockOutputs{}
+	cmd := shell.Command(ctx, a.Shell.Dir, env, script)
+	cmd.Stdout, cmd.Stderr = blockWriter{out, false}, blockWriter{out, true}
+	var err error
+	if err = cmd.Start(); err == nil {
+		err = shell.Reap(cmd)
 	}
-
-	env := a.dashyBlockEnv(mode, source)
-	cmd := shell.Command(ctx, dir, env, script)
-
-	stdoutBuf := newLimitWriter(DashyBlockMaxOutput)
-	stderrBuf := newLimitWriter(DashyBlockMaxOutput)
-	cmd.Stdout = stdoutBuf
-	cmd.Stderr = stderrBuf
-
-	startErr := cmd.Start()
-	if startErr != nil {
-		return formatDashyBlockFailure(startErr.Error(), stderrBuf.String())
+	if turn.Err() != nil {
+		return "", turn.Err()
 	}
-
-	waitErr := cmd.Wait()
-	if ctx.Err() == context.DeadlineExceeded {
-		reason := fmt.Sprintf("timed out after %s", timeout)
-		return formatDashyBlockFailure(reason, stderrBuf.String())
+	if ctx.Err() != nil {
+		return blockFailure(fmt.Sprintf("timed out after %s", blockTimeout), out), nil
 	}
-	if waitErr != nil {
-		return formatDashyBlockFailure(waitErr.Error(), stderrBuf.String())
+	if err != nil {
+		return blockFailure(err.Error(), out), nil
 	}
-
-	return strings.TrimRight(stdoutBuf.String(), "\r\n")
+	out.mu.Lock()
+	defer out.mu.Unlock()
+	return strings.TrimRight(string(out.stdout), "\r\n"), nil
 }
 
-func (a *Agent) processAgentsFile(path string) (string, error) {
-	data, err := os.ReadFile(path)
+// instructions returns the system prompt. It is assembled lazily, right before the
+// first request of a session (or after /new, /resume), and then frozen.
+func (a *Agent) instructions(ctx context.Context) (string, error) {
+	if a.promptFrozen {
+		return a.prompt, nil
+	}
+	prompt, err := a.assemblePrompt(ctx)
 	if err != nil {
 		return "", err
 	}
-	blocks := parseDashyBlocks(data)
-	if len(blocks) == 0 {
-		return string(data), nil
-	}
-	repls := make([]string, len(blocks))
-	for i, b := range blocks {
-		repls[i] = a.runDashyBlock(b.script)
-	}
-	return substituteBlocks(data, blocks, repls), nil
+	a.prompt, a.promptFrozen = prompt, true
+	return prompt, nil
 }
 
-func (a *Agent) assemblePrompt() string {
-	cwd := ""
-	if a.Shell != nil {
-		cwd = a.Shell.Dir
+// assemblePrompt builds the system prompt from the selected AGENTS.md files.
+// Each file is a "# <path>" header and its bytes verbatim, with dashy blocks
+// replaced by their output; files are separated by one blank line. A selected
+// file that cannot be read is an error, never a silently shorter prompt.
+func (a *Agent) assemblePrompt(ctx context.Context) (string, error) {
+	var out strings.Builder
+	for i, path := range a.promptFiles {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("read instructions: %w", err)
+		}
+		content, err := a.expandBlocks(ctx, data)
+		if err != nil {
+			return "", err
+		}
+		if i > 0 {
+			out.WriteString(separator(out.String()))
+		}
+		out.WriteString("# " + path + "\n" + content)
 	}
-	if cwd == "" {
-		cwd, _ = os.Getwd()
+	return out.String(), nil
+}
+
+// separator returns the bytes that make exactly one blank line after text.
+func separator(text string) string {
+	if strings.HasSuffix(text, "\n") {
+		return "\n"
 	}
+	return "\n\n"
+}
 
-	var files []string
+func (a *Agent) expandBlocks(ctx context.Context, data []byte) (string, error) {
+	blocks := parseDashyBlocks(data)
+	var out strings.Builder
+	last := 0
+	for _, b := range blocks {
+		replacement, err := a.runBlock(ctx, b.script, a.mode(), a.promptSource)
+		if err != nil {
+			return "", err
+		}
+		out.Write(data[last:b.start])
+		out.WriteString(replacement)
+		last = b.end
+	}
+	out.Write(data[last:])
+	return out.String(), nil
+}
 
-	// 1. Global file
-	if !a.files.NoGlobal && a.home != "" {
-		globalPath := filepath.Clean(filepath.Join(a.home, "AGENTS.md"))
-		if st, err := os.Stat(globalPath); err == nil && !st.IsDir() {
-			files = append(files, globalPath)
+// instructionFiles selects the AGENTS.md files: the global one (unless NoGlobal),
+// then --config FILE or ./AGENTS.md. Missing optional files are skipped.
+func instructionFiles(home, dir string, files Options) ([]string, error) {
+	var paths []string
+	if !files.NoGlobal && home != "" {
+		if p := filepath.Join(home, "AGENTS.md"); isFile(p) {
+			paths = append(paths, p)
 		}
 	}
-
-	// 2. Local file
-	if a.files.Config != "" {
-		p := a.files.Config
+	if files.Config != "" {
+		p := files.Config
 		if !filepath.IsAbs(p) {
-			p = filepath.Join(cwd, p)
+			p = filepath.Join(dir, p)
 		}
 		p = filepath.Clean(p)
-		if st, err := os.Stat(p); err == nil && !st.IsDir() {
-			if len(files) == 0 || files[0] != p {
-				files = append(files, p)
-			}
+		if st, err := os.Stat(p); err != nil {
+			return nil, fmt.Errorf("config %s: %w", p, err)
+		} else if st.IsDir() {
+			return nil, fmt.Errorf("config %s: is a directory", p)
 		}
-	} else {
-		p := filepath.Clean(filepath.Join(cwd, "AGENTS.md"))
-		if st, err := os.Stat(p); err == nil && !st.IsDir() {
-			if len(files) == 0 || files[0] != p {
-				files = append(files, p)
-			}
-		}
+		return append(paths, p), nil
 	}
+	if p := filepath.Join(dir, "AGENTS.md"); isFile(p) {
+		paths = append(paths, p)
+	}
+	return paths, nil
+}
 
-	if len(files) == 0 {
-		return ""
-	}
-
-	var sections []string
-	for _, f := range files {
-		content, err := a.processAgentsFile(f)
-		if err != nil {
-			continue
-		}
-		sections = append(sections, fmt.Sprintf("# %s\n%s", f, content))
-	}
-
-	if len(sections) == 0 {
-		return ""
-	}
-
-	var sb strings.Builder
-	for i, sec := range sections {
-		if i > 0 {
-			sb.WriteString("\n\n")
-		}
-		sb.WriteString(strings.TrimRight(sec, "\r\n"))
-	}
-	if sb.Len() > 0 {
-		sb.WriteString("\n")
-	}
-	return sb.String()
+func isFile(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && !st.IsDir()
 }

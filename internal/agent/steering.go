@@ -35,6 +35,7 @@ func (a *Agent) addInput(input Input, emit func(Event), steering bool) {
 
 // commitInput appends the input to API history without displaying it.
 func (a *Agent) commitInput(input Input) {
+	a.ReleaseImages(len(input.Images))
 	text := input.Display()
 	if len(input.Images) == 0 {
 		a.message("user", text)
