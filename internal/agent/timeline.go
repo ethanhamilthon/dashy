@@ -36,9 +36,6 @@ type Event struct {
 	Final       bool      `json:"final,omitempty"`
 	Steering    bool      `json:"steering,omitempty"`
 	Provisional bool      `json:"provisional,omitempty"`
-	// InputID names the queued steering input this event accepts. It is not
-	// part of the display record, so it never changes what is persisted.
-	InputID string `json:"input_id,omitempty"`
 }
 
 // ApplyEvent is shared by live display and the persisted display journal.

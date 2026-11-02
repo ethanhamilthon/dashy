@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"dashy/internal/agent"
 	"dashy/internal/shell"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -142,8 +143,9 @@ func (m model) pasteClipboard() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	directory := m.ctl.AttachmentsDir()
-	if directory != "" && !filepath.IsAbs(directory) {
-		directory = filepath.Join(m.cwd, directory)
+	if directory == "" {
+		home, _ := agent.DashyHome(m.cwd)
+		directory = filepath.Join(home, "attachments")
 	}
 	m.pasting = true
 	generation := m.pasteGeneration

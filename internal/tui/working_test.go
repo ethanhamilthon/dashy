@@ -8,7 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
-	"dashy/internal/control"
+	"dashy/internal/agent"
 )
 
 func TestWorkingIndicatorLifecycleAndScrolling(t *testing.T) {
@@ -94,7 +94,7 @@ func TestCancelledTurnRestoresUnsentSteeringIntoComposer(t *testing.T) {
 func TestSteeringQueueFullKeepsInput(t *testing.T) {
 	m, _ := busyModel(t)
 	for i := 0; i < 64; i++ {
-		if _, err := m.ctl.Submit(control.Request{Type: "steer", Text: "first"}); err != nil {
+		if err := m.ctl.Steer(agent.Input{Text: "first"}); err != nil {
 			t.Fatal(err)
 		}
 	}

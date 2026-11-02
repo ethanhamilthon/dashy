@@ -17,8 +17,8 @@ import (
 // maxPendingImages bounds images waiting in the queue plus the running turn.
 const maxPendingImages = 8
 
-// Controller runs the agent's application operations. One operation (a turn or
-// a compaction) is active at a time; inputs arriving meanwhile become steering.
+// Controller coordinates turns for the TUI. One operation (a turn or a
+// compaction) is active at a time; inputs arriving meanwhile become steering.
 // Events are emitted under the controller lock, so emit must not block and must
 // not call back into the controller.
 type Controller struct {
@@ -29,8 +29,6 @@ type Controller struct {
 	count    int
 	active   *operation
 	idle     chan struct{} // closed when active ends; nil while idle
-	queued   []agent.Input // steering accepted by Submit but not yet taken by the agent
-	inputs   int           // counts queued steering, for their identities
 	deferred *deferredAction
 	journal  []agent.Record // display journal, the same records the agent persists
 	closing  bool
@@ -47,8 +45,7 @@ type operation struct {
 	cancel    context.CancelFunc
 	started   time.Time
 	steering  *agent.Steering
-	images    []shell.Image          // submitted images, restored when the turn is withdrawn
-	files     []agent.FileAttachment // submitted file snapshots, returned with a withdrawn turn
+	images    []shell.Image // submitted images, restored when the turn is withdrawn
 	cancelled bool
 	retry     bool
 	retryText string
@@ -87,10 +84,13 @@ func (c *Controller) Reason() (reason string) {
 // Status reports the active operation.
 func (c *Controller) Status() (s Status) {
 	c.view(func() {
-		s = Status{Queued: slices.Clone(c.queued), Images: c.pendingImages()}
+		s = Status{Images: c.pendingImages()}
 		if c.active != nil {
 			s.Busy, s.Cancelling = true, c.active.cancelled
 			s.Compacting, s.Turn, s.Started = c.active.kind == "compact", c.active.id, c.active.started
+			if c.active.steering != nil {
+				s.Queued = c.active.steering.Pending()
+			}
 		}
 	})
 	return s
@@ -131,18 +131,6 @@ func (c *Controller) PrimaryConfig() (path string) {
 	return path
 }
 
-// ProjectConfig reports whether dest is a project-level file, where credentials should not be committed.
-func (c *Controller) ProjectConfig(dest string) (project bool) {
-	c.view(func() { project = c.projectConfigLocked(dest) })
-	return project
-}
-
-// Sources lists the configuration files in effect, lowest priority first.
-func (c *Controller) Sources() (sources []agent.Source) {
-	c.view(func() { sources = slices.Clone(c.a.Sources) })
-	return sources
-}
-
 // Deliver starts a turn for pending external notifications when idle.
 func (c *Controller) Deliver() (started bool) {
 	c.view(func() { started = c.deliverLocked() })
@@ -180,12 +168,11 @@ func (c *Controller) Wait(ctx context.Context) error {
 	}
 }
 
-// Shutdown saves the session and closes the controller. It is refused while an
-// operation is active; a quit request defers the shutdown instead.
+// Shutdown saves the session and closes the controller.
 func (c *Controller) Shutdown(reason string) (err error) {
 	c.view(func() {
 		if c.active != nil {
-			err = fail("busy", "wait for the active turn before shutting down")
+			err = fail("busy", "Wait for the active turn before closing.")
 			return
 		}
 		err = c.closeLocked(reason)
@@ -208,9 +195,11 @@ func (c *Controller) closeLocked(reason string) error {
 	if c.shut {
 		return nil
 	}
+	c.closing = true
 	c.a.RememberDisplay(c.journal)
 	if c.a.HasSavedSession() {
 		if err := c.a.Save(); err != nil {
+			c.closing = false
 			return err
 		}
 	}
@@ -219,25 +208,36 @@ func (c *Controller) closeLocked(reason string) error {
 	return nil
 }
 
-// beginTurnLocked starts a turn for input. The journal is handed to the agent first,
-// so its persisted display matches what the controller has reported.
 func (c *Controller) beginTurnLocked(input agent.Input, source string) string {
-	c.a.RememberDisplay(c.journal)
-	op := c.startLocked("turn", input.Images)
-	op.files = input.Files
-	c.queued = nil
+	c.count++
+	turnID := fmt.Sprintf("turn-%d", c.count)
+	ctx, cancel := context.WithCancel(context.Background())
+	images := append([]shell.Image(nil), input.Images...)
+	op := &operation{
+		id:       turnID,
+		kind:     "turn",
+		ctx:      ctx,
+		cancel:   cancel,
+		started:  time.Now(),
+		steering: &agent.Steering{},
+		images:   images,
+	}
+	c.active = op
+	c.idle = make(chan struct{})
+	c.publish(Event{Kind: "started", Turn: turnID, Operation: "turn", Source: source})
 	go c.runTurn(op, input)
-	c.publish(Event{Kind: "started", Turn: op.id, Operation: "turn", Source: source})
-	return op.id
+	return turnID
 }
 
-func (c *Controller) startLocked(kind string, images []shell.Image) *operation {
+func (c *Controller) beginCompactLocked(prompt string) {
 	c.count++
+	turnID := fmt.Sprintf("compact-%d", c.count)
 	ctx, cancel := context.WithCancel(context.Background())
-	op := &operation{id: fmt.Sprintf("%s-%d", kind, c.count), kind: kind, ctx: ctx, cancel: cancel,
-		started: time.Now(), steering: &agent.Steering{}, images: images}
-	c.active, c.idle = op, make(chan struct{})
-	return op
+	op := &operation{id: turnID, kind: "compact", ctx: ctx, cancel: cancel, started: time.Now()}
+	c.active = op
+	c.idle = make(chan struct{})
+	c.publish(Event{Kind: "started", Turn: turnID, Operation: "compact", Source: "compact"})
+	go c.runCompact(op, prompt)
 }
 
 func (c *Controller) endLocked(op *operation) {
@@ -260,21 +260,11 @@ func (c *Controller) runTurn(op *operation, input agent.Input) {
 // observe applies one agent event to controller state before reporting it.
 func (c *Controller) observe(op *operation, e agent.Event) {
 	c.view(func() {
-		if e.Steering && e.InputID != "" {
-			c.acknowledge(e.InputID)
-		}
 		if e.Kind == "withdraw" {
 			op.retry, op.retryText = true, e.Text
 		}
 		c.publish(Event{Kind: "agent", Turn: op.id, Agent: &e})
 	})
-}
-
-// acknowledge drops the queued input the agent accepted. Identity decides, not
-// the display kind or the text: <notify> steering is shown as a notice, and two
-// inputs may carry the same text.
-func (c *Controller) acknowledge(id string) {
-	c.queued = slices.DeleteFunc(c.queued, func(in agent.Input) bool { return in.ID == id })
 }
 
 // finishTurn ends a turn exactly once. Queued instructions either start the next
@@ -291,27 +281,25 @@ func (c *Controller) finishTurn(op *operation, err error) {
 		if status == "cancelled" {
 			c.publish(Event{Kind: "notice", Text: "Turn cancelled."})
 		}
-		promote := status == "ok" && len(c.queued) > 0 && c.deferred == nil && !c.closing
+		pending := op.steering.TakeInputs()
+		promote := status == "ok" && len(pending) > 0 && c.deferred == nil && !c.closing
 		var unsent []agent.Input
 		var next agent.Input
 		var rest []agent.Input
 		if promote {
-			next, rest = c.queued[0], c.queued[1:]
+			next, rest = pending[0], pending[1:]
 		} else {
 			if op.retry {
-				unsent = append(unsent, agent.Input{Text: op.retryText, Images: op.images, Files: op.files})
+				unsent = append(unsent, agent.Input{Text: op.retryText, Images: op.images})
 			}
-			unsent = append(unsent, c.queued...)
-			c.queued = nil
+			unsent = append(unsent, pending...)
 		}
 		c.endLocked(op)
 		c.publish(Event{Kind: "done", Turn: op.id, Operation: "turn", Status: status, Error: text, Unsent: unsent})
 		if promote {
-			// The remaining instructions were already announced; they join the new turn silently.
 			c.beginTurnLocked(next, "queued")
 			for _, in := range rest {
 				c.active.steering.PushInput(in)
-				c.queued = append(c.queued, in)
 			}
 			return
 		}
@@ -342,10 +330,8 @@ func (c *Controller) finishCompact(op *operation, text string, err error) {
 	})
 }
 
-// settleLocked runs after an operation ends: it fires the idle hook, performs a
-// deferred session change or quit, and otherwise delivers queued notifications.
-// A session change is refused while unsent images are handed back for editing,
-// so the switch cannot discard them.
+// settleLocked runs after an operation ends: it performs a deferred session change
+// or quit, and otherwise delivers queued notifications.
 func (c *Controller) settleLocked(unsent []agent.Input) {
 	d := c.deferred
 	if d == nil || c.closing {
@@ -387,8 +373,7 @@ func (c *Controller) switchLocked(kind, id string) error {
 	return nil
 }
 
-// deliverLocked turns pending notifications into a turn when idle. The first
-// message starts the turn; the rest become steering it accepts at its next boundary.
+// deliverLocked turns pending notifications into a turn when idle.
 func (c *Controller) deliverLocked() bool {
 	if c.active != nil || c.shut || c.closing {
 		return false
@@ -444,11 +429,13 @@ func (c *Controller) setupError() error {
 
 func (c *Controller) pendingImages() int {
 	n := 0
-	for _, in := range c.queued {
-		n += len(in.Images)
-	}
 	if c.active != nil {
 		n += len(c.active.images)
+		if c.active.steering != nil {
+			for _, in := range c.active.steering.Pending() {
+				n += len(in.Images)
+			}
+		}
 	}
 	return n
 }
@@ -470,4 +457,25 @@ func providerSecrets(s agent.Settings, extra ...string) []string {
 		secrets = append(secrets, p.APIKey, os.Getenv(p.APIKeyEnv))
 	}
 	return secrets
+}
+
+// ProjectConfig reports whether dest is a project-level file, where credentials should not be committed.
+func (c *Controller) ProjectConfig(dest string) (project bool) {
+	return false
+}
+
+// Sources lists the configuration files in effect, lowest priority first.
+func (c *Controller) Sources() (sources []agent.Source) {
+	c.view(func() { sources = slices.Clone(c.a.Sources) })
+	return sources
+}
+
+func (c *Controller) startLocked(kind string, images []shell.Image) *operation {
+	c.count++
+	id := fmt.Sprintf("%s-%d", kind, c.count)
+	ctx, cancel := context.WithCancel(context.Background())
+	op := &operation{id: id, kind: kind, ctx: ctx, cancel: cancel, started: time.Now(), steering: &agent.Steering{}, images: images}
+	c.active = op
+	c.idle = make(chan struct{})
+	return op
 }

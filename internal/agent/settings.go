@@ -258,3 +258,8 @@ func newClient(p Provider) openai.Client {
 		option.WithRequestTimeout(10*time.Minute),
 	)
 }
+
+// DashyHome returns the effective dashy configuration directory for cwd.
+func DashyHome(cwd string) (string, error) {
+	return configDir(cwd)
+}

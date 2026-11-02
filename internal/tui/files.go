@@ -13,9 +13,6 @@ import (
 	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
-
-	"dashy/internal/agent"
-	"dashy/internal/shell"
 )
 
 const (
@@ -36,17 +33,6 @@ type fileScanMsg struct {
 	err     error
 }
 
-// filePrep is a submission whose @file references are being read. The draft is
-// kept so that edits made while reading can be detected; p identifies it.
-type filePrep struct {
-	text, draft string
-	images      []shell.Image
-}
-type filePrepMsg struct {
-	prep  *filePrep
-	files []agent.FileAttachment
-	err   error
-}
 type fileToken struct {
 	start, end int
 	query      string
@@ -177,27 +163,6 @@ func parseFileToken(runes []rune, at, cursor int) (fileToken, bool) {
 		return fileToken{}, false
 	}
 	return fileToken{start: at, end: tokenEnd, query: query, dir: strings.HasSuffix(query, "/"), unterminated: unterminated}, true
-}
-
-// fileReferences lists the distinct file paths referenced anywhere in a
-// submitted message, in first-mention order. Directory syntax is excluded and
-// nothing is read from disk.
-func fileReferences(text string) []string {
-	runes := []rune(text)
-	var refs []string
-	seen := map[string]bool{}
-	for at, r := range runes {
-		if r != '@' {
-			continue
-		}
-		token, ok := parseFileToken(runes, at, -1)
-		if !ok || token.dir || token.unterminated || token.query == "" || seen[token.query] {
-			continue
-		}
-		seen[token.query] = true
-		refs = append(refs, token.query)
-	}
-	return refs
 }
 
 type pathCollector struct {
@@ -426,35 +391,4 @@ func (m *model) acceptFileCompletion() tea.Cmd {
 		m.dismissFileCompletion()
 	}
 	return cmd
-}
-
-// beginFilePrep reads the referenced files in the background. The draft remains
-// in the composer until the read finishes, so Esc or an error keeps it intact.
-func (m *model) beginFilePrep(text string, refs []string) tea.Cmd {
-	p := &filePrep{text: text, draft: m.input.Value(), images: m.images}
-	m.prep = p
-	root, limit := m.cwd, agent.DefaultMaxFileBytes
-	return func() tea.Msg {
-		files, err := agent.ReadTextFiles(root, refs, limit)
-		return filePrepMsg{prep: p, files: files, err: err}
-	}
-}
-
-// handleFilePrep submits the prepared input, unless it was cancelled, superseded
-// or the draft was edited while the files were read.
-func (m *model) handleFilePrep(msg filePrepMsg) (tea.Model, tea.Cmd) {
-	if msg.prep != m.prep {
-		return *m, nil
-	}
-	m.prep = nil
-	if m.input.Value() != msg.prep.draft || !slices.Equal(m.images, msg.prep.images) {
-		m.add("notice", "The draft changed while files were read; your edits are kept. Press Enter to send it.")
-		m.refresh(true)
-		return *m, nil
-	}
-	if msg.err != nil {
-		return m.stop("error", "Could not attach files: "+msg.err.Error()+"\nYour draft is unchanged.")
-	}
-	m.dismissFileCompletion()
-	return m.sendInput(agent.Input{Text: msg.prep.text, Images: msg.prep.images, Files: msg.files})
 }

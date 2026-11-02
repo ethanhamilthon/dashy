@@ -106,18 +106,3 @@ func TestSteeringAtSafeBoundaries(t *testing.T) {
 		})
 	}
 }
-
-func TestSteeringQueueCarriesFileSnapshots(t *testing.T) {
-	queue := &Steering{}
-	files := []FileAttachment{{Path: "a.txt", Content: "snapshot", Size: 8}}
-	queue.PushInput(Input{Text: "@a.txt", Files: files})
-	taken := queue.TakeInputs()
-	if len(taken) != 1 || len(taken[0].Files) != 1 || taken[0].Files[0].Content != "snapshot" {
-		t.Fatalf("taken input lost snapshot: %+v", taken)
-	}
-	queue.PushInput(Input{Text: "@a.txt", Files: files})
-	recalled, ok := queue.RecallInput()
-	if !ok || len(recalled.Files) != 1 {
-		t.Fatalf("recall lost snapshot: %+v %v", recalled, ok)
-	}
-}

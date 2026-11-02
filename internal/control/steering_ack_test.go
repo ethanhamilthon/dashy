@@ -3,21 +3,28 @@ package control
 import (
 	"strings"
 	"testing"
+
+	"dashy/internal/agent"
 )
 
 // An accepted <notify> steering is acknowledged like any other steering: it
 // leaves the queue, the turn does not replay it, and it does not block the
-// acknowledgement of the input queued after it.
+// input queued after it.
 func TestAcceptedNotifySteeringLeavesTheQueue(t *testing.T) {
 	model := &fakeModel{gate: make(chan struct{}), started: make(chan struct{}, 4)}
 	h := newHarness(t, model, "")
-	turn := h.submit(Request{Type: "input", Text: "first"}).Turn
+	if err := h.c.Input(agent.Input{Text: "first"}); err != nil {
+		t.Fatal(err)
+	}
+	turn := h.c.Status().Turn
 	<-model.started
 	note := "<notify>\nplease check the logs\n</notify>"
-	if resp := h.submit(Request{Type: "input", Text: note}); resp.Status != "queued" {
-		t.Fatalf("notify while busy = %+v", resp)
+	if err := h.c.Input(agent.Input{Text: note}); err != nil {
+		t.Fatalf("notify while busy = %v", err)
 	}
-	h.submit(Request{Type: "steer", Text: "focus on errors"})
+	if err := h.c.Steer(agent.Input{Text: "focus on errors"}); err != nil {
+		t.Fatalf("steer while busy = %v", err)
+	}
 	close(model.gate)
 	h.await("first turn done", func(events []Event) bool { return doneFor(events, turn) != nil })
 

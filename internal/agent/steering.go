@@ -2,6 +2,7 @@ package agent
 
 import (
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -13,8 +14,6 @@ import (
 type Input struct {
 	Text   string
 	Images []shell.Image
-	Files  []FileAttachment // snapshot taken when the prompt was submitted
-	ID     string           // controller identity of queued steering; empty when the agent queued it itself
 }
 
 func (input Input) Display() string {
@@ -27,16 +26,16 @@ func (input Input) Display() string {
 	}
 	return strings.TrimSpace(text)
 }
+
 func (a *Agent) addInput(input Input, emit func(Event), steering bool) {
 	a.commitInput(input)
 	e := inputEvent(input, steering)
-	e.InputID = input.ID // lets the controller drop exactly the instruction it accepted
 	emit(e)
 }
 
 // commitInput appends the input to API history without displaying it.
 func (a *Agent) commitInput(input Input) {
-	text := input.Display() + fileBlocks(input.Files)
+	text := input.Display()
 	if len(input.Images) == 0 {
 		a.message("user", text)
 		return
@@ -74,6 +73,7 @@ type Steering struct {
 }
 
 func (s *Steering) Push(text string) bool { return s.PushInput(Input{Text: text}) }
+
 func (s *Steering) PushInput(input Input) bool {
 	if s == nil {
 		return false
@@ -86,6 +86,7 @@ func (s *Steering) PushInput(input Input) bool {
 	s.pending = append(s.pending, input)
 	return true
 }
+
 func (s *Steering) TakeInputs() []Input {
 	if s == nil {
 		return nil
@@ -96,6 +97,7 @@ func (s *Steering) TakeInputs() []Input {
 	s.pending = nil
 	return pending
 }
+
 func (s *Steering) RecallInput() (Input, bool) {
 	if s == nil {
 		return Input{}, false
@@ -109,4 +111,13 @@ func (s *Steering) RecallInput() (Input, bool) {
 	text := s.pending[i]
 	s.pending = s.pending[:i]
 	return text, true
+}
+
+func (s *Steering) Pending() []Input {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.pending)
 }

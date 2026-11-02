@@ -18,11 +18,8 @@ func TestFinishedTurnPromotesQueuedInputsInOrder(t *testing.T) {
 	var op *operation
 	h.c.view(func() {
 		op = h.c.startLocked("turn", nil)
-		// Queued steering always carries the identity queueLocked gives it.
-		h.c.queued = []agent.Input{{ID: "steer-1", Text: "next"}, {ID: "steer-2", Text: "after"}}
-		for _, in := range h.c.queued {
-			op.steering.PushInput(in)
-		}
+		op.steering.PushInput(agent.Input{Text: "next"})
+		op.steering.PushInput(agent.Input{Text: "after"})
 	})
 	h.c.finishTurn(op, nil)
 	events := h.await("promoted turn finishes", func(events []Event) bool { return countKind(events, "done") == 2 })
@@ -55,7 +52,7 @@ func TestWithdrawnTurnReturnsOriginalThenQueuedAsUnsent(t *testing.T) {
 	var op *operation
 	h.c.view(func() {
 		op = h.c.startLocked("turn", []shell.Image{image})
-		h.c.queued = []agent.Input{{Text: "queued"}}
+		op.steering.PushInput(agent.Input{Text: "queued"})
 	})
 	h.c.observe(op, agent.Event{Kind: "withdraw", Text: "original request"})
 	h.c.finishTurn(op, errors.New("initialization error"))
@@ -69,22 +66,6 @@ func TestWithdrawnTurnReturnsOriginalThenQueuedAsUnsent(t *testing.T) {
 	}
 	if h.c.Status().Busy || len(h.c.Status().Queued) != 0 {
 		t.Fatal("finished turn left state behind")
-	}
-}
-
-func TestWithdrawnTurnReturnsFileSnapshotPaths(t *testing.T) {
-	h := newHarness(t, &fakeModel{}, "")
-	var op *operation
-	h.c.view(func() {
-		op = h.c.startLocked("turn", nil)
-		op.files = []agent.FileAttachment{{Path: "main.go", Content: "package main", Size: 12}}
-	})
-	h.c.observe(op, agent.Event{Kind: "withdraw", Text: "explain @main.go"})
-	h.c.finishTurn(op, errors.New("initialization error"))
-	d := doneFor(h.log(), op.id)
-	if d == nil || len(d.Unsent) != 1 || d.Unsent[0].Text != "explain @main.go" ||
-		len(d.Unsent[0].Files) != 1 || d.Unsent[0].Files[0].Path != "main.go" {
-		t.Fatalf("unsent = %+v", d)
 	}
 }
 
@@ -126,7 +107,7 @@ func TestSessionChangeCompletesAfterUnsentTextOnly(t *testing.T) {
 	var op *operation
 	h.c.view(func() {
 		op = h.c.startLocked("turn", nil)
-		h.c.queued = []agent.Input{{Text: "keep as text"}}
+		op.steering.PushInput(agent.Input{Text: "keep as text"})
 		h.c.deferred = &deferredAction{kind: "new"}
 	})
 	h.c.finishTurn(op, nil)
@@ -142,9 +123,9 @@ func TestStopMarksActiveOperationCancelling(t *testing.T) {
 	h := newHarness(t, &fakeModel{}, "")
 	var op *operation
 	h.c.view(func() { op = h.c.startLocked("turn", nil) })
-	resp, err := h.c.Submit(Request{Type: "stop"})
-	if err != nil || resp.Status != "cancelling" || resp.Turn != op.id || !h.c.Status().Cancelling {
-		t.Fatalf("stop = %+v, %v; status %+v", resp, err, h.c.Status())
+	h.c.Stop()
+	if !h.c.Status().Cancelling {
+		t.Fatalf("status after stop: %+v", h.c.Status())
 	}
 	h.c.finishTurn(op, nil)
 	if h.c.Status().Busy || doneFor(h.log(), op.id).Status != "cancelled" {
@@ -155,8 +136,8 @@ func TestStopMarksActiveOperationCancelling(t *testing.T) {
 func TestNewWhileIdleWaitsForTheNextInput(t *testing.T) {
 	h := newHarness(t, &fakeModel{}, "")
 	before := h.a.HistoryPath
-	if resp, err := h.c.Submit(Request{Type: "new"}); err != nil || resp.Status != "ok" {
-		t.Fatalf("new = %+v, %v", resp, err)
+	if err := h.c.NewSession(); err != nil {
+		t.Fatalf("new error: %v", err)
 	}
 	if h.model.requests != 0 || h.a.HasSavedSession() || h.a.HistoryPath == before {
 		t.Fatal("new session started work or wrote a history file before input")

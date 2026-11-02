@@ -13,8 +13,17 @@ import (
 
 type command struct{ name, icon, description, label string }
 
-// commandIcons are the completion glyphs; the names and descriptions are shared with the JSON transport.
-var commandIcons = map[string]string{"/new": "+", "/help": "?", "/quit": "->", "/resume": "<", "/rename": "#", "/compact": "=", "/settings": "*", "/login": "+"}
+// commandIcons are the completion glyphs.
+var commandIcons = map[string]string{
+	"/new":      "+",
+	"/help":     "?",
+	"/quit":     "->",
+	"/resume":   "<",
+	"/rename":   "#",
+	"/compact":  "=",
+	"/settings": "*",
+	"/login":    "+",
+}
 
 func commandMenu() []command {
 	var menu []command
@@ -122,6 +131,7 @@ func (m model) completions() []command {
 	}
 	return result
 }
+
 func (m *model) complete() bool {
 	matches := m.completions()
 	if len(matches) == 0 {
@@ -175,12 +185,16 @@ func (m model) runCommand(name string) (tea.Model, tea.Cmd) {
 			return m.stop("error", "choose a session from /resume completions")
 		}
 		m.resetCompletions()
-		return m.submit(control.Request{Type: "resume", Args: map[string]string{"session_id": verb[1]}})
+		return m.submit(m.ctl.Resume(verb[1]))
 	case "/settings", "/login":
 		if m.ctl.Status().Busy {
 			return m.stop("notice", "Wait for the active turn before changing settings.")
 		}
-		cmd := m.openPicker(strings.TrimPrefix(verb[0], "/"))
+		kind := strings.TrimPrefix(verb[0], "/")
+		if kind == "settings" {
+			kind = "model"
+		}
+		cmd := m.openPicker(kind)
 		m.refresh(true)
 		return m, cmd
 
@@ -191,17 +205,25 @@ func (m model) runCommand(name string) (tea.Model, tea.Cmd) {
 			m.refresh(true)
 			return m, nil
 		}
-		return m.submit(control.Request{Type: "rename", Args: map[string]string{"title": strings.TrimSpace(strings.TrimPrefix(name, "/rename"))}})
+		return m.submit(m.ctl.Rename(strings.TrimSpace(strings.TrimPrefix(name, "/rename"))))
 	case "/compact":
-		return m.submit(control.Request{Type: "compact", Text: strings.TrimSpace(strings.TrimPrefix(name, "/compact"))})
+		return m.submit(m.ctl.Compact(strings.TrimSpace(strings.TrimPrefix(name, "/compact"))))
 	case "/help":
 		return m.stop("info", control.Help(keyboardHelp))
 	case "/new":
 		m.resetCompletions()
-		return m.submit(control.Request{Type: "new"})
+		return m.submit(m.ctl.NewSession())
 	case "/quit":
 		m.dismissFileCompletion()
-		return m.submit(control.Request{Type: "quit"})
+		closed, err := m.ctl.Quit()
+		if err != nil {
+			return m.reject(err)
+		}
+		if closed {
+			return m, tea.Quit
+		}
+		m.refresh(true)
+		return m, nil
 	}
 	return m.stop("error", "Unknown command: "+name+". Type /help.")
 }
@@ -212,17 +234,13 @@ func (m *model) resetCompletions() {
 	m.fileIndexCache = nil
 }
 
-// submit sends a request to the controller. Rejections keep the composer
+// submit sends an operation to the controller. Rejections keep the composer
 // intact and are shown as notices or errors.
-func (m model) submit(req control.Request) (tea.Model, tea.Cmd) {
-	resp, err := m.ctl.Submit(req)
+func (m model) submit(err error) (tea.Model, tea.Cmd) {
 	if err != nil {
 		return m.reject(err)
 	}
 	m.refresh(true)
-	if resp.Status == "closed" {
-		return m, tea.Quit
-	}
 	return m, nil
 }
 

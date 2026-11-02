@@ -56,11 +56,10 @@ func (m *model) openPicker(kind string) tea.Cmd {
 	m.menuCancel = cancel
 	generation, ctl := m.menuGeneration, m.ctl
 	return func() tea.Msg {
-		resp, err := ctl.SubmitContext(ctx, control.Request{Type: "models"})
+		list, err := ctl.Models(ctx)
 		if err != nil {
 			return modelChoices{generation: generation, err: err}
 		}
-		list := resp.Data.(control.ModelList)
 		return modelChoices{generation: generation, models: list.Models, errs: list.Errors}
 	}
 }
@@ -162,34 +161,29 @@ func (m model) pickerKey(key tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		if kind == "settings" {
 			switch choice {
 			case "Reasoning summary":
-				_, _ = m.ctl.Submit(control.Request{Type: "toggle_reasoning_summary"})
+				_ = m.ctl.ToggleReasoningSummary()
 				m.rebuildSettingsMenu()
 				m.refresh(true)
 				return m, nil, true
 			case "Auto compact":
-				_, _ = m.ctl.Submit(control.Request{Type: "toggle_auto_compact"})
+				_ = m.ctl.ToggleAutoCompact()
 				m.rebuildSettingsMenu()
 				m.refresh(true)
 				return m, nil, true
 			case "Show lines":
-				_, _ = m.ctl.Submit(control.Request{Type: "cycle_show_lines"})
+				_ = m.ctl.CycleShowLines()
 				m.rebuildSettingsMenu()
 				m.refresh(true)
 				return m, nil, true
 			}
 		}
-		var req control.Request
+		var err error
 		if kind == "model" || kind == "settings" {
 			provider := chosen.description
-			req = control.Request{Type: "select_model", Args: map[string]string{
-				"provider": provider,
-				"model":    choice,
-				"effort":   agent.Efforts[m.effort],
-			}}
+			err = m.ctl.SelectModel(provider, choice, agent.Efforts[m.effort])
 		} else {
-			req = control.Request{Type: "select_provider", Args: map[string]string{"name": choice}}
+			err = m.ctl.SelectProvider(choice)
 		}
-		_, err := m.ctl.Submit(req)
 		m.closePicker()
 		if err != nil {
 			next, cmd := m.reject(err)
@@ -228,7 +222,7 @@ func (m model) finishSetup() (tea.Model, tea.Cmd, bool) {
 	if m.setup[2] != "" && m.ctl.ProjectConfig(dest) {
 		m.add("notice", fmt.Sprintf("Warning: API key saved in project configuration (%s); avoid committing secrets.", dest))
 	}
-	_, err := m.ctl.Submit(control.Request{Type: "add_provider", Args: map[string]string{"name": m.setup[0], "base_url": m.setup[1], "api_key": m.setup[2]}})
+	err := m.ctl.AddProvider(m.setup[0], m.setup[1], m.setup[2])
 	m.closePicker()
 	m.refresh(true)
 	if err != nil {
