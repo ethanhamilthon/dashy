@@ -23,6 +23,9 @@ func Run(a *agent.Agent, cwd string) error {
 	keyboard := keyboardProtocol{}
 	defer keyboard.close()
 	m := newModel(a, cwd)
+	if m.reporter != nil {
+		defer m.reporter.Close()
+	}
 	program := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithFilter(keyboard.filter))
 	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
@@ -87,6 +90,9 @@ func (m model) workingBlock() string {
 
 // handleControl applies one controller event to the interface.
 func (m model) handleControl(e control.Event) (tea.Model, tea.Cmd) {
+	if m.reporter != nil {
+		m.reporter.HandleEvent(e)
+	}
 	follow := m.viewport.AtBottom()
 	var cmd tea.Cmd
 	switch e.Kind {

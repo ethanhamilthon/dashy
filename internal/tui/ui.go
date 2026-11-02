@@ -15,6 +15,7 @@ import (
 
 	"dashy/internal/agent"
 	"dashy/internal/control"
+	"dashy/internal/osc7501"
 	"dashy/internal/shell"
 )
 
@@ -69,6 +70,7 @@ type model struct {
 	fileDismissed            bool
 	fileDismissedValue       string
 	fileDismissedCursor      int
+	reporter                 *osc7501.Reporter
 }
 
 func newModel(a *agent.Agent, cwd string) model {
@@ -88,9 +90,14 @@ func newModel(a *agent.Agent, cwd string) model {
 	input.BlurredStyle = style
 	events := control.NewQueue[control.Event](0)
 	ctl := control.New(a, func(e control.Event) { events.Push(e) })
-	m := model{ctl: ctl, events: events, input: input, viewport: viewport.New(80, 24), width: 80, height: 24, cwd: cwd}
+	reporter := osc7501.New(os.Stdout)
 	if a != nil {
+		if t := a.Title(); t != "" {
+			reporter.SetTitle(t)
+		}
 	}
+	reporter.Idle()
+	m := model{ctl: ctl, events: events, input: input, viewport: viewport.New(80, 24), width: 80, height: 24, cwd: cwd, reporter: reporter}
 	m.setEntries(ctl.History())
 	m.refresh(true)
 	return m
