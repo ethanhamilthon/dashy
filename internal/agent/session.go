@@ -67,9 +67,15 @@ func (a *Agent) changeSession(id string) error {
 	if err != nil {
 		return err
 	}
+	source := "new"
+	if id != "" {
+		source = "resume"
+	}
 	next := &Agent{
 		files:         a.files,
 		home:          a.home,
+		mode:          a.mode,
+		promptSource:  source,
 		sessionsDir:   a.sessionsDir,
 		Shell:         a.Shell,
 		version:       a.version,

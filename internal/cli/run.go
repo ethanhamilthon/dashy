@@ -64,6 +64,9 @@ func Run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.W
 		return agent.Notify(cwd, *sessionID, text)
 	}
 	files := agent.ConfigFiles{Config: *configPath, NoGlobal: *noGlobal}
+	if *prompt != "" {
+		files.Mode = "print"
+	}
 	a, err := agent.New(cwd, files, *resume)
 	if err != nil {
 		return err
