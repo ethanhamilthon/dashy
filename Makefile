@@ -9,7 +9,7 @@ install:
 	go build -o $(BINDIR)/dashy .
 	@echo "installed $(BINDIR)/dashy"
 
-# Run from source with an isolated dev home (dashy.toml, sessions).
+# Run from source with an isolated dev home.
 dev:
 	DASHY_HOME=$(DEV_HOME) go run . $(ARGS)
 

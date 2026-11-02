@@ -39,7 +39,6 @@ jobs:
             arch=${target#*/}
             out="dist/dashy_${os}_${arch}"
             GOOS=$os GOARCH=$arch CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$out" .
-            # The archive stores the binary as `dashy` so `dashy update` can find it.
             (cd dist && mv "dashy_${os}_${arch}" dashy && tar czf "dashy_${os}_${arch}.tar.gz" dashy && rm dashy)
           done
           (cd dist && shasum -a 256 *.tar.gz > checksums.txt)

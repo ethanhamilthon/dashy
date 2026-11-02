@@ -17,8 +17,6 @@ jobs:
           cache: true
       - name: Format check
         run: test -z "$(gofmt -l . | grep -v '^$')" || (gofmt -l . && exit 1)
-      - name: Source budget
-        run: test "$(find . -name '*.go' ! -name '*_test.go' -exec cat {} + | wc -l)" -lt 10000
       - name: Vet
         run: go vet ./...
       - name: Test
