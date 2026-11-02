@@ -118,15 +118,3 @@ func TestShellTimeoutBoundaryAndPerCallToolChecks(t *testing.T) {
 		t.Fatalf("expected zerooutput / no truncation, got: %+v", res)
 	}
 }
-
-func TestMaxFileBytesValidation(t *testing.T) {
-	base := Settings{Provider: "p", Providers: map[string]Provider{"p": {BaseURL: "https://example.com"}}, ShellTimeout: 120, ShellMaxTimeout: 600}
-	base.MaxFileBytes = -1
-	if err := validateSettings(base); err == nil {
-		t.Fatal("negative max_file_bytes accepted")
-	}
-	base.MaxFileBytes = 0
-	if err := validateSettings(base); err != nil {
-		t.Fatalf("zero (unlimited) rejected: %v", err)
-	}
-}

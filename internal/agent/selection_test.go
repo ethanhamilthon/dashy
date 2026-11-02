@@ -99,7 +99,7 @@ func TestSessionGlobalAndContextMatchesRecords(t *testing.T) {
 	a.records = []Record{{Kind: "assistant", Meta: &Metadata{RequestID: "r-1", ContextInput: &n}}}
 	result, err := a.Shell.Execute(context.Background(), `echo "$DASHY_SESSION_ID"; sh -c 'echo "$DASHY_ENDPOINT"'`, time.Second)
 	id := strings.TrimSuffix(filepath.Base(a.HistoryPath), ".jsonl")
-	if err != nil || result.Error || !strings.Contains(result.Output, id) || !strings.Contains(result.Output, filepath.Join(a.socketDir, "socket")) {
+	if err != nil || result.Error || !strings.Contains(result.Output, id) || !strings.Contains(result.Output, a.socketPath) {
 		t.Fatalf("metadata: %+v %v", result, err)
 	}
 }

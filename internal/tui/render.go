@@ -160,9 +160,9 @@ func (m model) inputBlock() string {
 func (m model) setupHint() string {
 	s := m.ctl.Settings()
 	if len(s.Providers) == 0 {
-		return "No provider configured. Use /login to add a provider, then choose a model with /model."
+		return "No provider configured. Use /login to add a provider, then choose a model with /settings."
 	}
-	return "No model selected. Choose a model with /model (use /login to add more providers)."
+	return "No model selected. Choose a model with /settings (use /login to add more providers)."
 }
 
 func (m *model) timeline() string {

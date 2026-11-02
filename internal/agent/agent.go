@@ -74,7 +74,8 @@ func partialCode(arguments string) string {
 
 type Agent struct {
 	listener      net.Listener
-	socketDir     string
+	socketPath    string
+	NoSocket      bool
 	inbox         chan string
 	views         chan shell.Image
 	owner         *os.File
@@ -117,6 +118,7 @@ func New(dir string, files ConfigFiles, target ...string) (*Agent, error) {
 		Shell:         &shell.Runner{Dir: dir},
 	}
 	a.applySettings(cfg.settings)
+	_ = CleanAttachments(filepath.Join(config, "attachments"))
 	if err := a.openProject(dir, target...); err != nil {
 		a.release()
 		return nil, err

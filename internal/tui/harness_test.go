@@ -179,7 +179,7 @@ func key(m model, k tea.KeyMsg) model {
 // composer, so tests can type while the model is busy.
 func startBusy(t *testing.T, m model) model {
 	t.Helper()
-	if _, err := m.ctl.Submit(control.Request{Type: "input", Text: "busy"}); err != nil {
+	if err := m.ctl.Input(agent.Input{Text: "busy"}); err != nil {
 		t.Fatal(err)
 	}
 	awaitRequest(t, m)

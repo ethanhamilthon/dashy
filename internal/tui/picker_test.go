@@ -100,7 +100,7 @@ func TestCancelledPickerIgnoresLateModelsAndPreservesSession(t *testing.T) {
 	if m.menuKind != "" || len(m.menu) != 0 || a.Settings().Model != previous {
 		t.Fatal("late response revived cancelled picker")
 	}
-	next, cmd := m.runCommand("/model")
+	next, cmd := m.runCommand("&")
 	m = next.(model)
 	if cmd != nil || m.menuKind != "" {
 		t.Fatal("model changed during active turn")
@@ -222,7 +222,7 @@ func TestCredentialDestinationInLoginAndModelNotices(t *testing.T) {
 
 	// Success notice contains destination
 	entriesStr = fmt.Sprint(m.entries)
-	if !strings.Contains(entriesStr, "Provider created in "+destPath+". Choose a model with /model.") {
+	if !strings.Contains(entriesStr, "Provider created in "+destPath+". Choose a model with /settings.") {
 		t.Fatalf("provider created notice missing destination: %v", m.entries)
 	}
 	// Verify secret key is not leaked

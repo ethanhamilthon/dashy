@@ -24,9 +24,11 @@ func (a *Agent) acquire() error {
 		return err
 	}
 	a.owner = file
-	if err := a.listenNotifications(); err != nil {
-		a.release()
-		return err
+	if !a.NoSocket {
+		if err := a.listenNotifications(); err != nil {
+			a.release()
+			return err
+		}
 	}
 	return nil
 }
@@ -35,8 +37,8 @@ func (a *Agent) release() {
 	if a.listener != nil {
 		a.listener.Close()
 		a.listener = nil
-		os.Remove(a.HistoryPath + ".endpoint")
-		os.RemoveAll(a.socketDir)
+		_ = os.Remove(a.socketPath)
+		a.socketPath = ""
 	}
 	if a.owner != nil {
 		_ = syscall.Flock(int(a.owner.Fd()), syscall.LOCK_UN)

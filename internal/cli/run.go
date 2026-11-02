@@ -90,13 +90,9 @@ func view(cwd, id string, paths []string) error {
 	if err != nil {
 		return err
 	}
-	home := os.Getenv("DASHY_HOME")
-	if home == "" {
-		home, err = os.UserHomeDir()
-		if err != nil {
-			return err
-		}
-		home = filepath.Join(home, ".dashy")
+	home, err := agent.DashyHome(cwd)
+	if err != nil {
+		return err
 	}
 	for _, path := range paths {
 		image, err := shell.CaptureImageCopy(path, filepath.Join(home, "attachments"))

@@ -50,7 +50,6 @@ func defaultSettings() Settings {
 	return Settings{
 		CompactKeepTurns: 4,
 		MaxContextTokens: 400000,
-		MaxFileBytes:     65536,
 		MaxCodeLines:     999,
 		MaxResultLines:   4,
 		MaxThinkingLines: 4,

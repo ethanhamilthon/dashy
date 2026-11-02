@@ -166,8 +166,8 @@ func (a *Agent) bashParameters() map[string]any {
 // Never export provider/model/effort/ctx/cwd/state/event variables.
 func (a *Agent) shellEnv() map[string]string {
 	env := make(map[string]string, 2)
-	if a.socketDir != "" {
-		env["DASHY_ENDPOINT"] = filepath.Join(a.socketDir, "socket")
+	if a.socketPath != "" {
+		env["DASHY_ENDPOINT"] = a.socketPath
 	}
 	env["DASHY_SESSION_ID"] = a.sessionID()
 	return env

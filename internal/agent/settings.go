@@ -26,7 +26,6 @@ type Settings struct {
 	MaxContextTokens int64
 	CompactKeepTurns int
 	MaxAgentSteps    int
-	MaxFileBytes     int
 	MaxCodeLines     int
 	MaxResultLines   int
 	MaxThinkingLines int
@@ -47,8 +46,8 @@ func validateSettings(s Settings) error {
 	if s.MaxCodeLines < 0 || s.MaxResultLines < 0 || s.MaxThinkingLines < 0 {
 		return fmt.Errorf("max_*_lines must be non-negative")
 	}
-	if s.MaxContextTokens < 0 || s.CompactKeepTurns < 0 || s.MaxAgentSteps < 0 || s.MaxFileBytes < 0 {
-		return fmt.Errorf("max_context_tokens, compact_keep_turns, max_agent_steps and max_file_bytes must be non-negative")
+	if s.MaxContextTokens < 0 || s.CompactKeepTurns < 0 || s.MaxAgentSteps < 0 {
+		return fmt.Errorf("max_context_tokens, compact_keep_turns, max_agent_steps must be non-negative")
 	}
 	if s.ShellTimeout <= 0 || s.ShellMaxTimeout <= 0 {
 		return fmt.Errorf("shell timeout and max_timeout must be positive")
@@ -157,4 +156,9 @@ func newClient(p Provider) openai.Client {
 		option.WithMaxRetries(0),
 		option.WithRequestTimeout(10*time.Minute),
 	)
+}
+
+// DashyHome returns the effective dashy configuration directory for cwd.
+func DashyHome(cwd string) (string, error) {
+	return configDir(cwd)
 }

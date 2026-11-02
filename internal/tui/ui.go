@@ -68,7 +68,6 @@ type model struct {
 	fileDismissed            bool
 	fileDismissedValue       string
 	fileDismissedCursor      int
-	prep                     *filePrep // submission waiting for its @file references to be read
 }
 
 func newModel(a *agent.Agent, cwd string) model {
@@ -186,8 +185,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleFileDebounce(v)
 	case fileScanMsg:
 		return m.handleFileScan(v)
-	case filePrepMsg:
-		return m.handleFilePrep(v)
 	case clipboardResult:
 		valBefore := m.input.Value()
 		curBefore := m.composerCursorOffset()
@@ -314,11 +311,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m.executeCommand("/quit")
 			}
 		case "esc":
-			if m.prep != nil {
-				m.prep = nil // a late result is ignored; the draft was never touched
-				m.refresh(true)
-				return m, nil
-			}
 			if m.fileLoading || m.hasFileCompletions() {
 				m.dismissFileCompletion()
 				m.refresh(true)
@@ -371,23 +363,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if v.String() == "up" && m.input.Value() == "" && len(m.images) == 0 && len(m.ctl.Status().Queued) > 0 {
-				resp, err := m.ctl.Submit(control.Request{Type: "recall"})
+				in, err := m.ctl.Recall()
 				if err != nil {
 					return m.reject(err)
 				}
-				m.input.SetValue(resp.Input.Text)
-				m.images = resp.Input.Images
-				m.input.CursorEnd()
-				m.refresh(true)
-				return m, nil
+				if in != nil {
+					m.input.SetValue(in.Text)
+					m.images = in.Images
+					m.input.CursorEnd()
+					m.refresh(true)
+					return m, nil
+				}
 			}
 		case "enter":
 			if m.pasting {
 				return m.stop("notice", "Clipboard read in progress; wait before submitting.")
 			}
-			if m.prep != nil {
-				return m.stop("notice", "Still reading attached files; wait before sending.")
-			}
+
 			if m.hasFileCompletions() {
 				cmd := m.acceptFileCompletion()
 				m.refresh(true)
@@ -446,19 +438,15 @@ func (m model) View() string {
 	return strings.Join(m.composerHighlight(lines), "\n")
 }
 
-// submitInput sends the composer as input. Explicit @file references are read
-// first, so the request carries the content as it is at submission.
+// submitInput sends the composer as input.
 func (m model) submitInput(text string) (tea.Model, tea.Cmd) {
-	if refs := fileReferences(text); len(refs) > 0 {
-		return m, m.beginFilePrep(text, refs)
-	}
 	return m.sendInput(agent.Input{Text: text, Images: m.images})
 }
 
 // sendInput hands a complete input to the controller. Idle input starts a turn;
 // input during a turn is queued as steering. The composer clears only once accepted.
 func (m model) sendInput(input agent.Input) (tea.Model, tea.Cmd) {
-	if _, err := m.ctl.Submit(control.Request{Type: "input", Text: input.Text, Images: input.Images, Files: input.Files}); err != nil {
+	if err := m.ctl.Input(input); err != nil {
 		return m.reject(err)
 	}
 	m.input.Reset()
@@ -471,7 +459,7 @@ func (m model) sendInput(input agent.Input) (tea.Model, tea.Cmd) {
 
 // requestCancel stops the active operation; the cancellation completes later as a done event.
 func (m *model) requestCancel() {
-	_, _ = m.ctl.Submit(control.Request{Type: "stop"})
+	m.ctl.Stop()
 	m.refresh(false)
 }
 
