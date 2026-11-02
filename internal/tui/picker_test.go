@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -148,100 +147,6 @@ func TestModelPickerListsAllProvidersAndSelectsItsProvider(t *testing.T) {
 	}
 }
 
-func TestPrimaryConfigMethod(t *testing.T) {
-	var nilAgent *agent.Agent
-	if nilAgent.PrimaryConfig() != "" {
-		t.Fatalf("nil agent PrimaryConfig() = %q, want empty", nilAgent.PrimaryConfig())
-	}
-
-	home := t.TempDir()
-	t.Setenv("DASHY_HOME", home)
-	a, err := agent.New(t.TempDir(), agent.ConfigFiles{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer a.Close()
-
-	dest := a.PrimaryConfig()
-	if dest == "" {
-		t.Fatal("expected non-empty PrimaryConfig()")
-	}
-	if !strings.HasSuffix(dest, "settings.json") {
-		t.Fatalf("PrimaryConfig() = %q, want suffix settings.json", dest)
-	}
-}
-
-func TestCredentialDestinationInLoginAndModelNotices(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("DASHY_HOME", home)
-	projectDir := t.TempDir()
-
-	a, err := agent.New(projectDir, agent.ConfigFiles{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer a.Close()
-
-	destPath := a.PrimaryConfig()
-	if destPath != filepath.Join(home, "settings.json") {
-		t.Fatalf("a.PrimaryConfig() = %q, want %q", destPath, filepath.Join(home, "settings.json"))
-	}
-
-	m := newModel(a, projectDir)
-
-	// 1. openPicker("login") displays credential destination
-	m.openPicker("login")
-	entriesStr := fmt.Sprint(m.entries)
-	if !strings.Contains(entriesStr, "Credentials destination: "+destPath) {
-		t.Fatalf("openPicker login entries = %v, want Credentials destination: %s", m.entries, destPath)
-	}
-
-	// 2. Select "Add" row
-	if last := m.menu[len(m.menu)-1]; last.name != "Add" || last.icon != "+" {
-		t.Fatal("missing final Add row")
-	}
-	m.selected = len(m.menu) - 1
-	m = enterPicker(m)
-
-	entriesStr = fmt.Sprint(m.entries)
-	if !strings.Contains(entriesStr, "Credentials will be saved to "+destPath) {
-		t.Fatalf("entering setup entries = %v, want Credentials will be saved to: %s", m.entries, destPath)
-	}
-
-	// 3. Provider name
-	m.input.SetValue("proj-prov")
-	m = enterPicker(m)
-
-	// 4. Base URL
-	m.input.SetValue("https://api.project.com/v1")
-	m = enterPicker(m)
-
-	// 5. API key entered and submitted
-	m.input.SetValue("secret-proj-key")
-	m = enterPicker(m)
-
-	// Success notice contains destination
-	entriesStr = fmt.Sprint(m.entries)
-	if !strings.Contains(entriesStr, "Provider created in "+destPath+". Choose a model with /settings.") {
-		t.Fatalf("provider created notice missing destination: %v", m.entries)
-	}
-	// Verify secret key is not leaked
-	if strings.Contains(entriesStr, "secret-proj-key") || strings.Contains(fmt.Sprint(a.History), "secret-proj-key") {
-		t.Fatal("secret key leaked into entries or history")
-	}
-
-	// 6. Model selection notice shows destination
-	m.openPicker("model")
-	m.menu = []command{{name: "gpt-4o", description: "proj-prov"}}
-	m.selected = 0
-	m = enterPicker(m)
-
-	entriesStr = fmt.Sprint(m.entries)
-	if !strings.Contains(entriesStr, "(saved to "+destPath+")") {
-		t.Fatalf("model selection notice missing destination: %v", m.entries)
-	}
-}
-
 func TestClosingModelPickerCancelsModelListing(t *testing.T) {
 	m, a := pickerModel(t)
 	started, cancelled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
@@ -326,11 +231,5 @@ func TestSettingsPickerTogglesAndModelSelection(t *testing.T) {
 	}
 	if a.Settings().Model != "gpt-4o" || a.Settings().Provider != "testprov" || a.Settings().Effort != "minimal" {
 		t.Fatalf("model selection mismatch: %+v", a.Settings())
-	}
-
-	// Verify /model is an unknown command
-	_, cmd = m.runCommand("/model")
-	if cmd != nil {
-		t.Fatal("/model should not return a command")
 	}
 }

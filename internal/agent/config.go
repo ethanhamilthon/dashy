@@ -41,15 +41,6 @@ func (a *Agent) PrimaryConfig() string {
 	return ""
 }
 
-// ProjectFile reports whether path is inside the project directory.
-func (a *Agent) ProjectFile(path string) bool {
-	return false
-}
-
-func defaultSettings() Settings {
-	return DefaultSettings()
-}
-
 func loadConfiguration(home, dir string, files ConfigFiles) (configuration, error) {
 	var sources []Source
 	var local string

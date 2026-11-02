@@ -179,18 +179,6 @@ func (c *Controller) Wait(ctx context.Context) error {
 	}
 }
 
-// Shutdown saves the session and closes the controller.
-func (c *Controller) Shutdown(reason string) (err error) {
-	c.view(func() {
-		if c.active != nil {
-			err = fail("busy", "Wait for the active turn before closing.")
-			return
-		}
-		err = c.closeLocked(reason)
-	})
-	return err
-}
-
 // Close cancels any active operation and waits for it to finish. It does not save.
 func (c *Controller) Close() {
 	c.view(func() {
@@ -470,23 +458,8 @@ func providerSecrets(s agent.Settings, extra ...string) []string {
 	return secrets
 }
 
-// ProjectConfig reports whether dest is a project-level file, where credentials should not be committed.
-func (c *Controller) ProjectConfig(dest string) (project bool) {
-	return false
-}
-
 // Sources lists the configuration files in effect, lowest priority first.
 func (c *Controller) Sources() (sources []agent.Source) {
 	c.view(func() { sources = slices.Clone(c.a.Sources) })
 	return sources
-}
-
-func (c *Controller) startLocked(kind string, images []shell.Image) *operation {
-	c.count++
-	id := fmt.Sprintf("%s-%d", kind, c.count)
-	ctx, cancel := context.WithCancel(context.Background())
-	op := &operation{id: id, kind: kind, ctx: ctx, cancel: cancel, started: time.Now(), steering: &agent.Steering{}, images: images}
-	c.active = op
-	c.idle = make(chan struct{})
-	return op
 }

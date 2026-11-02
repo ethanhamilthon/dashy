@@ -202,14 +202,6 @@ func Run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.W
 		return err
 	}
 	defer a.Close()
-	a.Start(tui.Version)
-	defer func() {
-		code := 0
-		if err != nil {
-			code = 1
-		}
-		a.Finish(code)
-	}()
 	if pPassed {
 		if a.Settings().Provider == "" || a.Settings().Model == "" {
 			return fmt.Errorf("no provider or model configured: run dashy to set up settings in /settings")

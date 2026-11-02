@@ -210,17 +210,8 @@ func (m model) finishSetup() (tea.Model, tea.Cmd, bool) {
 	prompts := []string{"Provider name", "HTTP(S) base URL", "API key (optional)"}
 	if len(m.setup) < 3 {
 		m.input.Placeholder = prompts[len(m.setup)]
-		if len(m.setup) == 2 {
-			if dest := m.ctl.PrimaryConfig(); m.ctl.ProjectConfig(dest) {
-				m.add("notice", fmt.Sprintf("Warning: API key will be saved to project configuration (%s); avoid committing secrets to version control.", dest))
-			}
-		}
 		m.refresh(true)
 		return m, nil, true
-	}
-	dest := m.ctl.PrimaryConfig()
-	if m.setup[2] != "" && m.ctl.ProjectConfig(dest) {
-		m.add("notice", fmt.Sprintf("Warning: API key saved in project configuration (%s); avoid committing secrets.", dest))
 	}
 	err := m.ctl.AddProvider(m.setup[0], m.setup[1], m.setup[2])
 	m.closePicker()

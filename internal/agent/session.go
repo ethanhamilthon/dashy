@@ -91,7 +91,6 @@ func (a *Agent) changeSession(id string) error {
 		NoSocket:      a.NoSocket,
 		sessionsDir:   a.sessionsDir,
 		Shell:         a.Shell,
-		version:       a.version,
 		System:        c.system,
 		LocalConfig:   c.local,
 		Sources:       c.sources,

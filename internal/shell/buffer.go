@@ -40,7 +40,7 @@ func (b *cappedBuffer) Write(p []byte) (int, error) {
 	return total, nil
 }
 
-// OutputBuffer is a capped capture of command output, shared with hooks.
+// OutputBuffer is a capped capture of command output.
 type OutputBuffer = cappedBuffer
 
 // NewOutputBuffer keeps the first and last limit/2 bytes, or everything when limit <= 0.

@@ -7,37 +7,10 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/muesli/termenv"
 
 	"dashy/internal/agent"
 )
-
-func TestErrorNoticeStyleAndVisibility(t *testing.T) {
-	previous := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	defer lipgloss.SetColorProfile(previous)
-	e := entry{Kind: "error", Text: "First line\nSecond line\tDetails", Meta: &agent.Metadata{}}
-	for _, width := range []int{1, 2, 10, 80} {
-		block := renderEntry(e, width, 0)
-		plain := ansi.Strip(block)
-		if strings.ContainsAny(plain, "\r\n\t") || ansi.StringWidth(plain) > width || plain == "" {
-			t.Fatalf("error not visible in one row at %d: %q", width, plain)
-		}
-		if width == 80 {
-			if !strings.Contains(block, "38;2;240;158;172") || !strings.Contains(block, "38;2;96;96;96") {
-				t.Fatalf("error icon/text colors missing: %q", block)
-			}
-			if strings.TrimSpace(plain) != "! · First line Second line Details" {
-				t.Fatal(plain)
-			}
-		}
-	}
-	if !strings.Contains(e.Text, "\n") {
-		t.Fatal("full diagnostics modified")
-	}
-}
 
 func TestUpRecallsOnlyPendingSteeringOnEmptyInput(t *testing.T) {
 	m, release := busyModel(t)

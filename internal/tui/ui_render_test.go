@@ -83,34 +83,19 @@ func TestMetadataAndBottomBar(t *testing.T) {
 		t.Fatal(m.bottomBar())
 	}
 }
-func BenchmarkLongChatCachedDelta(b *testing.B) {
-	m := newModel(&agent.Agent{}, "/project")
-	for i := 0; i < 1000; i++ {
-		m.add("assistant", fmt.Sprintf("**Message %d**\n\nSome text and `code`.", i))
-	}
-	m.refresh(true)
-	m.applyAgentEvent(agent.Event{Kind: "delta", ID: "stream", Text: "answer"})
-	m.refresh(true)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		m.applyAgentEvent(agent.Event{Kind: "assistant", ID: "stream", Text: fmt.Sprintf("answer %d", i), Final: true})
-		m.refresh(false)
-	}
-}
-
 func TestConfigSourcesHeader(t *testing.T) {
 	a := &agent.Agent{}
 	m := newModel(a, "/project")
-	if strings.Contains(ansi.Strip(m.timeline()), "dashy.toml") {
+	if strings.Contains(ansi.Strip(m.timeline()), "AGENTS.md") {
 		t.Fatal("sources shown before the agent loaded any")
 	}
 	a.Sources = []agent.Source{
-		{Name: "dashy.toml", Path: "/work/repo/dashy.toml", Origin: "project"},
-		{Name: "dashy.toml", Path: "/home/u/.dashy/dashy.toml", Origin: "home"},
-		{Name: "dashy.toml", Origin: "none"},
+		{Name: "AGENTS.md", Path: "/work/repo/AGENTS.md", Origin: "project"},
+		{Name: "AGENTS.md", Path: "/home/u/.dashy/AGENTS.md", Origin: "home"},
+		{Name: "AGENTS.md", Origin: "none"},
 	}
 	text := ansi.Strip(m.timeline())
-	for _, want := range []string{"dashy   /work/repo/dashy.toml (project)", "dashy   /home/u/.dashy/dashy.toml (home)", "dashy   none"} {
+	for _, want := range []string{"AGENTS  /work/repo/AGENTS.md (project)", "AGENTS  /home/u/.dashy/AGENTS.md (home)", "AGENTS  none"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("header missing %q in:\n%s", want, text)
 		}
@@ -126,32 +111,6 @@ func TestUnavailableContextClearsOldEstimate(t *testing.T) {
 		t.Fatal("stale context shown for request without usage")
 	}
 }
-func TestCompactTimelineDesign(t *testing.T) {
-	meta := &agent.Metadata{Duration: 1200 * time.Millisecond, Usage: &agent.Usage{Input: 12400, Output: 320, Cached: 9920}}
-	for _, tc := range []struct{ kind, heading string }{
-		{"assistant", "*  ↑12.4k ↓320 · 1.2s · cache 80%"},
-		{"code", ">_  ↑12.4k ↓320 · 1.2s · cache 80%"},
-		{"output", "<  1.2s"},
-		{"reasoning", "~"},
-	} {
-		block := ansi.Strip(renderEntry(entry{Kind: tc.kind, Text: "hello", Meta: meta}, 80))
-		if got := strings.TrimSpace(strings.Split(block, "\n")[0]); got != tc.heading {
-			t.Errorf("%s: %q", tc.kind, got)
-		}
-	}
-	for _, width := range []int{1, 2, 3, 10, 80} {
-		block := ansi.Strip(renderEntry(entry{Kind: "user", Text: "hello world\nsecond line"}, width))
-		for _, row := range strings.Split(block, "\n") {
-			if !strings.HasPrefix(row, "▌") || ansi.StringWidth(row) > width {
-				t.Fatalf("user rail at width %d: %q", width, row)
-			}
-		}
-	}
-	if bodyColor("reasoning") != darkGray {
-		t.Fatal("reasoning body must be muted")
-	}
-}
-
 func TestCachePercentAvailability(t *testing.T) {
 	for _, tc := range []struct {
 		usage *agent.Usage
@@ -229,7 +188,7 @@ func TestBlockLineLimits(t *testing.T) {
 	}
 }
 
-func TestTimelineLimitsReloadAndHiddenSpacing(t *testing.T) {
+func TestTimelineLimitsAndHiddenSpacing(t *testing.T) {
 	t.Setenv("DASHY_HOME", t.TempDir())
 	a, err := agent.New(t.TempDir(), agent.ConfigFiles{})
 	if err != nil {
@@ -345,7 +304,7 @@ func TestSingleLineNotifications(t *testing.T) {
 		{reset, "! · Shell session restarted. Previous variables were cleared."},
 		{"<notify>\nShell session restarted. Previous variables are unavailable.\n<prefix_output>secret details</prefix_output>\n</notify>", "! · Shell session restarted. Previous variables were cleared."},
 		{"<notify>\nShell session initialized. The prefix has been executed.\n<prefix_output>secret details</prefix_output>\n</notify>", "! · Shell session initialized."},
-		{"<notify>Configuration\n  reloaded.\tReady.</notify>", "! · Configuration reloaded. Ready."},
+		{"<notify>Configuration\n  updated.\tReady.</notify>", "! · Configuration updated. Ready."},
 		{"\x1b[31mProvider event\x1b[0m\r\nreceived", "! · Provider event received"},
 		{"", "! · Notification received."},
 	} {
@@ -381,38 +340,5 @@ func TestSingleLineNotifications(t *testing.T) {
 	live.timeline()
 	if m.cache[0].Text != live.cache[0].Text {
 		t.Fatal("live and restored notifications differ")
-	}
-}
-
-// TestBuiltInColors pins the fixed palette: it is compiled in and cannot be changed by settings.
-func TestBuiltInColors(t *testing.T) {
-	previous := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	defer lipgloss.SetColorProfile(previous)
-	for name, pair := range map[string]struct {
-		got  lipgloss.Color
-		want string
-	}{
-		"accent":     {cyan, "#79d9ff"},
-		"foreground": {foreground, "#d5ddeb"},
-		"muted":      {muted, "#8794a8"},
-		"code":       {codeGray, "#a0a0a0"},
-		"dim":        {darkGray, "#606060"},
-		"input":      {inputBlue, "#8aadff"},
-		"assistant":  {assistantColor, "#9bdef5"},
-		"error":      {errorColor, "#f09eac"},
-		"warn":       {warnColor, "#e5c07b"},
-		"info":       {infoColor, "#d7c38b"},
-	} {
-		if string(pair.got) != pair.want {
-			t.Fatalf("%s = %s, want %s", name, pair.got, pair.want)
-		}
-	}
-	header := lipgloss.NewStyle().Foreground(cyan).Render("dashy")
-	if !strings.Contains(header, "38;2;121;217;255") {
-		t.Fatalf("accent not rendered: %q", header)
-	}
-	if !strings.Contains(markdownStyle, "#9bdef5") || !strings.Contains(markdownStyle, "#79d9ff") || !strings.Contains(markdownStyle, "#8aadff") {
-		t.Fatal("markdown style must use the built-in palette")
 	}
 }

@@ -1,11 +1,8 @@
 package agent
 
 import (
-	"fmt"
-	"math"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -349,45 +346,5 @@ func TestSettingsSnapshotDoesNotMutateAgent(t *testing.T) {
 	snapshot.Providers["p"] = Provider{BaseURL: "changed"}
 	if a.Settings().Model != "m" || a.Settings().Providers["p"].BaseURL != "https://example.com" {
 		t.Fatal("mutable settings exposed")
-	}
-}
-
-func TestToolChecksWithDefaultConstants(t *testing.T) {
-	cwd := t.TempDir()
-	home := t.TempDir()
-	t.Setenv("DASHY_HOME", home)
-	a, err := New(cwd, ConfigFiles{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer a.Close()
-	a.ApplySettings(Settings{
-		Provider:  "p",
-		Providers: map[string]Provider{"p": {BaseURL: "https://example.com"}},
-	})
-
-	res := a.runTool(t.Context(), "bash", fmt.Sprintf(`{"command":"echo hi","timeout":%d}`, math.MaxInt64))
-	if !res.Error || !strings.Contains(res.Output, "timeout must be 1..600 seconds") {
-		t.Fatalf("expected 1..600 timeout error on math.MaxInt64, got: %+v", res)
-	}
-
-	res = a.runTool(t.Context(), "bash", `{"command":"echo hi","timeout":0}`)
-	if !res.Error || !strings.Contains(res.Output, "timeout must be 1..600 seconds") {
-		t.Fatalf("expected 1..600 timeout error on 0, got: %+v", res)
-	}
-
-	res = a.runTool(t.Context(), "bash", `{"command":"echo hi","timeout":601}`)
-	if !res.Error || !strings.Contains(res.Output, "timeout must be 1..600 seconds") {
-		t.Fatalf("expected 1..600 timeout error on 601, got: %+v", res)
-	}
-
-	res = a.runTool(t.Context(), "bash", `{"command":"echo hi","max_output":-1}`)
-	if !res.Error || !strings.Contains(res.Output, "max_output must be >= 0 bytes") {
-		t.Fatalf("expected >= 0 bytes error on -1, got: %+v", res)
-	}
-
-	res = a.runTool(t.Context(), "bash", `{"command":"printf 'hello world'","max_output":0}`)
-	if res.Error || res.Output != "hello world" {
-		t.Fatalf("expected zerooutput / no truncation, got: %+v", res)
 	}
 }

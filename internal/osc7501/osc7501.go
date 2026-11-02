@@ -219,13 +219,6 @@ func WithInterval(d time.Duration) Option {
 	}
 }
 
-// WithApp configures the application identifier.
-func WithApp(app string) Option {
-	return func(r *Reporter) {
-		r.app = app
-	}
-}
-
 // Reporter manages OSC 7501 emission for a terminal session.
 type Reporter struct {
 	mu           sync.Mutex

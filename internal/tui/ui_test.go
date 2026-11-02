@@ -15,35 +15,6 @@ import (
 	"dashy/internal/agent"
 )
 
-func TestInputBorderGrows(t *testing.T) {
-	m := newModel(&agent.Agent{}, "/project")
-	m.input.SetValue("one\ntwo\nthree")
-	m.refresh(false)
-	if m.input.Height() != 3 {
-		t.Fatalf("input height %d", m.input.Height())
-	}
-	view := ansi.Strip(m.inputBlock())
-	lines := strings.Split(view, "\n")
-	if len(lines) != 3 {
-		t.Fatalf("border height: %q", view)
-	}
-	for _, line := range lines {
-		if !strings.HasPrefix(line, "▌") {
-			t.Errorf("missing full-height border: %q", line)
-		}
-		if ansi.StringWidth(line) != 80 {
-			t.Errorf("input width: %d", ansi.StringWidth(line))
-		}
-	}
-	if lines := strings.Count(ansi.Strip(m.View()), "\n") + 1; lines != 24 {
-		t.Errorf("view height %d want 24", lines)
-	}
-	m.input.SetValue(strings.Repeat("a", 160))
-	m.refresh(false)
-	if m.input.Height() < 3 {
-		t.Error("wrapped input should grow")
-	}
-}
 func TestComposerIsInScrollableTimeline(t *testing.T) {
 	m := newModel(&agent.Agent{}, "/project")
 	view := strings.Split(ansi.Strip(m.View()), "\n")

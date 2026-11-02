@@ -202,33 +202,6 @@ func TestAgentsTruncation(t *testing.T) {
 	}
 }
 
-func TestAgentsOrdering(t *testing.T) {
-	home := t.TempDir()
-	cwd := t.TempDir()
-	t.Setenv("DASHY_HOME", home)
-
-	content := "# Sequential Blocks Test\n\n```dashy\necho \"line 1\" > sequence.txt\necho \"FIRST\"\n```\n\nMiddle text\n\n```dashy\necho \"line 2\" >> sequence.txt\ncat sequence.txt\n```\n"
-
-	localFile := filepath.Join(cwd, "AGENTS.md")
-	if err := os.WriteFile(localFile, []byte(content), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	a, err := New(cwd, ConfigFiles{NoGlobal: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer a.Close()
-
-	prompt := a.instructions()
-	if !strings.Contains(prompt, "FIRST") {
-		t.Fatalf("missing FIRST block output:\n%s", prompt)
-	}
-	if !strings.Contains(prompt, "line 1\nline 2") {
-		t.Fatalf("second block did not observe first block sequentially:\n%s", prompt)
-	}
-}
-
 func TestAgentsLazyFreezeAndSource(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()

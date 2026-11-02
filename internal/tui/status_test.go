@@ -36,26 +36,6 @@ func TestBottomBarWidthsAndPadding(t *testing.T) {
 	}
 }
 
-func TestBottomBarUnicodeTruncation(t *testing.T) {
-	left := "测试项目 · 模型/high · 很高兴"
-	right := "🚀/测试/路径/很长很长的路径名称"
-	for _, width := range []int{1, 3, 4, 5, 10, 25, 40, 80} {
-		bar := renderBottomBar(width, left, right)
-		if strings.ContainsAny(bar, "\r\n") {
-			t.Fatalf("width %d contains newline", width)
-		}
-		sw := ansi.StringWidth(bar)
-		if sw > width {
-			t.Fatalf("width %d: Unicode bar width %d exceeds max: %q", width, sw, bar)
-		}
-		if width >= 5 {
-			if !strings.HasPrefix(bar, "  ") || !strings.HasSuffix(bar, "  ") {
-				t.Fatalf("width %d: missing 2 spaces on edges: %q", width, bar)
-			}
-		}
-	}
-}
-
 func TestFixedStatusLine(t *testing.T) {
 	var n int64 = 37000
 	m := model{

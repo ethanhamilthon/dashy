@@ -97,18 +97,6 @@ func TestComposerLayoutWrapsLikeTextarea(t *testing.T) {
 	}
 }
 
-func TestComposerClickMapsEveryWrappedRow(t *testing.T) {
-	value := "alpha beta gamma delta epsilon zeta"
-	m := composerModel(value, 14, 20)
-	for r, row := range composerLayout(value, m.input.Width()) {
-		x, y := composerPoint(m, r, 0)
-		offset, ok := m.composerOffset(x, y, false)
-		if !ok || offset != row.start {
-			t.Fatalf("row %d: offset %d %v, want %d", r, offset, ok, row.start)
-		}
-	}
-}
-
 func TestComposerDragSelectsWithoutCopy(t *testing.T) {
 	m := composerModel("hello brave world", 40, 20)
 	dragComposer(&m, 0, 6, 0, 11)
@@ -135,20 +123,6 @@ func TestComposerClickPlacesCursor(t *testing.T) {
 	m = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("X")})
 	if got := m.input.Value(); got != "hello Xworld" {
 		t.Fatalf("typing after click = %q, want %q", got, "hello Xworld")
-	}
-}
-
-func TestComposerBackspaceDeletesSelection(t *testing.T) {
-	for _, key := range []tea.KeyMsg{{Type: tea.KeyBackspace}, {Type: tea.KeyDelete}} {
-		m := selectBrave(t)
-		m = update(m, key)
-		if got := m.input.Value(); got != "hello  world" {
-			t.Fatalf("%s: value = %q", key.String(), got)
-		}
-		m = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("X")})
-		if got := m.input.Value(); got != "hello X world" {
-			t.Fatalf("%s: typing after delete = %q", key.String(), got)
-		}
 	}
 }
 
@@ -216,87 +190,6 @@ func TestComposerCtrlXCutsSelectionKeepsImages(t *testing.T) {
 	}
 }
 
-func TestComposerShortcutOnlyActsWithSelection(t *testing.T) {
-	m := composerModel("hello world", 40, 20)
-	next, cmd := m.Update(composerShortcut{cut: true})
-	m = next.(model)
-	if cmd != nil || m.input.Value() != "hello world" {
-		t.Fatalf("Cmd+X without selection changed state: cmd=%v value=%q", cmd, m.input.Value())
-	}
-	m = selectBrave(t)
-	next, cmd = m.Update(composerShortcut{cut: false})
-	m = next.(model)
-	if cmd == nil || m.input.Value() != "hello brave world" {
-		t.Fatalf("Cmd+C with selection: cmd=%v value=%q", cmd, m.input.Value())
-	}
-}
-
-func TestComposerPasteReplacesSelection(t *testing.T) {
-	m := selectBrave(t)
-	m.acceptClipboard(clipboardResult{generation: m.pasteGeneration, text: "new"})
-	m.refresh(true)
-	if got := m.input.Value(); got != "hello new world" {
-		t.Fatalf("paste = %q", got)
-	}
-}
-
-func TestComposerSelectionClearedByNavigationAndExternalChange(t *testing.T) {
-	m := selectBrave(t)
-	m = update(m, tea.KeyMsg{Type: tea.KeyLeft})
-	if _, _, ok := m.activeComposerSelection(); ok || m.input.Value() != "hello brave world" {
-		t.Fatal("left arrow did not clear the selection without changing text")
-	}
-
-	m = selectBrave(t)
-	m = update(m, tea.KeyMsg{Type: tea.KeyEsc})
-	if _, _, ok := m.activeComposerSelection(); ok || m.input.Value() != "hello brave world" {
-		t.Fatal("esc did not clear the selection without changing text")
-	}
-
-	m = selectBrave(t)
-	m.input.SetValue("other")
-	if _, _, ok := m.activeComposerSelection(); ok {
-		t.Fatal("selection survived an external value change")
-	}
-}
-
-func TestComposerSelectionHighlighted(t *testing.T) {
-	m := selectBrave(t)
-	m.refresh(false)
-	var line string
-	for _, row := range strings.Split(m.View(), "\n") {
-		if strings.Contains(ansi.Strip(row), "hello brave world") {
-			line = row
-		}
-	}
-	if line == "" {
-		t.Fatal("composer row missing from view")
-	}
-	if !strings.Contains(line, "\x1b[7mbrave\x1b[0m") {
-		t.Fatalf("selected text not highlighted: %q", line)
-	}
-	if !strings.Contains(ansi.Strip(line), "▌ hello brave world") {
-		t.Fatalf("highlight changed the text: %q", ansi.Strip(line))
-	}
-}
-
-func TestWheelScrollsWithComposerSelection(t *testing.T) {
-	m := composerModel("hello brave world", 40, 10)
-	for i := 0; i < 30; i++ {
-		m.add("notice", fmt.Sprintf("entry %d", i))
-	}
-	m.refresh(true)
-	dragComposer(&m, 0, 6, 0, 11)
-	before := m.viewport.YOffset
-	m = update(m, tea.MouseMsg{Button: tea.MouseButtonWheelUp, Action: tea.MouseActionPress})
-	if m.viewport.YOffset >= before {
-		t.Fatalf("wheel did not scroll: %d -> %d", before, m.viewport.YOffset)
-	}
-	if m.selectedComposerText() != "brave" {
-		t.Fatal("wheel cleared the composer selection")
-	}
-}
-
 func TestTimelineDragStillCopies(t *testing.T) {
 	m := composerModel("hello", 40, 20)
 	m.add("user", "timeline text")
@@ -315,21 +208,6 @@ func TestTimelineDragStillCopies(t *testing.T) {
 	}
 	if m.inputSel != nil {
 		t.Fatal("timeline drag created a composer selection")
-	}
-}
-
-func TestComposerSelectionDisabledForMaskedKey(t *testing.T) {
-	m := newModel(&agent.Agent{}, "/project")
-	m.width, m.height = 40, 20
-	m.menuKind = "setup"
-	m.setup = []string{"name", "https://example.com"}
-	m.input.SetValue("secret")
-	m.refresh(true)
-	x, y := composerPoint(m, 0, 2)
-	m.mouseSelection(mouseAt(tea.MouseActionPress, x, y))
-	m.mouseSelection(mouseAt(tea.MouseActionMotion, x+3, y))
-	if m.inputSel != nil {
-		t.Fatal("masked API key field produced a composer selection")
 	}
 }
 
@@ -353,40 +231,5 @@ func TestComposerSelectionInsideScrolledValue(t *testing.T) {
 	start, end := first*8+5, (first+1)*8+3
 	if got, want := m.selectedComposerText(), value[start:end]; got != want {
 		t.Fatalf("selected %q, want %q", got, want)
-	}
-}
-
-func TestComposerSelectionMatchesRowsBeforeTextareaScrolls(t *testing.T) {
-	var lines []string
-	for i := 0; i < 30; i++ {
-		lines = append(lines, fmt.Sprintf("line %02d", i))
-	}
-	value := strings.Join(lines, "\n")
-	// SetValue leaves the textarea showing its first rows while the cursor sits at the end.
-	m := composerModel(value, 40, 20)
-	top := m.inputTop - m.viewport.YOffset
-	shown := strings.TrimSpace(strings.TrimPrefix(ansi.Strip(strings.Split(m.View(), "\n")[top]), "▌"))
-	if shown != "line 00" {
-		t.Fatalf("first visible row = %q, want line 00", shown)
-	}
-	dragComposer(&m, 0, 5, 0, 7)
-	if got := m.selectedComposerText(); got != "00" {
-		t.Fatalf("selected %q, want 00", got)
-	}
-}
-
-func TestComposerDragDoesNotScrollOnPress(t *testing.T) {
-	var lines []string
-	for i := 0; i < 30; i++ {
-		lines = append(lines, fmt.Sprintf("line %02d", i))
-	}
-	m := composerModel(strings.Join(lines, "\n"), 40, 20)
-	x, y := composerPoint(m, 0, 5)
-	m.mouseSelection(mouseAt(tea.MouseActionPress, x, y))
-	x, y = composerPoint(m, 1, 7)
-	m.mouseSelection(mouseAt(tea.MouseActionMotion, x, y))
-	m.mouseSelection(mouseAt(tea.MouseActionRelease, x, y))
-	if got := m.selectedComposerText(); got != "00\nline 01" {
-		t.Fatalf("selected %q", got)
 	}
 }

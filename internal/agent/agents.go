@@ -269,11 +269,6 @@ func (a *Agent) processAgentsFile(path string) (string, error) {
 	return substituteBlocks(data, blocks, repls), nil
 }
 
-// AssemblePrompt gathers AGENTS.md files, runs dashy blocks, and formats the system prompt.
-func (a *Agent) AssemblePrompt() string {
-	return a.assemblePrompt()
-}
-
 func (a *Agent) assemblePrompt() string {
 	cwd := ""
 	if a.Shell != nil {

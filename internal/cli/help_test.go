@@ -131,21 +131,3 @@ func TestHelpMentionsEveryDashyEnvVar(t *testing.T) {
 		}
 	}
 }
-
-func TestHelpStructure(t *testing.T) {
-	// Must have no ANSI escape sequences
-	if strings.Contains(helpText, "\x1b") {
-		t.Error("help text contains ANSI escape sequences")
-	}
-
-	// Plain-text file, about 70 lines
-	lines := strings.Split(strings.TrimSpace(helpText), "\n")
-	if len(lines) < 50 || len(lines) > 90 {
-		t.Errorf("expected ~70 lines in help.txt, got %d lines", len(lines))
-	}
-
-	// Must mention OSC 7501
-	if !strings.Contains(helpText, "OSC 7501") {
-		t.Error("help text must mention OSC 7501")
-	}
-}

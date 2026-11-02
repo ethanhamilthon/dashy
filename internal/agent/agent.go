@@ -123,7 +123,6 @@ type Agent struct {
 	files            ConfigFiles
 	home             string
 	sessionsDir      string
-	version          string
 	promptFrozen     bool
 	promptSource     string
 	mode             string
@@ -541,9 +540,3 @@ func (a *Agent) sessionID() string {
 func (a *Agent) SessionID() string {
 	return a.sessionID()
 }
-
-func (a *Agent) Start(version string) {
-	a.version = version
-}
-
-func (a *Agent) Finish(code int) {}

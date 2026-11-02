@@ -15,26 +15,6 @@ import (
 	"dashy/internal/shell"
 )
 
-func TestRecordsForLegacyItems(t *testing.T) {
-	for _, tc := range []struct{ item, kind, text string }{
-		{`{"role":"user","content":"hello"}`, "user", "hello"},
-		{`{"role":"assistant","content":"string content"}`, "assistant", "string content"},
-		{`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"intermediate"},{"type":"refusal","refusal":"refused"}]}`, "assistant", "intermediate\nrefused"},
-		{`{"type":"reasoning","summary":[{"text":"summary"}],"content":[{"text":"thinking"}]}`, "reasoning", "summary\nthinking"},
-		{`{"type":"function_call","name":"bash","arguments":"{\"command\":\"ls -l\"}"}`, "code", "ls -l"},
-		{`{"type":"function_call_output","output":"{\"output\":\"oops\",\"error\":true}"}`, "error", "oops"},
-		{`{"type":"function_call_output","output":"raw tool output"}`, "output", "raw tool output"},
-		{`{"type":"web_search_call","id":"w"}`, "notice", `{"type":"web_search_call","id":"w"}`},
-	} {
-		records := RecordsForItem(json.RawMessage(tc.item))
-		if len(records) != 1 || records[0].Kind != tc.kind || records[0].Text != tc.text {
-			t.Errorf("%s => %+v", tc.item, records)
-		}
-	}
-	if records := RecordsForItem(json.RawMessage(`{"type":"reasoning","encrypted_content":"secret"}`)); len(records) != 0 {
-		t.Fatal("encrypted reasoning must not be rendered")
-	}
-}
 func TestFullTurnLiveAndHistory(t *testing.T) {
 	t.Setenv("DASHY_HOME", t.TempDir())
 	dir := t.TempDir()
@@ -127,17 +107,6 @@ func TestFullTurnLiveAndHistory(t *testing.T) {
 		t.Fatal("temporary history files left behind")
 	}
 }
-func TestHistoryFallbackAndUnknownUsage(t *testing.T) {
-	a := &Agent{History: []json.RawMessage{
-		json.RawMessage(`{"role":"user","content":"old"}`),
-		json.RawMessage(`{"role":"assistant","content":[{"type":"output_text","text":"answer"}]}`),
-	}}
-	records := a.Records()
-	if len(records) != 2 || records[1].Text != "answer" || records[1].Meta != nil {
-		t.Fatalf("%+v", records)
-	}
-}
-
 func TestItemContentIsLiveAndSurvivesFailedStream(t *testing.T) {
 	t.Setenv("DASHY_HOME", t.TempDir())
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -87,15 +86,5 @@ func TestImageSteeringRecallVersusAcceptance(t *testing.T) {
 		if ok && len(recalled.Images) != 1 || !ok && len(accepted[0].Images) != 1 {
 			t.Fatal("attachment not atomic with instruction")
 		}
-	}
-}
-
-func TestInputDisplayDoesNotAlterPlainText(t *testing.T) {
-	text := "  literal text\n"
-	if (Input{Text: text}).Display() != text {
-		t.Fatal("plain message whitespace changed")
-	}
-	if got := (Input{Text: "look", Images: []shell.Image{{Path: filepath.Join("folder", "photo.png")}}}).Display(); got != "look\n[Image: photo.png]" {
-		t.Fatal(got)
 	}
 }

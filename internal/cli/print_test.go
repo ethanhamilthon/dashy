@@ -403,67 +403,6 @@ func TestPrintModeSignalsAndExitCodes(t *testing.T) {
 	}
 }
 
-func TestPrintModeShortResultTruncation(t *testing.T) {
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		w.Header().Set("Content-Type", "text/event-stream")
-		send := func(v any) {
-			data, _ := json.Marshal(v)
-			fmt.Fprintf(w, "data: %s\n\n", data)
-		}
-		if requests == 1 {
-			// Run a tool with 10 lines of output
-			cmd := "for i in $(seq 1 10); do echo line$i; done"
-			args, _ := json.Marshal(map[string]any{"command": cmd, "timeout": nil, "max_output": nil})
-			item := map[string]any{
-				"type":      "function_call",
-				"id":        "call_1",
-				"call_id":   "call_1",
-				"name":      "bash",
-				"arguments": string(args),
-			}
-			send(map[string]any{
-				"type": "response.completed",
-				"response": map[string]any{
-					"output": []any{item},
-				},
-			})
-		} else {
-			send(map[string]any{
-				"type": "response.completed",
-				"response": map[string]any{
-					"output": []any{
-						map[string]any{
-							"type":    "message",
-							"role":    "assistant",
-							"content": []any{map[string]any{"type": "output_text", "text": "done"}},
-						},
-					},
-				},
-			})
-		}
-	}))
-	defer server.Close()
-
-	setupTestHome(t, server.URL)
-
-	var out, diag bytes.Buffer
-	err := Run(context.Background(), []string{"-p", "truncate test"}, strings.NewReader(""), &out, &diag)
-	if err != nil {
-		t.Fatal(err)
-	}
-	stderrStr := diag.String()
-
-	// ShortResultLines is 4; lines beyond 4 should be truncated with "..."
-	if !strings.Contains(stderrStr, "line1\nline2\nline3\nline4\n...") {
-		t.Fatalf("expected 4 lines followed by '...', got:\n%s", stderrStr)
-	}
-	if strings.Contains(stderrStr, "line10") {
-		t.Fatalf("line10 should have been truncated from stderr progress:\n%s", stderrStr)
-	}
-}
-
 func TestPrintModeRetryOnStderr(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

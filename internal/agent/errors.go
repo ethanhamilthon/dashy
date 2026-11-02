@@ -19,7 +19,7 @@ type providerError struct {
 func (e *providerError) Error() string { return e.text }
 func (e *providerError) Unwrap() error { return e.cause }
 
-// safeError is the form of err that events, records, hooks and callers see: configured
+// safeError is the form of err that events, records, and callers see: configured
 // keys removed, and an HTTP failure reduced to its status and message.
 func (a *Agent) safeError(err error) error {
 	if err == nil {

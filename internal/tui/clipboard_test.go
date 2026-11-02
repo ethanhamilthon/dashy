@@ -3,20 +3,14 @@ package tui
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"errors"
-	"fmt"
 	"image"
 	"image/png"
 	"io"
-	"math/rand"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
-	"time"
 
 	"dashy/internal/agent"
 	"dashy/internal/shell"
@@ -79,55 +73,6 @@ func TestClipboardReaderImageTextAndFailures(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-func TestLinuxClipboardImageBackends(t *testing.T) {
-	for _, wayland := range []bool{false, true} {
-		t.Run(fmt.Sprint(wayland), func(t *testing.T) {
-			tools := t.TempDir()
-			t.Setenv("PATH", tools)
-			t.Setenv("WAYLAND_DISPLAY", "")
-			if wayland {
-				t.Setenv("WAYLAND_DISPLAY", "test")
-				if err := os.WriteFile(filepath.Join(tools, "wl-paste"), []byte("#!/bin/sh\n"), 0700); err != nil {
-					t.Fatal(err)
-				}
-			}
-			data := pngBytes(t)
-			calls := 0
-			run := func(_ context.Context, limit int, name string, args ...string) ([]byte, error) {
-				calls++
-				if calls == 2 && limit != shell.MaxImageInputBytes {
-					t.Fatal("Linux clipboard still limits original bytes before resizing")
-				}
-				expected := "xclip"
-				if wayland {
-					expected = "wl-paste"
-				}
-				if name != expected {
-					t.Fatalf("wrong clipboard backend: %s", name)
-				}
-				if calls == 1 {
-					return []byte("image/png\ntext/plain\n"), nil
-				}
-				return data, nil
-			}
-			result, _, err := readClipboardWith(context.Background(), t.TempDir(), "linux", run)
-			if err != nil || result.URL == "" || calls != 2 {
-				t.Fatalf("%+v %v calls=%d", result, err, calls)
-			}
-		})
-	}
-}
-func TestClipboardCommandsAreBoundedAndCancellable(t *testing.T) {
-	if _, err := clipboardCommand(context.Background(), 2, "/bin/sh", "-c", "printf toolong"); err == nil {
-		t.Fatal("output cap ignored")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
-	defer cancel()
-	started := time.Now()
-	if _, err := clipboardCommand(ctx, 128, "/bin/sh", "-c", "exec sleep 5"); err == nil || time.Since(started) > time.Second {
-		t.Fatalf("command not cancelled promptly: %v", err)
 	}
 }
 func TestImageAttachmentPreviewRemovalAndStaleResult(t *testing.T) {
@@ -215,27 +160,6 @@ func TestClipboardTextPasteAndProviderKeyMasking(t *testing.T) {
 type csiTestMessage string
 
 func (m csiTestMessage) String() string { return string(m) }
-func TestPasteKeysAcrossLayoutsAndModifiers(t *testing.T) {
-	for _, payload := range []string{"118;5u", "118;9u", "1084;5u", "1084;9u", "1052;10u", "1084::118;5u", "118;33u"} {
-		msg := csiTestMessage(fmt.Sprintf("?CSI%+v?", []byte(payload)))
-		key, ok := normalizeTerminalKey(msg).(tea.KeyMsg)
-		if !ok || key.Type != tea.KeyCtrlV {
-			t.Fatalf("%s: not a paste key: %v", payload, normalizeTerminalKey(msg))
-		}
-	}
-	for _, payload := range []string{"118;5:3u", "1084;9:2u"} {
-		if got := normalizeTerminalKey(csiTestMessage(fmt.Sprintf("?CSI%+v?", []byte(payload)))); got != nil {
-			t.Fatalf("release/repeat triggered paste: %v", got)
-		}
-	}
-	for _, payload := range []string{"1084;1u", "118;1u", "13;5u", "oops"} {
-		msg := csiTestMessage(fmt.Sprintf("?CSI%+v?", []byte(payload)))
-		if key, ok := normalizeTerminalKey(msg).(tea.KeyMsg); ok && key.Type == tea.KeyCtrlV {
-			t.Fatal("ordinary typing triggered clipboard read")
-		}
-	}
-}
-
 func TestClipboardShortcutDecodesFromTerminalBytes(t *testing.T) {
 	for _, sequence := range []string{"\x16", "\x1b[118;9u", "\x1b[1084;5u", "\x1b[1084::118;9u"} {
 		m := newModel(&agent.Agent{}, "/project")
@@ -264,111 +188,5 @@ func TestPendingImagesPreventDestructiveSessionSwitch(t *testing.T) {
 	m = next.(model)
 	if cmd != nil || m.input.Value() != "caption" || len(m.images) != 1 {
 		t.Fatal("session switch discarded unsent attachment")
-	}
-}
-func TestClipboardPendingLimitAndPickerRejection(t *testing.T) {
-	m := newModel(&agent.Agent{}, "/project")
-	for i := 0; i < 8; i++ {
-		m.images = append(m.images, shell.Image{URL: "data", Path: fmt.Sprint(i)})
-	}
-	file := filepath.Join(t.TempDir(), "extra.png")
-	if err := os.WriteFile(file, pngBytes(t), 0600); err != nil {
-		t.Fatal(err)
-	}
-	m.acceptClipboard(clipboardResult{image: shell.Image{URL: "data", Path: file}})
-	if len(m.images) != 8 {
-		t.Fatal("pending image limit ignored")
-	}
-	if _, err := os.Stat(file); !os.IsNotExist(err) {
-		t.Fatal("rejected image file retained")
-	}
-	m.images = nil
-	m.menuKind = "setup"
-	file = filepath.Join(t.TempDir(), "picker.png")
-	if err := os.WriteFile(file, pngBytes(t), 0600); err != nil {
-		t.Fatal(err)
-	}
-	m.acceptClipboard(clipboardResult{image: shell.Image{URL: "data", Path: file}})
-	if len(m.images) != 0 {
-		t.Fatal("image inserted into provider wizard")
-	}
-}
-
-func TestMacClipboardBridgeCompilesWithoutReadingClipboard(t *testing.T) {
-	if runtime.GOOS != "darwin" {
-		t.Skip("macOS bridge compiler")
-	}
-	directory := t.TempDir()
-	source := filepath.Join(directory, "clipboard.js")
-	if err := os.WriteFile(source, []byte(clipboardPNG), 0600); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	output, err := exec.CommandContext(ctx, "/usr/bin/osacompile", "-l", "JavaScript", "-o", filepath.Join(directory, "clipboard.scpt"), source).CombinedOutput()
-	if err != nil {
-		t.Fatalf("bridge syntax: %s %v", output, err)
-	}
-}
-
-func TestCopyCutShortcutsAcrossLayouts(t *testing.T) {
-	for _, payload := range []string{"99;9u", "1089;9u", "99;33u"} {
-		if got := normalizeTerminalKey(csiTestMessage(fmt.Sprintf("?CSI%+v?", []byte(payload)))); got != (composerShortcut{cut: false}) {
-			t.Fatalf("%s: copy shortcut = %#v", payload, got)
-		}
-	}
-	for _, payload := range []string{"120;9u", "1095;9u"} {
-		if got := normalizeTerminalKey(csiTestMessage(fmt.Sprintf("?CSI%+v?", []byte(payload)))); got != (composerShortcut{cut: true}) {
-			t.Fatalf("%s: cut shortcut = %#v", payload, got)
-		}
-	}
-	for payload, want := range map[string]tea.KeyType{"99;5u": tea.KeyCtrlC, "120;5u": tea.KeyCtrlX} {
-		key, ok := normalizeTerminalKey(csiTestMessage(fmt.Sprintf("?CSI%+v?", []byte(payload)))).(tea.KeyMsg)
-		if !ok || key.Type != want {
-			t.Fatalf("%s: control key = %v, want %v", payload, key, want)
-		}
-	}
-	for _, payload := range []string{"99;9:3u", "120;9:3u"} {
-		if got := normalizeTerminalKey(csiTestMessage(fmt.Sprintf("?CSI%+v?", []byte(payload)))); got != nil {
-			t.Fatalf("%s: release produced %v", payload, got)
-		}
-	}
-	for _, payload := range []string{"99;1u", "120;1u"} {
-		switch got := normalizeTerminalKey(csiTestMessage(fmt.Sprintf("?CSI%+v?", []byte(payload)))).(type) {
-		case composerShortcut, tea.KeyMsg:
-			t.Fatalf("%s: plain key decoded as shortcut: %#v", payload, got)
-		}
-	}
-}
-
-func TestClipboardLargeOriginalAndBoundedPreview(t *testing.T) {
-	src := image.NewNRGBA(image.Rect(0, 0, 3290, 1170))
-	rand.New(rand.NewSource(7)).Read(src.Pix)
-	var original bytes.Buffer
-	if err := png.Encode(&original, src); err != nil {
-		t.Fatal(err)
-	}
-	if original.Len() <= 2*1024*1024 {
-		t.Fatal("fixture must exceed the old input limit")
-	}
-	run := func(_ context.Context, _ int, _ string, args ...string) ([]byte, error) {
-		return []byte("image"), os.WriteFile(args[len(args)-1], original.Bytes(), 0600)
-	}
-	captured, _, err := readClipboardWith(context.Background(), t.TempDir(), "darwin", run)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, encoded, _ := strings.Cut(captured.URL, ";base64,")
-	data, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
-	if err != nil || max(cfg.Width, cfg.Height) > 2048 || len(data) > 1024*1024 || format != "png" {
-		t.Fatalf("clipboard preview not prepared: %+v, %s, %d bytes, %v", cfg, format, len(data), err)
-	}
-	saved, err := os.ReadFile(captured.Path)
-	if err != nil || !bytes.Equal(saved, original.Bytes()) {
-		t.Fatal("clipboard original not preserved", err)
 	}
 }

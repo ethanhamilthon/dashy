@@ -121,8 +121,6 @@ func (a *Agent) Notifications() []string {
 	}
 }
 
-func (a *Agent) Inbox() <-chan string { return a.inbox }
-
 // viewed drains images queued by dashy view.
 func (a *Agent) viewed() []shell.Image {
 	var images []shell.Image
