@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	_ "embed"
 	"flag"
 	"fmt"
 	"io"
@@ -13,6 +14,29 @@ import (
 	"dashy/internal/shell"
 	"dashy/internal/tui"
 )
+
+//go:embed help.txt
+var helpText string
+
+type runFlags struct {
+	prompt     *string
+	sessionID  *string
+	resume     *string
+	configPath *string
+	noGlobal   *bool
+}
+
+func setupFlags(flags *flag.FlagSet) *runFlags {
+	rf := &runFlags{
+		prompt:     flags.String("p", "", "run a single task and exit"),
+		sessionID:  flags.String("s", "", "target session for notify/view (default: $DASHY_ENDPOINT)"),
+		resume:     flags.String("resume", "", "resume a project session ID"),
+		configPath: flags.String("config", "", "base configuration file"),
+		noGlobal:   flags.Bool("no-global", false, "skip inheriting from global configuration"),
+	}
+	flags.StringVar(rf.configPath, "c", "", "alias for --config")
+	return rf
+}
 
 func Run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.Writer) (err error) {
 	command := ""
@@ -26,18 +50,18 @@ func Run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.W
 		case "version":
 			fmt.Fprintln(out, strings.TrimPrefix(tui.Version, "v"))
 			return nil
+		case "help", "--help", "-h":
+			fmt.Fprint(out, helpText)
+			return nil
 		}
 	}
 	flags := flag.NewFlagSet("dashy", flag.ContinueOnError)
 	flags.SetOutput(diagnostics)
-	prompt := flags.String("p", "", "run a single task and exit")
-	sessionID := flags.String("s", "", "target session for notify/view (default: $DASHY_ENDPOINT)")
-	resume := flags.String("resume", "", "resume a project session ID")
-	configPath := flags.String("config", "", "base configuration file")
-	flags.StringVar(configPath, "c", "", "alias for --config")
-	noGlobal := flags.Bool("no-global", false, "skip inheriting from global configuration")
+	flags.Usage = func() {}
+	rf := setupFlags(flags)
 	if err := flags.Parse(args); err != nil {
 		if err == flag.ErrHelp {
+			fmt.Fprint(out, helpText)
 			return nil
 		}
 		return err
@@ -50,7 +74,7 @@ func Run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.W
 		return err
 	}
 	if command == "view" {
-		return view(cwd, *sessionID, flags.Args())
+		return view(cwd, *rf.sessionID, flags.Args())
 	}
 	if command == "notify" {
 		text := strings.Join(flags.Args(), " ")
@@ -61,13 +85,13 @@ func Run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.W
 			}
 			text = string(data)
 		}
-		return agent.Notify(cwd, *sessionID, text)
+		return agent.Notify(cwd, *rf.sessionID, text)
 	}
-	files := agent.ConfigFiles{Config: *configPath, NoGlobal: *noGlobal}
-	if *prompt != "" {
+	files := agent.ConfigFiles{Config: *rf.configPath, NoGlobal: *rf.noGlobal}
+	if *rf.prompt != "" {
 		files.Mode = "print"
 	}
-	a, err := agent.New(cwd, files, *resume)
+	a, err := agent.New(cwd, files, *rf.resume)
 	if err != nil {
 		return err
 	}
@@ -80,7 +104,7 @@ func Run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.W
 		}
 		a.Finish(code)
 	}()
-	if *prompt != "" {
+	if *rf.prompt != "" {
 		if a.Settings().Provider == "" || a.Settings().Model == "" {
 			return fmt.Errorf("no provider or model configured: run dashy to set up settings in /settings")
 		}

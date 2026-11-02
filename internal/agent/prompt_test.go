@@ -42,3 +42,23 @@ func TestRuntimeContractOnlyInToolDescription(t *testing.T) {
 		}
 	}
 }
+
+func TestBashToolDescriptionContract(t *testing.T) {
+	requiredSnippets := []string{
+		"/bin/bash --noprofile --norc",
+		"timeout: seconds, null = 120, maximum 600",
+		"max_output: bytes kept, null = 8192, 0 = no truncation",
+		"dashy notify",
+		"dashy -p \"TASK\"",
+		"dashy view PATH...",
+		"dashy --help",
+		"DASHY_SESSION_ID",
+		"DASHY_ENDPOINT",
+		"```dashy",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(BashToolDescription, snippet) {
+			t.Errorf("BashToolDescription missing required snippet %q", snippet)
+		}
+	}
+}
