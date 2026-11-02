@@ -89,6 +89,15 @@ func turnStart(history []json.RawMessage, turns int) int {
 
 // instructions is the system prompt used by every request.
 func (a *Agent) instructions() string {
+	if a.promptFrozen {
+		return a.System
+	}
+	if a.System != "" {
+		a.promptFrozen = true
+		return a.System
+	}
+	a.System = a.assemblePrompt()
+	a.promptFrozen = true
 	return a.System
 }
 

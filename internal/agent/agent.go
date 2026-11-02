@@ -94,6 +94,9 @@ type Agent struct {
 	home          string
 	sessionsDir   string
 	version       string
+	promptFrozen  bool
+	promptSource  string
+	mode          string
 }
 
 // New opens the project in dir with configuration from files (zero value: default
@@ -107,9 +110,19 @@ func New(dir string, files ConfigFiles, target ...string) (*Agent, error) {
 	if err != nil {
 		return nil, err
 	}
+	mode := files.Mode
+	if mode == "" {
+		mode = "tui"
+	}
+	source := "startup"
+	if len(target) > 0 && target[0] != "" && target[0] != "new" {
+		source = "resume"
+	}
 	a := &Agent{
 		files:         files,
 		home:          config,
+		mode:          mode,
+		promptSource:  source,
 		System:        cfg.system,
 		LocalConfig:   cfg.local,
 		Sources:       cfg.sources,
