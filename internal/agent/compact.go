@@ -147,7 +147,10 @@ func (a *Agent) Compact(ctx context.Context, prompt string) (string, error) {
 }
 
 func (a *Agent) compact(ctx context.Context, prompt, reason string) (text string, err error) {
-	keep := max(1, a.settings.CompactKeepTurns)
+	keep := a.compactKeepTurns
+	if keep <= 0 {
+		keep = CompactKeepTurns
+	}
 	cut := turnStart(a.History, keep)
 	// Compacting an existing summary would replace it with another summary.
 	// json.Marshal escapes "<", so the marker is matched without the brackets.
@@ -179,8 +182,14 @@ func (a *Agent) compact(ctx context.Context, prompt, reason string) (text string
 
 // compactIfNeeded summarizes older turns before a request would exceed the token budget.
 func (a *Agent) compactIfNeeded(ctx context.Context, emit func(Event)) {
-	limit := a.settings.MaxContextTokens
-	if limit <= 0 || estimateTokens(a.History) <= limit {
+	if !a.settings.AutoCompact {
+		return
+	}
+	limit := a.compactThreshold
+	if limit <= 0 {
+		limit = CompactThreshold
+	}
+	if estimateTokens(a.History) <= limit {
 		return
 	}
 	result, err := a.compact(ctx, "", "auto")
@@ -190,6 +199,6 @@ func (a *Agent) compactIfNeeded(ctx context.Context, emit func(Event)) {
 	}
 	emit(Event{Kind: "notice", Text: result})
 	if estimateTokens(a.History) > limit {
-		emit(Event{Kind: "notice", Text: "Compaction could not reach max_context_tokens; raise it to leave room for the kept turns."})
+		emit(Event{Kind: "notice", Text: "Compaction could not reach threshold; older turns have been summarized."})
 	}
 }

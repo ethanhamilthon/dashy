@@ -12,7 +12,7 @@ func TestStartScreenShowsVersionAndSetupHint(t *testing.T) {
 	Version = "1.2.3"
 	m.refresh(true)
 	view := m.timeline()
-	for _, want := range []string{"v1.2.3", "/login", "/model"} {
+	for _, want := range []string{"v1.2.3", "/login", "/settings"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("start screen missing %q:\n%s", want, view)
 		}

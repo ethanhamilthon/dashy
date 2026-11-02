@@ -28,7 +28,7 @@ func TestCompactedJournalSurvivesReopenExactly(t *testing.T) {
 		raw(map[string]any{"type": "function_call_output", "call_id": "c1", "output": string(raw(map[string]any{"output": "data", "error": false}))}),
 		raw(map[string]any{"role": "assistant", "content": "done1"}),
 	}
-	a.settings.CompactKeepTurns = 1
+	a.compactKeepTurns = 1
 	a.records = a.Records()
 	a.records[1].Meta = &Metadata{Duration: 1500 * time.Millisecond, Usage: &Usage{Input: 10, Output: 2, Cached: -1}, RequestID: "r-1"}
 	a.records[3].ID = "empty-output"

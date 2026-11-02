@@ -73,27 +73,29 @@ func partialCode(arguments string) string {
 }
 
 type Agent struct {
-	listener      net.Listener
-	socketDir     string
-	inbox         chan string
-	views         chan shell.Image
-	owner         *os.File
-	settings      Settings
-	Shell         *shell.Runner
-	History       []json.RawMessage
-	HistoryPath   string
-	System        string
-	LocalConfig   string
-	Sources       []Source
-	primaryConfig string
-	client        openai.Client
-	records       []Record
-	title         string // set by /rename; "" means the first user message
-	lastRequest   Metadata
-	files         ConfigFiles
-	home          string
-	sessionsDir   string
-	version       string
+	listener         net.Listener
+	socketDir        string
+	inbox            chan string
+	views            chan shell.Image
+	owner            *os.File
+	settings         Settings
+	Shell            *shell.Runner
+	History          []json.RawMessage
+	HistoryPath      string
+	System           string
+	LocalConfig      string
+	Sources          []Source
+	primaryConfig    string
+	client           openai.Client
+	records          []Record
+	title            string // set by /rename; "" means the first user message
+	lastRequest      Metadata
+	files            ConfigFiles
+	home             string
+	sessionsDir      string
+	version          string
+	compactKeepTurns int
+	compactThreshold int64
 }
 
 // New opens the project in dir with configuration from files (zero value: default
@@ -209,7 +211,7 @@ func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event), ste
 	turnStart := time.Now()
 	var total Usage
 	usageKnown := true
-	for step := 0; a.settings.MaxAgentSteps <= 0 || step < a.settings.MaxAgentSteps; step++ {
+	for step := 0; ; step++ {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -334,7 +336,6 @@ func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event), ste
 			}
 		}
 	}
-	return fmt.Errorf("stopped after %d agent steps; raise max_agent_steps", a.settings.MaxAgentSteps)
 }
 
 // runTool executes one function call; failures become an error result for the model.
@@ -350,9 +351,9 @@ func (a *Agent) runTool(ctx context.Context, name, arguments string) shell.Resul
 		Timeout   *int64 `json:"timeout"`
 		MaxOutput *int64 `json:"max_output"`
 	}
-	timeout := time.Duration(a.settings.ShellTimeout) * time.Second
-	maxTimeout := time.Duration(a.settings.ShellMaxTimeout) * time.Second
-	limit := a.settings.ShellMaxOutput
+	timeout := time.Duration(DefaultShellTimeout) * time.Second
+	maxTimeout := time.Duration(DefaultShellMaxTimeout) * time.Second
+	limit := DefaultShellMaxOutput
 	err := json.Unmarshal([]byte(arguments), &args)
 	if err == nil && args.Timeout != nil {
 		maxSec := int64(maxTimeout / time.Second)
@@ -386,7 +387,7 @@ func (a *Agent) itemID(index int64) string {
 func (a *Agent) request(ctx context.Context, emit func(Event), checkpoints ...func(int64, json.RawMessage) error) (items []json.RawMessage, err error) {
 	defer func() { err = a.safeError(err) }()
 	if strings.TrimSpace(a.settings.Model) == "" || strings.TrimSpace(a.settings.Provider) == "" {
-		return nil, fmt.Errorf("no provider or model selected: use /login to add a provider, then choose a model with /model")
+		return nil, fmt.Errorf("no provider or model selected: use /login to add a provider, then choose a model with /settings")
 	}
 	prompt := a.instructions()
 	input := make(responses.ResponseInputParam, len(a.History))
@@ -411,7 +412,7 @@ func (a *Agent) request(ctx context.Context, emit func(Event), checkpoints ...fu
 	if a.settings.Effort != "" {
 		payload.Reasoning.Effort = shared.ReasoningEffort(a.settings.Effort)
 	}
-	if a.settings.ReasoningSummary != "off" {
+	if a.settings.ReasoningSummary {
 		payload.Reasoning.Summary = shared.ReasoningSummaryAuto
 	}
 	started := time.Now()

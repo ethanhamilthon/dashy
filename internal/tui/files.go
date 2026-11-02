@@ -433,7 +433,7 @@ func (m *model) acceptFileCompletion() tea.Cmd {
 func (m *model) beginFilePrep(text string, refs []string) tea.Cmd {
 	p := &filePrep{text: text, draft: m.input.Value(), images: m.images}
 	m.prep = p
-	root, limit := m.cwd, m.ctl.Settings().MaxFileBytes
+	root, limit := m.cwd, agent.DefaultMaxFileBytes
 	return func() tea.Msg {
 		files, err := agent.ReadTextFiles(root, refs, limit)
 		return filePrepMsg{prep: p, files: files, err: err}

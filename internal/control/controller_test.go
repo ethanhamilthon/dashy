@@ -85,14 +85,9 @@ func newHarness(t *testing.T, model *fakeModel, config string) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	keepTurns := 1
 	a.ApplySettings(agent.Settings{
-		Provider:         "test",
-		Model:            "m",
-		CompactKeepTurns: keepTurns,
-		ShellTimeout:     120,
-		ShellMaxTimeout:  600,
-		ShellMaxOutput:   8192,
+		Provider: "test",
+		Model:    "m",
 		Providers: map[string]agent.Provider{
 			"test": {BaseURL: server.URL},
 		},
@@ -504,7 +499,14 @@ func TestCompactReplacesHistoryWithSummary(t *testing.T) {
 	h.a.History = append(h.a.History,
 		[]byte(`{"role":"user","content":"one"}`),
 		[]byte(`{"role":"assistant","content":"done one"}`),
-		[]byte(`{"role":"user","content":"two"}`))
+		[]byte(`{"role":"user","content":"two"}`),
+		[]byte(`{"role":"assistant","content":"done two"}`),
+		[]byte(`{"role":"user","content":"three"}`),
+		[]byte(`{"role":"assistant","content":"done three"}`),
+		[]byte(`{"role":"user","content":"four"}`),
+		[]byte(`{"role":"assistant","content":"done four"}`),
+		[]byte(`{"role":"user","content":"five"}`),
+		[]byte(`{"role":"assistant","content":"done five"}`))
 	resp := h.submit(Request{Type: "compact"})
 	events := h.await("compaction done", func(events []Event) bool { return doneFor(events, resp.Turn) != nil })
 	if d := doneFor(events, resp.Turn); d.Status != "ok" || !strings.Contains(d.Message, "Compacted") {

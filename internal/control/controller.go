@@ -114,6 +114,11 @@ func (c *Controller) Settings() (s agent.Settings) {
 	return s
 }
 
+// AttachmentsDir returns the attachments directory.
+func (c *Controller) AttachmentsDir() string {
+	return c.a.AttachmentsDir()
+}
+
 // HistoryPath is the file that stores the active session.
 func (c *Controller) HistoryPath() (path string) {
 	c.view(func() { path = c.a.HistoryPath })
@@ -430,9 +435,9 @@ func (c *Controller) setupError() error {
 	if s.Provider != "" && s.Model != "" {
 		return nil
 	}
-	hint := "No model selected. Choose a model with /model (use /login to add more providers)."
+	hint := "No model selected. Choose a model with /settings (use /login to add more providers)."
 	if len(s.Providers) == 0 {
-		hint = "No provider configured. Use /login to add a provider, then choose a model with /model."
+		hint = "No provider configured. Use /login to add a provider, then choose a model with /settings."
 	}
 	return fail("setup_required", "%s", hint)
 }

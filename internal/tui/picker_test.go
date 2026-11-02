@@ -100,7 +100,7 @@ func TestCancelledPickerIgnoresLateModelsAndPreservesSession(t *testing.T) {
 	if m.menuKind != "" || len(m.menu) != 0 || a.Settings().Model != previous {
 		t.Fatal("late response revived cancelled picker")
 	}
-	next, cmd := m.runCommand("/model")
+	next, cmd := m.runCommand("/settings")
 	m = next.(model)
 	if cmd != nil || m.menuKind != "" {
 		t.Fatal("model changed during active turn")
@@ -222,7 +222,7 @@ func TestCredentialDestinationInLoginAndModelNotices(t *testing.T) {
 
 	// Success notice contains destination
 	entriesStr = fmt.Sprint(m.entries)
-	if !strings.Contains(entriesStr, "Provider created in "+destPath+". Choose a model with /model.") {
+	if !strings.Contains(entriesStr, "Provider created in "+destPath+". Choose a model with /settings.") {
 		t.Fatalf("provider created notice missing destination: %v", m.entries)
 	}
 	// Verify secret key is not leaked
@@ -275,5 +275,62 @@ func TestClosingModelPickerCancelsModelListing(t *testing.T) {
 	case <-cancelled:
 	case <-time.After(2 * time.Second):
 		t.Fatal("closing the picker left the model listing running")
+	}
+}
+
+func TestSettingsPickerTogglesAndModelSelection(t *testing.T) {
+	m, a := pickerModel(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"data":[{"id":"gpt-4o"}]}`)
+	}))
+	defer server.Close()
+	if err := a.AddProvider("testprov", agent.Provider{BaseURL: server.URL}); err != nil {
+		t.Fatal(err)
+	}
+	cmd := m.openPicker("settings")
+	next, _ := m.Update(cmd())
+	m = next.(model)
+
+	// 1. Toggle Reasoning summary (item 0)
+	m.selected = 0
+	m = enterPicker(m)
+	if a.Settings().ReasoningSummary != false {
+		t.Fatalf("expected reasoning_summary false, got %v", a.Settings().ReasoningSummary)
+	}
+
+	// 2. Toggle Auto compact (item 1)
+	m.selected = 1
+	m = enterPicker(m)
+	if a.Settings().AutoCompact != false {
+		t.Fatalf("expected auto_compact false, got %v", a.Settings().AutoCompact)
+	}
+
+	// 3. Cycle Show lines (item 2)
+	m.selected = 2
+	m = enterPicker(m)
+	if a.Settings().ShowLines != "medium" {
+		t.Fatalf("expected show_lines medium, got %v", a.Settings().ShowLines)
+	}
+
+	// 4. Change effort and select model (item 4 is gpt-4o)
+	next, _, _ = m.pickerKey(tea.KeyMsg{Type: tea.KeyRight})
+	m = next.(model)
+	if agent.Efforts[m.effort] != "minimal" {
+		t.Fatalf("expected minimal, got %v", agent.Efforts[m.effort])
+	}
+	m.selected = 4
+	m = enterPicker(m)
+	if m.menuKind != "" {
+		t.Fatal("expected picker closed after model selection")
+	}
+	if a.Settings().Model != "gpt-4o" || a.Settings().Provider != "testprov" || a.Settings().Effort != "minimal" {
+		t.Fatalf("model selection mismatch: %+v", a.Settings())
+	}
+
+	// Verify /model is an unknown command
+	_, cmd = m.runCommand("/model")
+	if cmd != nil {
+		t.Fatal("/model should not return a command")
 	}
 }

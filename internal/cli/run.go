@@ -77,7 +77,11 @@ func Run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.W
 		}
 		a.Finish(code)
 	}()
-	_ = prompt
+	if *prompt != "" {
+		if a.Settings().Provider == "" || a.Settings().Model == "" {
+			return fmt.Errorf("no provider or model configured: run dashy to set up settings in /settings")
+		}
+	}
 	return tui.Run(a, cwd)
 }
 

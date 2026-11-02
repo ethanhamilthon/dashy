@@ -28,12 +28,10 @@ func secretAgent(t *testing.T, fromEnv bool, handler http.HandlerFunc) (*Agent, 
 		p = Provider{BaseURL: server.URL, APIKeyEnv: "DASHY_TEST_PROVIDER_KEY"}
 	}
 	a.ApplySettings(Settings{
-		Provider:        "p",
-		Model:           "m",
-		ShellTimeout:    120,
-		ShellMaxTimeout: 600,
-		ShellMaxOutput:  8192,
-		Providers:       map[string]Provider{"p": p},
+		Provider:    "p",
+		Model:       "m",
+		AutoCompact: true,
+		Providers:   map[string]Provider{"p": p},
 	})
 	return a, func() { a.Close(); server.Close() }
 }
@@ -108,7 +106,7 @@ func TestCompactErrorsRedactSecret(t *testing.T) {
 	})
 	defer closeAll()
 	a.History = compactHistory(t, 5)
-	a.settings.CompactKeepTurns = 1
+	a.compactKeepTurns = 1
 	if err := a.Save(); err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +117,7 @@ func TestCompactErrorsRedactSecret(t *testing.T) {
 	assertNoSecret(t, a, err.Error())
 
 	// Automatic compaction reports through an error event instead of returning.
-	a.settings.MaxContextTokens = 100
+	a.compactThreshold = 100
 	var events []Event
 	a.compactIfNeeded(context.Background(), func(e Event) { events = append(events, e) })
 	if len(events) != 1 {

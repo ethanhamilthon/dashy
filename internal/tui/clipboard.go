@@ -141,7 +141,7 @@ func (m model) pasteClipboard() (tea.Model, tea.Cmd) {
 	if m.pasting {
 		return m, nil
 	}
-	directory := m.ctl.Settings().AttachmentDir
+	directory := m.ctl.AttachmentsDir()
 	if directory != "" && !filepath.IsAbs(directory) {
 		directory = filepath.Join(m.cwd, directory)
 	}

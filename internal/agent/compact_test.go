@@ -44,7 +44,7 @@ func TestCompactKeepsTailAndSummary(t *testing.T) {
 	defer closeAll()
 	a.History = compactHistory(t, 6)
 	tail := append([]json.RawMessage(nil), a.History[16:]...)
-	a.settings.CompactKeepTurns = 2
+	a.compactKeepTurns = 2
 	display := a.Records()
 	result, err := a.Compact(context.Background(), "")
 	if err != nil {
@@ -86,7 +86,7 @@ func TestCompactNothingToDo(t *testing.T) {
 	})
 	defer closeAll()
 	a.History = compactHistory(t, 2)
-	a.settings.CompactKeepTurns = 4
+	a.compactKeepTurns = 4
 	result, err := a.Compact(context.Background(), "")
 	if err != nil || result != "Nothing to compact." {
 		t.Fatalf("result = %q, err = %v", result, err)
@@ -107,7 +107,7 @@ func TestCompactUsesSessionInstructionsAndPrompt(t *testing.T) {
 	defer closeAll()
 	a.System = "custom system"
 	a.History = compactHistory(t, 5)
-	a.settings.CompactKeepTurns = 1
+	a.compactKeepTurns = 1
 	if _, err := a.Compact(context.Background(), "focus on the parser"); err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestCompactFailureKeepsHistoryWithOrWithoutPrompt(t *testing.T) {
 	})
 	defer closeAll()
 	a.History = compactHistory(t, 5)
-	a.settings.CompactKeepTurns = 1
+	a.compactKeepTurns = 1
 	before := append([]json.RawMessage(nil), a.History...)
 	for _, prompt := range []string{"", "focus"} {
 		if _, err := a.Compact(context.Background(), prompt); err == nil {
@@ -151,7 +151,7 @@ func TestAutomaticCompactionFailurePreservesHistory(t *testing.T) {
 	})
 	defer closeAll()
 	a.History = compactHistory(t, 5)
-	a.settings.CompactKeepTurns = 1
+	a.compactKeepTurns = 1
 	a.records = a.Records()
 	before, err := a.sessionData()
 	if err != nil {
@@ -181,7 +181,7 @@ func TestCompactDisabledByZeroThreshold(t *testing.T) {
 	})
 	defer closeAll()
 	a.History = compactHistory(t, 5)
-	a.settings.MaxContextTokens = 0
+	a.settings.AutoCompact = false
 	a.compactIfNeeded(context.Background(), func(Event) {})
 	if len(a.History) != 20 {
 		t.Fatalf("history changed: %d items", len(a.History))
@@ -197,7 +197,9 @@ func summaryAgent(t *testing.T, summary http.HandlerFunc) (*Agent, func()) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	configureTestAgent(t, a, Settings{Provider: "p", Model: "m", MaxContextTokens: 100, CompactKeepTurns: 1, Providers: map[string]Provider{"p": {BaseURL: server.URL}}})
+	configureTestAgent(t, a, Settings{Provider: "p", Model: "m", AutoCompact: true, Providers: map[string]Provider{"p": {BaseURL: server.URL}}})
+	a.compactThreshold = 100
+	a.compactKeepTurns = 1
 	return a, func() { a.Close(); server.Close() }
 }
 
@@ -228,7 +230,7 @@ func TestCompactSkipsExistingSummary(t *testing.T) {
 	})
 	defer closeAll()
 	a.History = append([]json.RawMessage{raw(map[string]any{"role": "user", "content": "<compact_summary>old</compact_summary>"})}, compactHistory(t, 4)...)
-	a.settings.CompactKeepTurns = 4
+	a.compactKeepTurns = 4
 	result, err := a.Compact(context.Background(), "")
 	if err != nil || result != "Nothing to compact." {
 		t.Fatalf("result = %q, err = %v", result, err)

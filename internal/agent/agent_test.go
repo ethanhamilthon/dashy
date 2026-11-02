@@ -108,7 +108,7 @@ func TestSDKRequestAndHistory(t *testing.T) {
 	}))
 	defer server.Close()
 	a := &Agent{Shell: &shell.Runner{}, History: []json.RawMessage{raw(map[string]string{"role": "user", "content": "hi"}), json.RawMessage(`{"type":"reasoning","id":"r","opaque":"keep"}`)}}
-	configureTestAgent(t, a, Settings{Provider: "test", Model: "custom", Effort: "high", Providers: map[string]Provider{"test": {BaseURL: server.URL + "/v1/", APIKey: "selected-key"}}})
+	configureTestAgent(t, a, Settings{Provider: "test", Model: "custom", Effort: "high", ReasoningSummary: true, Providers: map[string]Provider{"test": {BaseURL: server.URL + "/v1/", APIKey: "selected-key"}}})
 	var text string
 	items, err := a.request(context.Background(), func(e Event) { text += e.Text })
 	if err != nil || text != "hello" || len(items) != 1 || !strings.Contains(string(items[0]), `"opaque":"keep"`) {
