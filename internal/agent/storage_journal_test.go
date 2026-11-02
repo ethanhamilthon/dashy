@@ -1,89 +1,217 @@
 package agent
 
 import (
-	"context"
 	"encoding/json"
-	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 )
 
-// Empty tool output is a real record: after compaction it must not borrow the text
-// of a different derived item when the session is reopened.
-func TestCompactedJournalSurvivesReopenExactly(t *testing.T) {
-	a, closeAll := summaryAgent(t, func(w http.ResponseWriter, r *http.Request) { writeSummary(w, "condensed") })
-	defer closeAll()
+func TestSingleKindSessionLines(t *testing.T) {
+	t.Setenv("DASHY_HOME", t.TempDir())
+	cwd := t.TempDir()
+	a, err := New(cwd, ConfigFiles{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+
+	if err := a.Rename("test session"); err != nil {
+		t.Fatal(err)
+	}
 	a.History = []json.RawMessage{
-		raw(map[string]any{"role": "user", "content": "q0"}),
-		raw(map[string]any{"role": "assistant", "content": "let me check"}),
-		raw(map[string]any{"type": "function_call", "name": "bash", "arguments": `{"command":"ls"}`, "call_id": "c0"}),
-		raw(map[string]any{"type": "function_call_output", "call_id": "c0", "output": string(raw(map[string]any{"output": "", "error": false}))}),
-		raw(map[string]any{"role": "assistant", "content": "done0"}),
-		raw(map[string]any{"role": "user", "content": "q1"}),
-		raw(map[string]any{"type": "function_call", "name": "bash", "arguments": `{"command":"cat x"}`, "call_id": "c1"}),
-		raw(map[string]any{"type": "function_call_output", "call_id": "c1", "output": string(raw(map[string]any{"output": "data", "error": false}))}),
-		raw(map[string]any{"role": "assistant", "content": "done1"}),
+		raw(map[string]any{"role": "user", "content": "hello"}),
+		raw(map[string]any{"type": "function_call", "name": "bash", "arguments": `{"command":"pwd"}`, "call_id": "c1"}),
+		raw(map[string]any{"type": "function_call_output", "call_id": "c1", "output": string(raw(map[string]any{"output": "/tmp", "error": false}))}),
+		raw(map[string]any{"role": "assistant", "content": "you are in /tmp"}),
 	}
-	a.settings.CompactKeepTurns = 1
-	a.records = a.Records()
-	a.records[1].Meta = &Metadata{Duration: 1500 * time.Millisecond, Usage: &Usage{Input: 10, Output: 2, Cached: -1}, RequestID: "r-1"}
-	a.records[3].ID = "empty-output"
-	if _, err := a.Compact(context.Background(), ""); err != nil {
+	if err := a.Save(); err != nil {
 		t.Fatal(err)
 	}
-	want := a.Records()
-	if want[3].Kind != "output" || want[3].Text != "" {
-		t.Fatalf("empty output lost before save: %+v", want[3])
-	}
-	id := strings.TrimSuffix(filepath.Base(a.HistoryPath), ".jsonl")
-	if err := a.NewSession(); err != nil {
+
+	data, err := os.ReadFile(a.HistoryPath)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := a.Resume(id); err != nil {
-		t.Fatal(err)
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 5 {
+		t.Fatalf("expected 5 lines (1 meta + 4 history), got %d: %s", len(lines), data)
 	}
-	if got := a.Records(); !reflect.DeepEqual(got, want) {
-		t.Fatalf("reopen changed the journal:\nwant %+v\ngot  %+v", want, got)
+
+	// Line 0 is meta
+	var meta struct {
+		Meta struct {
+			Title string `json:"title"`
+		} `json:"meta"`
 	}
-	if len(a.History) == 0 || !strings.Contains(string(a.History[0]), "compact_summary") {
-		t.Fatalf("compacted model context not restored: %s", a.History)
+	if err := json.Unmarshal([]byte(lines[0]), &meta); err != nil || meta.Meta.Title != "test session" {
+		t.Fatalf("expected meta line, got: %s", lines[0])
+	}
+
+	// Lines 1..4 are LLM history items directly
+	for i, line := range lines[1:] {
+		var obj map[string]any
+		if err := json.Unmarshal([]byte(line), &obj); err != nil {
+			t.Fatalf("line %d is not valid JSON: %v", i+1, err)
+		}
+		for _, forbidden := range []string{"version", "complete", "items", "records", "record", "literal", "selection"} {
+			if _, exists := obj[forbidden]; exists {
+				t.Fatalf("line %d contains forbidden envelope field %q: %s", i+1, forbidden, line)
+			}
+		}
 	}
 }
 
-// Sessions written before the literal flag existed keep restoring elided text.
-func TestLegacyElidedRecordsStillRestore(t *testing.T) {
-	a, closeAll := summaryAgent(t, func(w http.ResponseWriter, r *http.Request) {})
-	defer closeAll()
-	a.History = compactHistory(t, 2)
-	a.records = a.Records()
+func TestTornLastLineTolerance(t *testing.T) {
+	t.Setenv("DASHY_HOME", t.TempDir())
+	cwd := t.TempDir()
+	a, err := New(cwd, ConfigFiles{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+
+	a.History = []json.RawMessage{
+		raw(map[string]any{"role": "user", "content": "msg 1"}),
+		raw(map[string]any{"role": "assistant", "content": "resp 1"}),
+	}
 	if err := a.Save(); err != nil {
 		t.Fatal(err)
 	}
 	want := a.Records()
-	legacyPath := a.HistoryPath
-	data, err := os.ReadFile(legacyPath)
+
+	// Append a torn line (partial JSON) to the file
+	file, err := os.OpenFile(a.HistoryPath, os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Remove the flag an older writer never produced; elided text must still restore.
-	legacy := strings.ReplaceAll(string(data), `,"literal":true`, "")
-	if !strings.Contains(string(data), `"kind":"user"}`) || strings.Contains(legacy, `"literal"`) {
-		t.Fatalf("unexpected session layout: %s", data)
-	}
-	if err := a.NewSession(); err != nil {
+	if _, err := file.WriteString("{\"role\":\"user\",\"content\":\"inc"); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(legacyPath, []byte(legacy), 0600); err != nil {
+	file.Close()
+
+	// Reopen the session: torn last line must be tolerated and dropped
+	id := strings.TrimSuffix(filepath.Base(a.HistoryPath), ".jsonl")
+	a.Close()
+	reopened, err := New(cwd, ConfigFiles{}, id)
+	if err != nil {
+		t.Fatalf("failed to reopen session with torn last line: %v", err)
+	}
+	defer reopened.Close()
+
+	if !reflect.DeepEqual(reopened.Records(), want) {
+		t.Fatalf("reopened records = %+v, want %+v", reopened.Records(), want)
+	}
+}
+
+func TestDerivedTUIRecords(t *testing.T) {
+	items := []json.RawMessage{
+		raw(map[string]any{"role": "user", "content": "user question"}),
+		raw(map[string]any{"role": "user", "content": "<notify>\nexternal steering\n</notify>"}),
+		raw(map[string]any{"role": "user", "content": "<compact_summary>\nshort summary of past turns\n</compact_summary>"}),
+		raw(map[string]any{
+			"type":    "reasoning",
+			"summary": []any{map[string]string{"type": "summary_text", "text": "my reasoning summary"}},
+			"content": []any{map[string]string{"type": "reasoning_text", "text": "thinking deeper"}},
+		}),
+		raw(map[string]any{"type": "function_call", "name": "bash", "arguments": `{"command":"echo hi"}`}),
+		raw(map[string]any{"type": "function_call_output", "output": `{"output":"hi\n","error":false}`}),
+		raw(map[string]any{"type": "function_call_output", "output": `{"output":"command failed\n","error":true}`}),
+		raw(map[string]any{"role": "assistant", "content": "done"}),
+	}
+
+	a := &Agent{History: items}
+	records := a.Records()
+
+	expected := []struct {
+		kind string
+		text string
+	}{
+		{"user", "user question"},
+		{"notice", "<notify>\nexternal steering\n</notify>"},
+		{"notice", "Compacted conversation: short summary of past turns"},
+		{"reasoning", "my reasoning summary\nthinking deeper"},
+		{"code", "echo hi"},
+		{"output", "hi\n"},
+		{"error", "command failed\n"},
+		{"assistant", "done"},
+	}
+
+	if len(records) != len(expected) {
+		t.Fatalf("expected %d records, got %d: %+v", len(expected), len(records), records)
+	}
+	for i, exp := range expected {
+		if records[i].Kind != exp.kind || records[i].Text != exp.text {
+			t.Errorf("record %d: got {kind: %q, text: %q}, want {kind: %q, text: %q}",
+				i, records[i].Kind, records[i].Text, exp.kind, exp.text)
+		}
+	}
+}
+
+func TestErrorsAndCancellationsNotPersisted(t *testing.T) {
+	t.Setenv("DASHY_HOME", t.TempDir())
+	cwd := t.TempDir()
+	a, err := New(cwd, ConfigFiles{})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := a.Resume(strings.TrimSuffix(filepath.Base(legacyPath), ".jsonl")); err != nil {
+	defer a.Close()
+
+	a.History = []json.RawMessage{
+		raw(map[string]any{"role": "user", "content": "hi"}),
+	}
+	if err := a.Save(); err != nil {
 		t.Fatal(err)
 	}
-	if got := a.Records(); !reflect.DeepEqual(got, want) {
-		t.Fatalf("legacy session restored differently:\nwant %+v\ngot  %+v", want, got)
+
+	// Read file and ensure no error or notice is written
+	data, err := os.ReadFile(a.HistoryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"error"`) || strings.Contains(string(data), `"cancelled"`) {
+		t.Fatalf("unexpected content in session file: %s", data)
+	}
+}
+
+func TestResumeListSessions(t *testing.T) {
+	t.Setenv("DASHY_HOME", t.TempDir())
+	cwd := t.TempDir()
+	a, err := New(cwd, ConfigFiles{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+
+	a.History = []json.RawMessage{
+		raw(map[string]any{"role": "user", "content": "first message text"}),
+	}
+	if err := a.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	sessions, err := a.Sessions()
+	if err != nil || len(sessions) != 1 {
+		t.Fatalf("expected 1 session, got %v (err: %v)", sessions, err)
+	}
+	if sessions[0].Title != "first message text" {
+		t.Fatalf("expected title 'first message text', got %q", sessions[0].Title)
+	}
+	if sessions[0].ID == "" || sessions[0].Mod.IsZero() {
+		t.Fatalf("session ID or Mod time missing: %+v", sessions[0])
+	}
+
+	// Rename session
+	if err := a.Rename("custom title"); err != nil {
+		t.Fatal(err)
+	}
+	sessions, err = a.Sessions()
+	if err != nil || len(sessions) != 1 {
+		t.Fatalf("expected 1 session, got %v", sessions)
+	}
+	if sessions[0].Title != "custom title" {
+		t.Fatalf("expected title 'custom title', got %q", sessions[0].Title)
 	}
 }

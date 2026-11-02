@@ -86,6 +86,9 @@ func (m model) completions() []command {
 				continue
 			}
 			label := fmt.Sprintf("%-*s  %-*s  %s", titleWidth, title, modelWidth, s.Model, sessionTime(s.Updated))
+			if modelWidth == 0 {
+				label = fmt.Sprintf("%-*s  %s", titleWidth, title, sessionTime(s.Updated))
+			}
 			matches = append(matches, command{name: "/resume " + s.ID, icon: "<", label: label})
 		}
 		return matches

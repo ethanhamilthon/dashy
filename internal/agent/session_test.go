@@ -14,7 +14,6 @@ func TestSaveFailurePreservesSession(t *testing.T) {
 	defer a.Close()
 
 	a.message("user", "keep")
-	a.records = []Record{{Kind: "user", Text: "keep"}}
 
 	if err = os.Mkdir(a.HistoryPath, 0700); err != nil {
 		t.Fatal(err)

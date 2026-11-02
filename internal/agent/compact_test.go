@@ -45,13 +45,13 @@ func TestCompactKeepsTailAndSummary(t *testing.T) {
 	a.History = compactHistory(t, 6)
 	tail := append([]json.RawMessage(nil), a.History[16:]...)
 	a.settings.CompactKeepTurns = 2
-	display := a.Records()
 	result, err := a.Compact(context.Background(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(a.Records(), display) {
-		t.Fatal("manual compaction changed the display journal")
+	records := a.Records()
+	if len(records) == 0 || records[0].Kind != "notice" || !strings.Contains(records[0].Text, "condensed") {
+		t.Fatalf("compaction summary not derived in records: %+v", records)
 	}
 	if !strings.Contains(result, "kept the last 2 turns") {
 		t.Fatalf("result = %q", result)
@@ -152,7 +152,6 @@ func TestAutomaticCompactionFailurePreservesHistory(t *testing.T) {
 	defer closeAll()
 	a.History = compactHistory(t, 5)
 	a.settings.CompactKeepTurns = 1
-	a.records = a.Records()
 	before, err := a.sessionData()
 	if err != nil {
 		t.Fatal(err)

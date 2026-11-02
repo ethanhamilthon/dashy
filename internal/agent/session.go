@@ -10,14 +10,19 @@ import (
 )
 
 func (a *Agent) acquire() error {
-	file, err := os.OpenFile(a.HistoryPath+".lock", os.O_CREATE|os.O_RDWR, 0600)
+	dir := a.sessionsDir
+	if dir == "" {
+		dir = filepath.Dir(a.HistoryPath)
+	}
+	lockPath := filepath.Join(dir, a.sessionID()+".lock")
+	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return err
 	}
 	err = syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 	if errors.Is(err, syscall.EWOULDBLOCK) {
 		file.Close()
-		return fmt.Errorf("session is in use by another dashy process: %s", strings.TrimSuffix(filepath.Base(a.HistoryPath), ".jsonl"))
+		return fmt.Errorf("session is in use by another dashy process: %s", a.sessionID())
 	}
 	if err != nil {
 		file.Close()
@@ -42,8 +47,13 @@ func (a *Agent) release() {
 		_ = syscall.Flock(int(a.owner.Fd()), syscall.LOCK_UN)
 		_ = a.owner.Close()
 		a.owner = nil
+		dir := a.sessionsDir
+		if dir == "" {
+			dir = filepath.Dir(a.HistoryPath)
+		}
+		lockPath := filepath.Join(dir, a.sessionID()+".lock")
 		if _, err := os.Stat(a.HistoryPath); os.IsNotExist(err) {
-			_ = os.Remove(a.HistoryPath + ".lock")
+			_ = os.Remove(lockPath)
 		}
 	}
 }

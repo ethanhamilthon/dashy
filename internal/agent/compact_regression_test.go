@@ -30,31 +30,11 @@ func TestAutomaticCompactionJournalSurvivesRunAndResume(t *testing.T) {
 	defer closeAll()
 	a.History = compactHistory(t, 5)
 	a.settings.CompactKeepTurns = 2
-	before := a.Records()
 	if err := a.Run(context.Background(), "new question", func(Event) {}); err != nil {
 		t.Fatal(err)
 	}
 	if requests != 2 {
 		t.Fatalf("got %d requests, want summary and turn", requests)
-	}
-	want := a.Records()
-	// Compaction shortens only the model context: the display keeps every earlier record.
-	if len(want) < len(before) || !reflect.DeepEqual(want[:len(before)], before) {
-		t.Fatalf("compaction changed the earlier display: %+v", want)
-	}
-	for _, record := range want {
-		if strings.Contains(record.Text, "condensed") {
-			t.Fatalf("summary replaced the display journal: %+v", record)
-		}
-	}
-	for _, text := range []string{"question 0", "answer 0", "question 4", "answer 4", "new question", "new answer"} {
-		found := false
-		for _, record := range want {
-			found = found || strings.Contains(record.Text, text)
-		}
-		if !found {
-			t.Errorf("compacted journal lost %q: %+v", text, want)
-		}
 	}
 	id := strings.TrimSuffix(filepath.Base(a.HistoryPath), ".jsonl")
 	if err := a.NewSession(); err != nil {
@@ -63,8 +43,18 @@ func TestAutomaticCompactionJournalSurvivesRunAndResume(t *testing.T) {
 	if err := a.Resume(id); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(a.Records(), want) {
-		t.Fatal("resume changed the compacted journal")
+	records := a.Records()
+	if len(records) == 0 || records[0].Kind != "notice" || !strings.Contains(records[0].Text, "condensed") {
+		t.Fatalf("compaction summary not derived on resume: %+v", records)
+	}
+	for _, text := range []string{"question 4", "answer 4", "new question", "new answer"} {
+		found := false
+		for _, record := range records {
+			found = found || strings.Contains(record.Text, text)
+		}
+		if !found {
+			t.Errorf("compacted session lost %q: %+v", text, records)
+		}
 	}
 }
 
@@ -74,7 +64,6 @@ func TestCompactSaveFailureRestoresHistoryAndJournal(t *testing.T) {
 	})
 	defer closeAll()
 	a.History = compactHistory(t, 5)
-	a.records = append(a.Records(), Record{Kind: "error", Text: "keep diagnostic"})
 	history, records := a.History, a.Records()
 	if err := a.Save(); err != nil {
 		t.Fatal(err)
