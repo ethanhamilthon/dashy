@@ -34,7 +34,6 @@ type Event struct {
 	ID          string    `json:"id,omitempty"`
 	Meta        *Metadata `json:"meta,omitempty"`
 	Final       bool      `json:"final,omitempty"`
-	Steering    bool      `json:"steering,omitempty"`
 	Provisional bool      `json:"provisional,omitempty"`
 }
 

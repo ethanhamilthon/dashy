@@ -19,11 +19,14 @@ func TestSteeringIsAcceptedAfterToolOutputs(t *testing.T) {
 	}}
 	a := newTestAgent(t, fp, Options{})
 	queue := a.Queue()
-	pushed := false
+	pushed, shown := false, false
 	emit := func(e Event) {
 		if e.Kind == "code" && e.Final && !e.Provisional && !pushed {
 			pushed = true
 			queue.Push(Input{Text: "also check Y"})
+		}
+		if e.Kind == "user" && e.Text == "also check Y" {
+			shown = true
 		}
 	}
 	if err := a.RunInput(context.Background(), Input{Text: "start"}, emit); err != nil {
@@ -33,6 +36,9 @@ func TestSteeringIsAcceptedAfterToolOutputs(t *testing.T) {
 	call, output, steer := strings.Index(second, `"function_call"`), strings.Index(second, `"function_call_output"`), strings.Index(second, "also check Y")
 	if !(0 <= call && call < output && output < steer) {
 		t.Fatalf("order call=%d output=%d steer=%d", call, output, steer)
+	}
+	if !shown {
+		t.Fatal("accepted steering was not emitted as a user event")
 	}
 }
 

@@ -222,14 +222,14 @@ func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event)) (er
 		accepted := false
 		for _, instruction := range a.queue.Take() {
 			if strings.TrimSpace(instruction.Text) != "" || len(instruction.Images) > 0 {
-				a.addInput(instruction, emit, true)
+				a.addInput(instruction, emit)
 				accepted = true
 			}
 		}
 		return accepted
 	}
 
-	shown := inputEvent(input, false)
+	shown := inputEvent(input)
 	shown.ID = fmt.Sprintf("input-%d", time.Now().UnixNano())
 	emit(shown)
 	a.commitInput(input)

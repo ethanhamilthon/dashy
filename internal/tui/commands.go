@@ -247,7 +247,7 @@ func (m model) reject(err error) (tea.Model, tea.Cmd) {
 	var e *control.Error
 	if errors.As(err, &e) {
 		switch e.Code {
-		case "busy", "cancelling", "queue_full", "setup_required", "pending_images", "not_recallable", "attachment_limit", "not_busy", "compacting":
+		case "busy", "cancelling", "queue_full", "setup_required", "pending_images", "not_recallable", "attachment_limit", "compacting":
 			kind = "notice"
 		}
 	}

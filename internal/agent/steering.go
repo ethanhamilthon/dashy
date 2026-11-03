@@ -28,10 +28,9 @@ func (input Input) Display() string {
 	return strings.TrimSpace(text)
 }
 
-func (a *Agent) addInput(input Input, emit func(Event), steering bool) {
+func (a *Agent) addInput(input Input, emit func(Event)) {
 	a.commitInput(input)
-	e := inputEvent(input, steering)
-	emit(e)
+	emit(inputEvent(input))
 }
 
 // commitInput appends the input to API history without displaying it.
@@ -60,12 +59,12 @@ func imageOriginals(images []shell.Image) string {
 	return text.String()
 }
 
-func inputEvent(input Input, steering bool) Event {
+func inputEvent(input Input) Event {
 	kind := "user"
 	if len(input.Images) == 0 && strings.HasPrefix(input.Text, "<notify>") {
 		kind = "notice"
 	}
-	return Event{Kind: kind, Text: input.Display(), Steering: steering}
+	return Event{Kind: kind, Text: input.Display()}
 }
 
 // Steering is the session's one ordered queue of input waiting for the running turn: composer
