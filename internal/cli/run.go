@@ -58,11 +58,11 @@ func IsReported(err error) bool {
 // cancelled is the exit of an interrupted run: SIGINT or SIGTERM ends it with 130.
 var cancelled = &ExitError{Code: 130, Reported: true}
 
-func isTerminal(r io.Reader) bool {
-	if f, ok := r.(*os.File); ok {
+func isTerminal(v any) bool {
+	if f, ok := v.(*os.File); ok {
 		return isatty.IsTerminal(f.Fd()) || isatty.IsCygwinTerminal(f.Fd())
 	}
-	t, ok := r.(interface{ IsTerminal() bool })
+	t, ok := v.(interface{ IsTerminal() bool })
 	return ok && t.IsTerminal()
 }
 
@@ -189,6 +189,9 @@ func sessionCommand(ctx context.Context, args []string, in io.Reader, out, diagn
 	}
 	opts := agent.Options{Config: config, NoGlobal: noGlobal, Resume: resume, Print: printMode}
 	if !printMode {
+		if !isTerminal(in) || !isTerminal(out) {
+			return errors.New("the interactive TUI needs a terminal; use dashy -p \"TASK\" for scripts")
+		}
 		a, err := agent.New(cwd, opts)
 		if err != nil {
 			return err

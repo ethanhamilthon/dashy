@@ -398,3 +398,14 @@ func TestPrintBareFlagTakesPromptFromStdin(t *testing.T) {
 		t.Fatalf("bare -p with empty stdin: %v", err)
 	}
 }
+
+// The interactive TUI needs a terminal; piped input is refused before any session is created.
+func TestTUIRefusesNonTerminalStdin(t *testing.T) {
+	home := setup(t, "http://127.0.0.1:1")
+	if _, _, err := runCLI(t, "", "--no-global"); err == nil || !strings.Contains(err.Error(), "needs a terminal") {
+		t.Fatalf("err = %v", err)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(home, "projects")); len(entries) != 0 {
+		t.Fatalf("a session was created: %v", entries)
+	}
+}
