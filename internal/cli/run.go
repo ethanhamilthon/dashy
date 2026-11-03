@@ -158,14 +158,6 @@ func sessionCommand(ctx context.Context, args []string, in io.Reader, out, diagn
 	var prompt, config, resume string
 	var noGlobal bool
 	printMode := false
-	argv := make([]string, 0, len(args))
-	for i, arg := range args {
-		// "-p" with no value (the prompt comes from stdin only) is spelled "-p=".
-		if arg == "-p" && (i+1 == len(args) || strings.HasPrefix(args[i+1], "-")) {
-			arg = "-p="
-		}
-		argv = append(argv, arg)
-	}
 	fs := flagSet("dashy", func(fs *flag.FlagSet) {
 		fs.StringVar(&config, "config", "", "AGENTS.md file to use instead of ./AGENTS.md")
 		fs.StringVar(&config, "c", "", "alias for --config")
@@ -176,7 +168,7 @@ func sessionCommand(ctx context.Context, args []string, in io.Reader, out, diagn
 			return nil
 		})
 	})
-	if err := fs.Parse(argv); err != nil {
+	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprint(out, helpText)
 			return nil

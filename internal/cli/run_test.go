@@ -119,6 +119,22 @@ func TestPrintAppendsStdin(t *testing.T) {
 	}
 }
 
+// The value of -p is the prompt literally, even when it starts with a hyphen or is itself "-p".
+func TestPrintTakesHyphenPromptLiterally(t *testing.T) {
+	s := &stub{reply: func(int) string { return streamOf("ok") }}
+	srv := httptest.NewServer(s)
+	defer srv.Close()
+	setup(t, srv.URL)
+	for i, prompt := range []string{"-explain this", "--help", "-p"} {
+		if _, _, err := runCLI(t, "", "-p", prompt); err != nil {
+			t.Fatalf("%q: %v", prompt, err)
+		}
+		if !strings.Contains(s.bodies[i], prompt) {
+			t.Fatalf("prompt %q not sent: %s", prompt, s.bodies[i])
+		}
+	}
+}
+
 func TestPrintFailureExitsWithErrorAndNoStdout(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":{"message":"nope"}}`, http.StatusBadRequest)
