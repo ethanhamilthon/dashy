@@ -168,7 +168,12 @@ func sessionCommand(ctx context.Context, args []string, in io.Reader, out, diagn
 			return nil
 		})
 	})
-	if err := fs.Parse(args); err != nil {
+	err := fs.Parse(args)
+	if err != nil && len(args) > 0 && args[len(args)-1] == "-p" {
+		// A bare -p has no value: the prompt is empty, which is valid when stdin has text.
+		err = fs.Parse(append(args, ""))
+	}
+	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprint(out, helpText)
 			return nil

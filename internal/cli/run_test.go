@@ -381,3 +381,20 @@ func TestSignalDuringDashyBlockExits130(t *testing.T) {
 		}
 	}
 }
+
+// A bare -p (no value) takes its prompt from stdin; with empty stdin there is no prompt at all.
+func TestPrintBareFlagTakesPromptFromStdin(t *testing.T) {
+	s := &stub{reply: func(int) string { return streamOf("ok") }}
+	srv := httptest.NewServer(s)
+	defer srv.Close()
+	setup(t, srv.URL)
+	if _, _, err := runCLI(t, "from stdin\n", "-p"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(s.bodies[0], "from stdin") {
+		t.Fatalf("stdin not sent as the prompt: %s", s.bodies[0])
+	}
+	if _, _, err := runCLI(t, "", "-p"); err == nil || !strings.Contains(err.Error(), "prompt is required") {
+		t.Fatalf("bare -p with empty stdin: %v", err)
+	}
+}
