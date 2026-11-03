@@ -52,7 +52,7 @@ func (m *model) openPicker(kind string) tea.Cmd {
 			m.menu = append(m.menu, command{name: name, description: "Provider"})
 		}
 		sort.Slice(m.menu, func(i, j int) bool { return m.menu[i].name < m.menu[j].name })
-		m.menu = append(m.menu, command{name: "Add", icon: "+", description: "Create provider", label: "+ Add provider", action: actionAdd})
+		m.menu = append(m.menu, command{name: "Add", icon: "+", description: "Create provider", label: "Add provider", action: actionAdd})
 		return nil
 	}
 	m.effort = slices.Index(agent.Efforts, m.ctl.Settings().Effort)

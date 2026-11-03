@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"dashy/internal/agent"
 )
@@ -159,5 +160,14 @@ func TestEffortChangeIsSavedBeforeEscape(t *testing.T) {
 	saved, err := agent.LoadSettings(a.SettingsPath())
 	if m.menuKind != "" || a.Settings().Effort != "none" || err != nil || saved.Effort != "none" {
 		t.Fatalf("picker %q, effective effort %q, saved effort %q (%v)", m.menuKind, a.Settings().Effort, saved.Effort, err)
+	}
+}
+
+// The /login menu shows its add row once, as "+ Add provider".
+func TestLoginMenuAddRowRendersOnce(t *testing.T) {
+	m, _ := freshModel(t)
+	view := ansi.Strip(openPickerCmd(t, m, "/login").View())
+	if !strings.Contains(view, "+ Add provider") || strings.Contains(view, "+ +") {
+		t.Fatalf("add row: %q", view)
 	}
 }
