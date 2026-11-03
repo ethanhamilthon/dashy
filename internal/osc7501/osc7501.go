@@ -188,6 +188,10 @@ func (r *Reporter) Close() {
 	r.pending = nil // the final state replaces whatever was queued, even when it is not sent
 	if data, err := Encode(r.state, r.title, r.msg); err == nil && !bytes.Equal(data, r.last) {
 		r.pending = data
+		// The final report obeys the same rate limit: wait out the rest of the interval.
+		if wait := interval - time.Since(r.lastAt); wait > 0 {
+			time.Sleep(wait)
+		}
 	}
 	r.flushLocked()
 	r.enabled = false

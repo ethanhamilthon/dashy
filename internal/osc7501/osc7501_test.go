@@ -198,6 +198,37 @@ func TestBurstDeliversLatestState(t *testing.T) {
 	}
 }
 
+// timedWriter records the time of each write.
+type timedWriter struct {
+	bytes.Buffer
+	at []time.Time
+}
+
+func (w *timedWriter) Write(p []byte) (int, error) {
+	w.at = append(w.at, time.Now())
+	return w.Buffer.Write(p)
+}
+
+// Shutdown obeys the rate limit too: right after a transmitted non-idle state, the
+// final idle report is written only once the interval has passed since that write.
+func TestCloseWaitsOutIntervalAfterTransmittedState(t *testing.T) {
+	for _, ev := range []control.Event{
+		{Kind: "started", Operation: "turn", Text: "task"},
+		{Kind: "done", Operation: "turn", Status: "ok", Text: "answer"},
+	} {
+		w := &timedWriter{}
+		r := New(w, true)
+		r.HandleEvent(ev) // a fresh reporter transmits at once
+		r.Close()
+		if len(w.at) != 2 || lastState(w.String()) != "idle" {
+			t.Fatalf("%s then close: %d writes, %q", ev.Kind, len(w.at), w.String())
+		}
+		if gap := w.at[1].Sub(w.at[0]); gap < interval {
+			t.Fatalf("%s then close: final report after %v, want >= %v", ev.Kind, gap, interval)
+		}
+	}
+}
+
 // A disabled reporter (piped output, -p, TERM=dumb) writes nothing at all.
 func TestDisabledReporterWritesNothing(t *testing.T) {
 	out := &syncBuffer{}
