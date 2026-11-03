@@ -40,10 +40,12 @@ func (b *cappedBuffer) Write(p []byte) (int, error) {
 }
 
 func (b *cappedBuffer) Text() string {
-	head, tail := strings.ToValidUTF8(string(b.head), ""), strings.ToValidUTF8(string(b.tail), "")
 	if b.limit <= 0 || b.size <= b.limit {
-		return head + tail
+		// Nothing was omitted: normalize the whole output so that a character
+		// straddling the head/tail split is kept intact.
+		return strings.ToValidUTF8(string(b.head)+string(b.tail), "")
 	}
+	head, tail := strings.ToValidUTF8(string(b.head), ""), strings.ToValidUTF8(string(b.tail), "")
 	return head + fmt.Sprintf("\n[output truncated: %d of %d bytes omitted (max_output=%d, first %d + last %d kept); "+
 		"filter with rg, grep, head, tail or pass a larger max_output]\n",
 		b.size-len(b.head)-len(b.tail), b.size, b.limit, len(b.head), len(b.tail)) + tail
