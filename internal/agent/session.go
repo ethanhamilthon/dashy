@@ -36,11 +36,10 @@ func (a *Agent) acquire() error {
 
 // release closes the socket, drops the lock and removes the lock file of an unsaved session.
 func (a *Agent) release() {
-	if a.listener != nil {
-		a.listener.Close()
-		a.listener = nil
-		_ = os.Remove(a.socketPath)
-		a.socketPath = ""
+	if a.sock != nil {
+		a.sock.retire()
+		_ = os.Remove(a.sock.path)
+		a.sock = nil
 	}
 	if a.owner != nil {
 		_ = syscall.Flock(int(a.owner.Fd()), syscall.LOCK_UN)
@@ -115,8 +114,8 @@ func (a *Agent) mode() string {
 // shellEnv is exported to every bash tool call. API keys and settings are never exported.
 func (a *Agent) shellEnv() map[string]string {
 	env := map[string]string{"DASHY_SESSION_ID": a.SessionID()}
-	if a.socketPath != "" {
-		env["DASHY_ENDPOINT"] = a.socketPath
+	if a.sock != nil {
+		env["DASHY_ENDPOINT"] = a.sock.path
 	}
 	return env
 }

@@ -23,8 +23,7 @@ import (
 	"dashy/internal/shell"
 )
 
-// Message is one request on the session socket: notification text or an image
-// queued by dashy view for the next model request.
+// Message is one session socket request: notification text or an image for the next model request.
 type Message struct {
 	Text  string       `json:"text,omitempty"`
 	Image *shell.Image `json:"image,omitempty"`
@@ -43,9 +42,21 @@ func SocketPath(runDir, id string) string {
 	if len(candidate) < 104 {
 		return candidate
 	}
-	// When runDir itself is too long to host any unix socket (e.g. long temp paths on macOS),
-	// use /tmp with a deterministic hash of runDir and id.
+	// When runDir is too long for a unix socket (long macOS temp paths), use /tmp with a hash.
 	return filepath.Join("/tmp", "dashy-"+shortName)
+}
+
+// sessionSocket is one session's notification socket. Its handlers never reference the Agent.
+type sessionSocket struct {
+	path     string
+	listener net.Listener
+	inbox    chan string
+	views    chan shell.Image
+	slots    *imageSlots
+	done     chan struct{} // closed when the accept loop has returned
+	mu       sync.Mutex    // guards retired and current, and admission
+	retired  bool
+	current  net.Conn // connection being read; retire closes it
 }
 
 func (a *Agent) listenNotifications() error {
@@ -68,50 +79,73 @@ func (a *Agent) listenNotifications() error {
 		return err
 	}
 	_ = os.Chmod(sockPath, 0600)
-	a.listener, a.socketPath = listener, sockPath
-	a.inbox, a.views = make(chan string, 64), make(chan shell.Image, 4)
-	inbox, views := a.inbox, a.views
+	s := &sessionSocket{path: sockPath, listener: listener, inbox: make(chan string, 64),
+		views: make(chan shell.Image, 4), slots: a.slots, done: make(chan struct{})}
+	a.sock, a.inbox, a.views = s, s.inbox, s.views
 	go func() {
-		for {
-			connection, err := listener.Accept()
-			if err != nil {
-				return
-			}
-			_ = connection.SetDeadline(time.Now().Add(5 * time.Second))
-			var message Message
-			err = json.NewDecoder(io.LimitReader(connection, 4*1024*1024)).Decode(&message)
-			status := ""
-			var escaped bytes.Buffer
-			switch {
-			case err != nil:
-				status = err.Error()
-			case message.Image != nil:
-				switch {
-				case !validImage(*message.Image):
-					status = "view requires a PNG or JPEG image"
-				case !a.ReserveImages(1):
-					status = "view: at most four new images per model request"
-				default:
-					views <- *message.Image // the reservation bounds the queue to its capacity
-				}
-			case strings.TrimSpace(message.Text) == "" || len(message.Text) > 128*1024:
-				status = "notify requires 1..131072 bytes of message text"
-			default:
-				if err = xml.EscapeText(&escaped, []byte(message.Text)); err != nil {
-					status = err.Error()
-					break
-				}
-				select {
-				case inbox <- "<notify>\n" + escaped.String() + "\n</notify>":
-				default:
-					status = "notification queue is full"
-				}
-			}
-			_ = json.NewEncoder(connection).Encode(status)
-			_ = connection.Close()
+		defer close(s.done)
+		for connection, err := listener.Accept(); err == nil; connection, err = listener.Accept() {
+			s.serve(connection)
 		}
 	}()
 	return nil
+}
+
+// serve answers one connection; admit refuses it if the session was retired meanwhile.
+func (s *sessionSocket) serve(connection net.Conn) {
+	defer connection.Close()
+	s.mu.Lock()
+	s.current = connection
+	s.mu.Unlock()
+	_ = connection.SetDeadline(time.Now().Add(5 * time.Second))
+	var message Message
+	err := json.NewDecoder(io.LimitReader(connection, 4*1024*1024)).Decode(&message)
+	_ = json.NewEncoder(connection).Encode(s.admit(message, err))
+}
+
+// admit queues a request if the session is still current and returns the status to reply.
+func (s *sessionSocket) admit(message Message, err error) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.retired {
+		return "session has ended"
+	}
+	if err != nil {
+		return err.Error()
+	}
+	if message.Image != nil {
+		switch {
+		case !validImage(*message.Image):
+			return "view requires a PNG or JPEG image"
+		case !s.slots.reserve(1):
+			return "view: at most four new images per model request"
+		}
+		s.views <- *message.Image // the reservation bounds the queue to its capacity
+		return ""
+	}
+	if strings.TrimSpace(message.Text) == "" || len(message.Text) > 128*1024 {
+		return "notify requires 1..131072 bytes of message text"
+	}
+	var escaped bytes.Buffer
+	_ = xml.EscapeText(&escaped, []byte(message.Text)) // writes to a bytes.Buffer never fail
+	select {
+	case s.inbox <- "<notify>\n" + escaped.String() + "\n</notify>":
+		return ""
+	default:
+		return "notification queue is full"
+	}
+}
+
+// retire stops the socket before its session is replaced; no handler runs once it returns.
+func (s *sessionSocket) retire() {
+	s.mu.Lock()
+	s.retired = true
+	if s.current != nil {
+		s.current.Close()
+	}
+	s.mu.Unlock()
+	s.listener.Close()
+	<-s.done
 }
 
 func (a *Agent) Notifications() []string {
@@ -126,11 +160,8 @@ func (a *Agent) Notifications() []string {
 	}
 }
 
-// imageSlots counts the images of the next model request. An image is reserved from
-// admission (composer, steering, dashy view) until it is in the history, and committed
-// from then until a model request carrying the history is sent. Both count against
-// MaxPendingImages, so admissions made while a request is in flight or waiting to be
-// sent cannot push the next request past the limit.
+// imageSlots counts the images of the next model request: reserved from admission until they
+// are in the history, then committed until a request carrying the history is sent.
 type imageSlots struct {
 	mu        sync.Mutex
 	reserved  int // admitted, not yet in the history
@@ -141,13 +172,15 @@ type imageSlots struct {
 const MaxPendingImages = 4
 
 // ReserveImages admits n images, or reports false when they would exceed MaxPendingImages.
-func (a *Agent) ReserveImages(n int) bool {
-	a.slots.mu.Lock()
-	defer a.slots.mu.Unlock()
-	if a.slots.reserved+a.slots.committed+n > MaxPendingImages {
+func (a *Agent) ReserveImages(n int) bool { return a.slots.reserve(n) }
+
+func (s *imageSlots) reserve(n int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.reserved+s.committed+n > MaxPendingImages {
 		return false
 	}
-	a.slots.reserved += n
+	s.reserved += n
 	return true
 }
 
@@ -166,8 +199,7 @@ func (a *Agent) commitImages(n int) {
 	a.slots.committed += n
 }
 
-// sentImages runs when a request carrying the history is dispatched: the images
-// in the history are no longer new for the requests that follow.
+// sentImages runs when a request carrying the history is dispatched; those images are no longer new.
 func (a *Agent) sentImages() {
 	a.slots.mu.Lock()
 	defer a.slots.mu.Unlock()
@@ -212,8 +244,7 @@ func validImage(img shell.Image) bool {
 	return false
 }
 
-// Endpoint resolves a session socket. Without an ID it uses DASHY_ENDPOINT,
-// which every dashy shell exports.
+// Endpoint resolves a session socket; without an ID it uses DASHY_ENDPOINT, which every dashy shell exports.
 func Endpoint(cwd, id string) (string, error) {
 	if id == "" {
 		if endpoint := os.Getenv("DASHY_ENDPOINT"); endpoint != "" {
@@ -235,8 +266,7 @@ func Endpoint(cwd, id string) (string, error) {
 	return sockPath, nil
 }
 
-// Notify acknowledges enqueueing by the active owner, not acceptance by the model.
-// The owner validates the text size.
+// Notify queues text for the active owner, which validates its size.
 func Notify(cwd, id, text string) error {
 	endpoint, err := Endpoint(cwd, id)
 	if err != nil {
@@ -256,13 +286,10 @@ func Send(endpoint string, message Message) error {
 		return err
 	}
 	var status string
-	if err = json.NewDecoder(connection).Decode(&status); err != nil {
-		return err
+	if err = json.NewDecoder(connection).Decode(&status); err == nil && status != "" {
+		err = fmt.Errorf("%s", status)
 	}
-	if status != "" {
-		return fmt.Errorf("%s", status)
-	}
-	return nil
+	return err
 }
 
 // CleanAttachments deletes attachment files older than 7 days from dir.

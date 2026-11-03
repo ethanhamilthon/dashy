@@ -3,8 +3,11 @@ package agent
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
+	"net"
 	"strings"
 	"testing"
+	"time"
 
 	"dashy/internal/shell"
 )
@@ -21,11 +24,11 @@ func TestSocketValidatesAndQueues(t *testing.T) {
 		{Image: &shell.Image{URL: "data:image/svg+xml;base64,PHN2Zy8+"}},
 		{Image: &shell.Image{URL: "data:image/png;base64,bm90IGFuIGltYWdl"}},
 	} {
-		if err := Send(a.socketPath, m); err == nil {
+		if err := Send(a.sock.path, m); err == nil {
 			t.Fatalf("accepted %+v", m)
 		}
 	}
-	if err := Send(a.socketPath, Message{Text: "<check & report>"}); err != nil {
+	if err := Send(a.sock.path, Message{Text: "<check & report>"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := a.Notifications(); len(got) != 1 || got[0] != "<notify>\n&lt;check &amp; report&gt;\n</notify>" {
@@ -40,11 +43,11 @@ func TestImageAllowanceIsSharedWithView(t *testing.T) {
 		t.Fatal("composer images refused")
 	}
 	for i := 0; i < 2; i++ {
-		if err := Send(a.socketPath, Message{Image: &shell.Image{URL: pngURL()}}); err != nil {
+		if err := Send(a.sock.path, Message{Image: &shell.Image{URL: pngURL()}}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := Send(a.socketPath, Message{Image: &shell.Image{URL: pngURL()}}); err == nil || !strings.Contains(err.Error(), "four") {
+	if err := Send(a.sock.path, Message{Image: &shell.Image{URL: pngURL()}}); err == nil || !strings.Contains(err.Error(), "four") {
 		t.Fatalf("fifth image admitted: %v", err)
 	}
 	if got := a.PendingImages(); got != 4 {
@@ -61,7 +64,7 @@ func TestViewedImageReachesNextRequestOnce(t *testing.T) {
 		return textReply("ok")
 	}}
 	a := newTestAgent(t, fp, Options{})
-	if err := Send(a.socketPath, Message{Image: &shell.Image{URL: pngURL()}}); err != nil {
+	if err := Send(a.sock.path, Message{Image: &shell.Image{URL: pngURL()}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := turn(t, a, "look"); err != nil {
@@ -99,5 +102,45 @@ func TestImagesInHistoryCountUntilSent(t *testing.T) {
 	// The fourth image is still queued for the following request: one more slot is free.
 	if a.PendingImages() != 1 || a.ReserveImages(4) || !a.ReserveImages(3) {
 		t.Fatalf("after sending: pending %d", a.PendingImages())
+	}
+}
+
+// A connection accepted before /new is retired with its session: the image it completes
+// after the switch is refused and never queued in the new session.
+func TestConnectionAcceptedBeforeNewSessionIsRetired(t *testing.T) {
+	a := newTestAgent(t, &fakeProvider{reply: func(int, string) string { return "" }}, Options{})
+	payload, err := json.Marshal(Message{Image: &shell.Image{URL: pngURL()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.Dial("unix", a.sock.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := conn.Write(payload[:len(payload)/2]); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		a.sock.mu.Lock()
+		accepted := a.sock.current != nil
+		a.sock.mu.Unlock()
+		if accepted {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("connection not accepted")
+		}
+	}
+	if err := a.NewSession(); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = conn.Write(payload[len(payload)/2:])
+	var status string
+	if err := json.NewDecoder(conn).Decode(&status); err == nil && status == "" {
+		t.Fatal("retired connection was acknowledged")
+	}
+	if a.PendingImages() != 0 || len(a.viewed()) != 0 {
+		t.Fatal("image from the retired connection reached the new session")
 	}
 }

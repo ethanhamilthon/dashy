@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -114,8 +113,7 @@ type Agent struct {
 	title        string // custom title set by /rename; "" means the default title
 	defaultTitle string // first user line, saved at compaction because that message may be dropped
 	lastRequest  Metadata
-	listener     net.Listener
-	socketPath   string
+	sock         *sessionSocket // nil in print mode
 	inbox        chan string
 	views        chan shell.Image
 	slots        *imageSlots // shared allowance of new images per model request
