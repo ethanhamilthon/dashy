@@ -1,55 +1,66 @@
 # dashy
 
-dashy is a minimal AI coding agent with an interactive terminal interface (TUI) and a one-shot execution mode (`-p`).
+dashy is a minimal AI coding agent with an interactive terminal UI (TUI) and a one-shot mode (`dashy -p`). The model gets one tool, `bash`; its instructions come from AGENTS.md files.
 
-In TUI mode, dashy emits OSC 7501 program status reports (idle, working, done, error) to supported terminals.
+In the TUI, dashy reports its state (idle, working, done, error) to terminals that support OSC 7501.
 
-## Installation
+## Install
 
-Install the latest binary:
+From a checkout of this repository (Go 1.26+):
+
+```sh
+make install      # builds dashy into ~/.local/bin (set BINDIR=... to change it)
+dashy version
+```
+
+The release one-liner below does not work yet, because no public release exists at that address:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/ethanhamilthon/dashy/main/scripts/install.sh | sh
 ```
 
-The binary is installed to `~/.local/bin/dashy` by default (customize with `DASHY_BINDIR`; pin a release with `DASHY_VERSION`).
+## First start
 
-Or build from source (Go 1.26+):
+Run `dashy` in a project directory. Open `/settings` to choose a provider and model (`/login` adds a provider). Settings are saved to `$DASHY_HOME/settings.json` (default `~/.dashy/settings.json`).
 
-```sh
-git clone https://github.com/ethanhamilthon/dashy && cd dashy
-make install
+## AGENTS.md and dashy blocks
+
+The system prompt is built from two AGENTS.md files, once per session:
+
+1. `$DASHY_HOME/AGENTS.md` (default `~/.dashy/AGENTS.md`), skipped with `--no-global`.
+2. `./AGENTS.md`, or the file given with `--config FILE` (which replaces `./AGENTS.md`).
+
+A fenced block with the info string `dashy` runs with `bash -c` in the project directory, and its output replaces the block. Blocks time out after 30 seconds and are capped at 64 KiB of output.
+
+````markdown
+# Project notes
+
+The secret word is PINEAPPLE.
+
+```dashy
+git log --oneline -3
 ```
+````
 
-## System Prompt (AGENTS.md) and dashy Blocks
+## Sub-agents (`dashy -p`)
 
-The system prompt is assembled lazily once per session from `AGENTS.md` files:
-1. Global instructions from `$DASHY_HOME/AGENTS.md` (default `~/.dashy/AGENTS.md`; skipped with `--no-global`).
-2. Local instructions: `./AGENTS.md` or the file specified by `--config FILE`.
-
-Fenced code blocks with info string `dashy` (```` ```dashy ````) run via `bash -c` in the project directory when the prompt is assembled. Their output replaces the block in the system prompt. Blocks time out after 30 seconds and are capped at 64 KiB of output.
-
-## Sub-Agents (`dashy -p`)
-
-Run tasks in one-shot mode with `dashy -p "TASK"`. The final assistant response is printed to stdout and progress to stderr:
+`dashy -p "TASK"` runs one task in a new session: the final answer goes to stdout, progress to stderr, and the exit code is non-zero on failure.
 
 ```sh
-# Run a focused task with a dedicated prompt and no global instructions
-dashy -p "Review diff against main" --config .dashy/reviewer.md --no-global
+# A focused reviewer with its own instructions and no global ones
+dashy -p "Review the diff against main" --config .dashy/reviewer.md --no-global
 
-# Run parallel sub-agents from bash
+# Parallel sub-agents
 dashy -p "Task A" > a.out 2> a.err &
 dashy -p "Task B" > b.out 2> b.err &
 wait
 
-# Background command that notifies the running session when done
-(make test > test.log 2>&1; dashy notify "Tests completed with status $?") &
+# Background work that tells the running session when it is done
+(make test > test.log 2>&1; dashy notify "tests finished with status $?") &
 ```
 
-## Settings (`/settings`)
+## Development
 
-All configuration is stored in `~/.dashy/settings.json`. Manage providers, models, and preferences inside the app:
-- Run `/settings` to choose an active provider and model, adjust reasoning effort (Left/Right), toggle reasoning summaries and auto-compaction, or cycle visible output lines (short/medium/full).
-- Run `/login` (or select "Add provider" in `/settings`) to configure a provider name, HTTP(S) base URL, and API key.
+`make test` runs the same checks as CI: gofmt, `go vet` and the tests with the race detector.
 
-Run `dashy --help` for the complete command and flag reference.
+Run `dashy --help` for the full reference.
