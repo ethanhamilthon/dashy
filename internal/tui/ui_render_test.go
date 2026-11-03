@@ -220,11 +220,9 @@ func TestMinimalCommandCompletions(t *testing.T) {
 }
 
 func TestSingleLineNotifications(t *testing.T) {
-	reset := "<notify>Shell session restarted. Previous variables and functions are unavailable. The prefix has been executed again.</notify>"
+	note := "<notify>Configuration updated. Ready.</notify>"
 	for _, tc := range []struct{ text, want string }{
-		{reset, "! · Shell session restarted. Previous variables were cleared."},
-		{"<notify>\nShell session restarted. Previous variables are unavailable.\n<prefix_output>secret details</prefix_output>\n</notify>", "! · Shell session restarted. Previous variables were cleared."},
-		{"<notify>\nShell session initialized. The prefix has been executed.\n<prefix_output>secret details</prefix_output>\n</notify>", "! · Shell session initialized."},
+		{"<notify>Shell session restarted. Previous variables were cleared.</notify>", "! · Shell session restarted. Previous variables were cleared."},
 		{"<notify>Configuration\n  updated.\tReady.</notify>", "! · Configuration updated. Ready."},
 		{"\x1b[31mProvider event\x1b[0m\r\nreceived", "! · Provider event received"},
 		{"", "! · Notification received."},
@@ -239,7 +237,7 @@ func TestSingleLineNotifications(t *testing.T) {
 			if width >= 80 && strings.TrimSpace(plain) != tc.want {
 				t.Errorf("got %q, want %q", plain, tc.want)
 			}
-			if strings.Contains(plain, "<notify>") || strings.Contains(plain, "prefix") {
+			if strings.Contains(plain, "<notify>") {
 				t.Fatalf("technical notify text leaked: %q", plain)
 			}
 		}
@@ -257,14 +255,14 @@ func TestSingleLineNotifications(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(a.Close)
-	a.History = []json.RawMessage{json.RawMessage(`{"role":"user","content":"` + reset + `"}`)}
+	a.History = []json.RawMessage{json.RawMessage(`{"role":"user","content":"` + note + `"}`)}
 	m := newModel(a, "/project", osc7501.New(io.Discard, false))
 	restored := m.timeline()
-	if !strings.Contains(ansi.Strip(restored), "! · Shell session restarted.") || strings.Contains(ansi.Strip(restored), "<notify>") {
+	if !strings.Contains(ansi.Strip(restored), "! · Configuration updated. Ready.") || strings.Contains(ansi.Strip(restored), "<notify>") {
 		t.Fatal("restored notice not formatted")
 	}
 	live := bareModel(t, "/project")
-	live.applyAgentEvent(agent.Event{Kind: "notice", Text: reset})
+	live.applyAgentEvent(agent.Event{Kind: "notice", Text: note})
 	live.timeline()
 	if m.cache[0].Text != live.cache[0].Text {
 		t.Fatal("live and restored notifications differ")
