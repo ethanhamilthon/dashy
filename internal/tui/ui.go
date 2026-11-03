@@ -31,7 +31,7 @@ type model struct {
 	events                   *control.Queue[control.Event]
 	input                    textarea.Model
 	viewport                 viewport.Model
-	entries                  []entry
+	entries                  []entry // copy of the controller's timeline, refreshed by refresh
 	images                   []shell.Image
 	pasteGeneration          int
 	pasting                  bool
@@ -90,22 +90,11 @@ func newModel(a *agent.Agent, cwd string, reporter *osc7501.Reporter) model {
 	ctl := control.New(a, func(e control.Event) { events.Push(e) })
 	m := model{ctl: ctl, events: events, input: input, viewport: viewport.New(80, 24), width: 80, height: 24, cwd: cwd, reporter: reporter}
 	reporter.HandleEvent(control.Event{Kind: "session", Title: ctl.Title()})
-	m.setEntries(ctl.History())
 	m.refresh(true)
 	return m
 }
 
-// setEntries replaces the timeline with the controller's display journal.
-func (m *model) setEntries(records []entry) {
-	m.entries, m.cache = records, nil
-}
-
-type followerTick struct{}
-
-func followerPulse() tea.Cmd {
-	return tea.Tick(time.Second, func(time.Time) tea.Msg { return followerTick{} })
-}
-func (m model) Init() tea.Cmd { return tea.Batch(textarea.Blink, followerPulse()) }
+func (m model) Init() tea.Cmd { return textarea.Blink }
 func (m *model) resizeInput() {
 	value, width, height := m.input.Value(), max(1, m.width-2), max(1, m.height/2)
 	if m.inputWidth == width && m.inputHeight == height && m.inputValue == value {
@@ -149,7 +138,8 @@ func (m *model) refresh(follow bool) {
 	} else {
 		m.sessions = nil
 	}
-	m.resizeInput() // Constant-time unless input text or dimensions changed.
+	m.entries = m.ctl.History() // the controller's timeline is the only one; this is a view of it
+	m.resizeInput()             // Constant-time unless input text or dimensions changed.
 	m.viewport.Width = max(1, m.width)
 	m.viewport.Height = max(1, m.height)
 	m.viewport.SetContent(m.timeline())
@@ -158,7 +148,8 @@ func (m *model) refresh(follow bool) {
 	}
 }
 
-func (m *model) add(kind, text string) { m.entries = append(m.entries, entry{Kind: kind, Text: text}) }
+// add puts a message of the interface into the controller's timeline.
+func (m *model) add(kind, text string) { m.ctl.Note(agent.Event{Kind: kind, Text: text}) }
 
 // stop adds a diagnostic, refreshes the view and ends the update cycle.
 func (m *model) stop(kind, text string) (tea.Model, tea.Cmd) {
@@ -177,10 +168,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleFileScan(v)
 	case clipboardResult:
 		return m, m.edit(true, func() tea.Cmd { return m.acceptClipboard(v) })
-	case followerTick:
-		// Notifications that arrive while idle start a turn; busy turns accept them as steering.
-		m.ctl.Deliver()
-		return m, followerPulse()
 	case modelChoices:
 		if m.menuKind != pickerSettings || v.generation != m.menuGeneration {
 			return m, nil

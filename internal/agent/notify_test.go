@@ -95,7 +95,7 @@ func TestImagesInHistoryCountUntilSent(t *testing.T) {
 	if !a.ReserveImages(1) {
 		t.Fatal("fourth image refused")
 	}
-	if _, err := a.request(context.Background(), func(Event) {}, nil); err != nil {
+	if _, err := a.request(context.Background(), func(Event) {}); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.Count(fp.requests()[0], "input_image"); got != 3 {
@@ -142,7 +142,7 @@ func TestConnectionAcceptedBeforeNewSessionIsRetired(t *testing.T) {
 	if err := json.NewDecoder(conn).Decode(&status); err == nil && status == "" {
 		t.Fatal("retired connection was acknowledged")
 	}
-	if a.PendingImages() != 0 || len(a.viewed()) != 0 {
+	if a.PendingImages() != 0 || len(a.Queue().Take()) != 0 {
 		t.Fatal("image from the retired connection reached the new session")
 	}
 }

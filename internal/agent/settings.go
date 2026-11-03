@@ -17,7 +17,6 @@ import (
 
 // Fixed limits of compaction, the bash tool and the timeline (show_lines).
 const (
-	CompactThreshold  = 400000 // estimated tokens that trigger automatic compaction
 	CompactKeepTurns  = 4
 	ShellTimeout      = 120  // seconds, default for a bash call
 	ShellMaxTimeout   = 600  // seconds
@@ -27,6 +26,13 @@ const (
 	mediumCodeLines   = 40 // show_lines=medium
 	mediumResultLines = 16
 )
+
+// CompactThresholds are the compact_threshold values /settings cycles through;
+// settings.json may hold any positive value.
+var CompactThresholds = []int64{100_000, 200_000, 400_000, 800_000}
+
+// DefaultCompactThreshold is the estimated history size, in tokens, that triggers automatic compaction.
+const DefaultCompactThreshold = 400_000
 
 // Efforts are the reasoning efforts offered by /settings; "" uses the provider default.
 var Efforts = []string{"", "none", "minimal", "low", "medium", "high", "xhigh", "max"}
@@ -67,13 +73,14 @@ type Settings struct {
 	Effort           string              `json:"effort"`
 	ReasoningSummary bool                `json:"reasoning_summary"`
 	AutoCompact      bool                `json:"auto_compact"`
+	CompactThreshold int64               `json:"compact_threshold"`
 	ShowLines        string              `json:"show_lines"`
 	Providers        map[string]Provider `json:"providers"`
 }
 
 // DefaultSettings is used when no settings file exists.
 func DefaultSettings() Settings {
-	return Settings{ReasoningSummary: true, AutoCompact: true, ShowLines: "short", Providers: map[string]Provider{}}
+	return Settings{ReasoningSummary: true, AutoCompact: true, CompactThreshold: DefaultCompactThreshold, ShowLines: "short", Providers: map[string]Provider{}}
 }
 
 // SetupHint explains what must be configured before a model request; "" when nothing is missing.
@@ -105,6 +112,9 @@ func (s Settings) MaxLines(kind string) int {
 func validateSettings(s Settings) error {
 	if s.ShowLines != "short" && s.ShowLines != "medium" && s.ShowLines != "full" {
 		return fmt.Errorf("show_lines must be short, medium or full")
+	}
+	if s.CompactThreshold <= 0 {
+		return fmt.Errorf("compact_threshold must be a positive number of tokens")
 	}
 	if !slices.Contains(Efforts, s.Effort) {
 		return fmt.Errorf("unsupported effort %q", s.Effort)

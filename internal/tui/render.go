@@ -67,7 +67,7 @@ func renderEntry(e entry, width, limit int) string {
 	text := ansi.Strip(e.Text)
 	if e.Kind == "notice" || e.Kind == "error" {
 		text = strings.TrimSpace(text)
-		text = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(text, "<notify>"), "</notify>"))
+		text = strings.NewReplacer("<notify>", "", "</notify>", "").Replace(text)
 		text = strings.Join(strings.Fields(text), " ")
 		if text == "" {
 			text = "Notification received."

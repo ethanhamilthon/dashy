@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bufio"
 	"bytes"
 	"cmp"
 	"crypto/rand"
@@ -8,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -118,14 +120,32 @@ func (a *Agent) Sessions() ([]SessionSummary, error) {
 }
 
 // sessionSummary reads the title of a session file: the custom title if there is
-// one, else the default title, else the first line of the first user message.
-// It uses the same reader as resume, so both show the same title.
+// one, else the default title, else the first line of the first user message, as
+// resume shows it. The meta line comes first, so reading stops at the first title
+// found instead of parsing the whole file.
 func sessionSummary(path string) (SessionSummary, error) {
-	history, custom, defaultTitle, err := readSessionFile(path)
+	file, err := os.Open(path)
 	if err != nil {
 		return SessionSummary{}, err
 	}
-	return SessionSummary{Title: cmp.Or(custom, defaultTitle, firstUserLine(history))}, nil
+	defer file.Close()
+	reader := bufio.NewReader(file)
+	for {
+		line, err := reader.ReadBytes('\n')
+		var meta sessionMeta
+		if json.Unmarshal(line, &meta) == nil && meta.Meta != nil {
+			if title := cmp.Or(meta.Meta.Title, meta.Meta.DefaultTitle); title != "" {
+				return SessionSummary{Title: title}, nil
+			}
+		} else if title := firstUserLine([]json.RawMessage{line}); title != "" {
+			return SessionSummary{Title: title}, nil
+		}
+		if err == io.EOF {
+			return SessionSummary{}, nil
+		} else if err != nil {
+			return SessionSummary{}, err
+		}
+	}
 }
 
 // firstUserLine is the first non-empty line of the first user record of history.
@@ -206,7 +226,7 @@ func (a *Agent) readSession() error {
 
 // readSessionFile parses a session file into history items, the last custom title
 // and the last default title. A torn last line is dropped. There is no line length
-// limit: a valid item of any size must read the same for the list and for resume.
+// limit, so a valid item of any size reads back.
 func readSessionFile(path string) (history []json.RawMessage, title, defaultTitle string, err error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

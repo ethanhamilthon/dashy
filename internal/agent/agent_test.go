@@ -186,8 +186,8 @@ func TestManualCompactionReplacesOldItemsWithSummary(t *testing.T) {
 
 // estimateTokens counts history bytes, so a large history crosses the threshold.
 func TestEstimateTokensCountsImagesAndText(t *testing.T) {
-	big := json.RawMessage(`{"role":"user","content":"` + strings.Repeat("a", 4*CompactThreshold) + `"}`)
-	if got := estimateTokens([]json.RawMessage{big}); got <= CompactThreshold {
+	big := json.RawMessage(`{"role":"user","content":"` + strings.Repeat("a", 4*DefaultCompactThreshold) + `"}`)
+	if got := estimateTokens([]json.RawMessage{big}); got <= DefaultCompactThreshold {
 		t.Fatalf("estimate %d", got)
 	}
 	img := json.RawMessage(`{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,AAAA"}]}`)

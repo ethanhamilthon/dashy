@@ -171,29 +171,11 @@ func RecordsForItem(item json.RawMessage) []Record {
 	return nil
 }
 
-// Records returns the display records of the session: the live snapshot while
-// a turn or a display change keeps one, else the records derived from history.
+// Records returns the display records derived from the session history.
 func (a *Agent) Records() []Record {
-	if a.records != nil {
-		return append([]Record(nil), a.records...)
-	}
-	return recordsOf(a.History)
-}
-
-func recordsOf(history []json.RawMessage) []Record {
 	var records []Record
-	for _, item := range history {
+	for _, item := range a.History {
 		records = append(records, RecordsForItem(item)...)
 	}
 	return records
-}
-
-// RememberDisplay retains UI records for the live session in memory.
-func (a *Agent) RememberDisplay(records []Record) {
-	a.records = make([]Record, 0, len(records))
-	for _, record := range records {
-		if !record.Preview {
-			a.records = append(a.records, record)
-		}
-	}
 }

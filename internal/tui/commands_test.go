@@ -142,10 +142,7 @@ func TestPickerToggleRefusedWhenNotificationStartsTurn(t *testing.T) {
 	if err := agent.Notify(f.project, f.a.SessionID(), "background result"); err != nil {
 		t.Fatal(err)
 	}
-	if !f.m.ctl.Deliver() {
-		t.Fatal("notification did not start a turn")
-	}
-	awaitRequest(t, f.m)
+	awaitRequest(t, f.m) // the notification starts a turn by itself
 	f.m = settle(f.m)
 	f.m = selectRow(t, f.m, "Auto compact")
 	before := f.m.ctl.Settings().AutoCompact
@@ -156,8 +153,8 @@ func TestPickerToggleRefusedWhenNotificationStartsTurn(t *testing.T) {
 	}
 }
 
-// An idle TUI starts a turn for an external notification on its follower tick.
-func TestFollowerTickStartsNotificationTurn(t *testing.T) {
+// An idle TUI starts a turn for an external notification at once, without any tick.
+func TestNotificationStartsTurnWhenIdle(t *testing.T) {
 	f := newFixture(t, true)
 	hold := make(chan struct{})
 	f.hold.Store(&hold)
@@ -165,7 +162,5 @@ func TestFollowerTickStartsNotificationTurn(t *testing.T) {
 	if err := agent.Notify(f.project, f.a.SessionID(), "background result"); err != nil {
 		t.Fatal(err)
 	}
-	next, _ := f.m.Update(followerTick{})
-	f.m = next.(model)
 	awaitRequest(t, f.m)
 }

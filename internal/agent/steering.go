@@ -61,17 +61,25 @@ func imageOriginals(images []shell.Image) string {
 
 func inputEvent(input Input) Event {
 	kind := "user"
-	if len(input.Images) == 0 && strings.HasPrefix(input.Text, "<notify>") {
+	if input.Notice || strings.HasPrefix(input.Text, "<notify>") {
 		kind = "notice"
 	}
 	return Event{Kind: kind, Text: input.Display()}
 }
 
 // Steering is the session's one ordered queue of input waiting for the running turn: composer
-// input and socket notifications, in admission order. Taken input cannot be recalled.
+// input, notifications and dashy view images, in admission order. Taken input cannot be recalled.
 type Steering struct {
 	mu      sync.Mutex
 	pending []Input
+	wake    func() // called after every push; a new session's queue keeps it
+}
+
+// OnPush sets the function called after every push, so an idle session can start a turn at once.
+func (s *Steering) OnPush(wake func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.wake = wake
 }
 
 // maxQueued bounds the steering queue.
@@ -83,11 +91,16 @@ func (a *Agent) Queue() *Steering { return a.queue }
 // Push queues input behind everything waiting; false when the queue is full.
 func (s *Steering) Push(input Input) bool {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if len(s.pending) >= maxQueued {
+		s.mu.Unlock()
 		return false
 	}
 	s.pending = append(s.pending, input)
+	wake := s.wake
+	s.mu.Unlock()
+	if wake != nil {
+		wake()
+	}
 	return true
 }
 

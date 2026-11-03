@@ -130,12 +130,11 @@ func (a *Agent) Compact(ctx context.Context, prompt string) (string, error) {
 		return "", a.safeError(err)
 	}
 	item := raw(map[string]any{"role": "user", "content": "<compact_summary>\n" + summary + "\n</compact_summary>"})
-	history, records := a.History, a.records
+	history, defaultTitle := a.History, a.defaultTitle
 	a.defaultTitle = a.DefaultTitle() // kept before the first user message can be dropped
 	a.History = append([]json.RawMessage{item}, a.History[cut:]...)
-	a.records = recordsOf(a.History)
 	if err := a.Save(); err != nil {
-		a.History, a.records = history, records
+		a.History, a.defaultTitle = history, defaultTitle
 		return "", err
 	}
 	a.lastRequest = Metadata{} // the next size is estimated from the new history
@@ -143,9 +142,9 @@ func (a *Agent) Compact(ctx context.Context, prompt string) (string, error) {
 }
 
 // compactIfNeeded summarizes older turns before a request would exceed the token budget.
-// A successful compaction emits a reset so the display is rebuilt from the new history.
+// The display keeps the earlier conversation; only the history sent to the model shrinks.
 func (a *Agent) compactIfNeeded(ctx context.Context, emit func(Event)) {
-	if !a.settings.AutoCompact || estimateTokens(a.History) <= CompactThreshold {
+	if !a.settings.AutoCompact || estimateTokens(a.History) <= a.settings.CompactThreshold {
 		return
 	}
 	result, err := a.Compact(ctx, "")
@@ -153,9 +152,8 @@ func (a *Agent) compactIfNeeded(ctx context.Context, emit func(Event)) {
 		emit(Event{Kind: "error", Text: "Compaction failed: " + err.Error()})
 		return
 	}
-	emit(Event{Kind: "reset"})
 	emit(Event{Kind: "notice", Text: result})
-	if estimateTokens(a.History) > CompactThreshold {
+	if estimateTokens(a.History) > a.settings.CompactThreshold {
 		emit(Event{Kind: "notice", Text: "Compaction could not reach threshold; older turns have been summarized."})
 	}
 }

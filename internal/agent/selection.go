@@ -75,24 +75,9 @@ func (a *Agent) AddProvider(name string, provider Provider) error {
 	return a.applyAndSave(next)
 }
 
-// SetReasoningSummary, SetAutoCompact and CycleShowLines change one display or behaviour setting and save it.
-func (a *Agent) SetReasoningSummary(enabled bool) error {
+// ChangeSettings applies change to a copy of the settings, then validates, applies and saves it.
+func (a *Agent) ChangeSettings(change func(*Settings)) error {
 	next := a.Settings()
-	next.ReasoningSummary = enabled
-	return a.applyAndSave(next)
-}
-
-func (a *Agent) SetAutoCompact(enabled bool) error {
-	next := a.Settings()
-	next.AutoCompact = enabled
-	return a.applyAndSave(next)
-}
-
-func (a *Agent) CycleShowLines() error {
-	next := a.Settings()
-	next.ShowLines = map[string]string{"short": "medium", "medium": "full"}[next.ShowLines]
-	if next.ShowLines == "" {
-		next.ShowLines = "short"
-	}
+	change(&next)
 	return a.applyAndSave(next)
 }

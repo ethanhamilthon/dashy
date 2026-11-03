@@ -76,7 +76,7 @@ func (a *Agent) changeSession(id string) error {
 		return nil
 	}
 	next := &Agent{opts: a.opts, home: a.home, sessionsDir: a.sessionsDir, Shell: a.Shell,
-		promptSource: "new", slots: &imageSlots{}, queue: &Steering{}}
+		promptSource: "new", slots: &imageSlots{}, queue: &Steering{wake: a.queue.wake}}
 	if err := next.loadConfig(a.Shell.Dir); err != nil {
 		return err
 	}

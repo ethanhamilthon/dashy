@@ -293,43 +293,43 @@ func TestCompactionCanBeCancelledWhileSummarizing(t *testing.T) {
 	}
 }
 
-// Manual compaction replaces the whole display with the summary.
-func TestCompactReplacesDisplayWithSummary(t *testing.T) {
+// Compaction shrinks only the history sent to the model: the display keeps the
+// earlier conversation and the interface's own notes, and reports the compaction.
+func TestCompactKeepsDisplay(t *testing.T) {
 	h := newHarness(t, &fakeModel{})
 	runTurns(h, 6)
+	h.ctl.Note(agent.Event{Kind: "notice", Text: "interface note"})
 	if err := h.ctl.Compact(""); err != nil {
 		t.Fatal(err)
 	}
 	h.settle()
-	records := h.ctl.History()
-	joined := fmt.Sprint(records)
-	if strings.Contains(joined, "turn 0") || !strings.Contains(joined, "SUMMARY") {
-		t.Fatalf("display after compaction: %v", records)
+	joined := fmt.Sprint(h.ctl.History())
+	if !strings.Contains(joined, "turn 0") || !strings.Contains(joined, "interface note") || !strings.Contains(joined, "Compacted") {
+		t.Fatalf("display after compaction: %s", joined)
+	}
+	if strings.Contains(fmt.Sprint(h.a.Records()), "turn 0") {
+		t.Fatal("history was not compacted")
 	}
 }
 
-// Automatic compaction, triggered inside a turn, rebuilds the display too.
-func TestAutomaticCompactionRebuildsDisplay(t *testing.T) {
+// Automatic compaction, triggered inside a turn, keeps the display too and replaces no session.
+func TestAutomaticCompactionKeepsDisplay(t *testing.T) {
 	h := newHarness(t, &fakeModel{})
 	runTurns(h, 5)
-	huge := strings.Repeat("x", 4*agent.CompactThreshold+100)
+	huge := strings.Repeat("x", 4*agent.DefaultCompactThreshold+100)
 	h.send("big " + huge)
 	events := h.settle()
-	var session *Event
-	for i := range events {
-		if events[i].Kind == "session" {
-			session = &events[i]
+	for _, e := range events {
+		if e.Kind == "session" {
+			t.Fatalf("compaction replaced the display: %s", describe(events))
 		}
 	}
-	if session == nil || session.Operation != "compact" {
-		t.Fatalf("no compaction reset in %s", describe(events))
-	}
-	joined := fmt.Sprint(session.Records)
-	if strings.Contains(joined, "turn 0") || !strings.Contains(joined, "SUMMARY") {
+	joined := fmt.Sprint(h.ctl.History())
+	if !strings.Contains(joined, "turn 0") || !strings.Contains(joined, "Compacted") {
 		t.Fatalf("display after automatic compaction: %s", joined)
 	}
-	if len(h.ctl.History()) < 2 {
-		t.Fatal("display journal lost the recent turns")
+	if strings.Contains(fmt.Sprint(h.a.Records()), "turn 0") {
+		t.Fatal("history was not compacted")
 	}
 }
 
@@ -364,13 +364,15 @@ func TestSettingsRejectedWhileNotificationTurnRuns(t *testing.T) {
 	if err := agent.Notify(h.dir, h.a.SessionID(), "background result"); err != nil {
 		t.Fatal(err)
 	}
-	if !h.ctl.Deliver() {
-		t.Fatal("notification did not start a turn")
+	for deadline := time.Now().Add(5 * time.Second); !h.ctl.Status().Busy; time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("notification did not start a turn")
+		}
 	}
 	for name, err := range map[string]error{
-		"reasoning": h.ctl.ToggleReasoningSummary(),
-		"compact":   h.ctl.ToggleAutoCompact(),
-		"lines":     h.ctl.CycleShowLines(),
+		"reasoning": h.ctl.ChangeSetting(SettingReasoning),
+		"compact":   h.ctl.ChangeSetting(SettingAutoCompact),
+		"lines":     h.ctl.ChangeSetting(SettingLines),
 		"model":     h.ctl.SelectModel("p", "other", ""),
 	} {
 		if codeOf(err) != "busy" {
@@ -458,17 +460,13 @@ func TestSettingsAndProvidersThroughTheController(t *testing.T) {
 	if codeOf(h.ctl.AddProvider("q", "https://q.example/v1", "")) != "failed" {
 		t.Fatal("duplicate provider accepted")
 	}
-	if err := h.ctl.ToggleReasoningSummary(); err != nil {
-		t.Fatal(err)
-	}
-	if err := h.ctl.ToggleAutoCompact(); err != nil {
-		t.Fatal(err)
-	}
-	if err := h.ctl.CycleShowLines(); err != nil {
-		t.Fatal(err)
+	for _, setting := range []string{SettingReasoning, SettingAutoCompact, SettingLines, SettingThreshold} {
+		if err := h.ctl.ChangeSetting(setting); err != nil {
+			t.Fatal(err)
+		}
 	}
 	s := h.ctl.Settings()
-	if s.Model != "m2" || s.Effort != "high" || s.ShowLines != "medium" || s.AutoCompact || s.Providers["q"].APIKey != "sk-x" {
+	if s.Model != "m2" || s.Effort != "high" || s.ShowLines != "medium" || s.AutoCompact || s.CompactThreshold != 800_000 || s.Providers["q"].APIKey != "sk-x" {
 		t.Fatalf("settings: %+v", s)
 	}
 }

@@ -104,25 +104,18 @@ func (m model) handleControl(e control.Event) (tea.Model, tea.Cmd) {
 		m.refresh(true)
 		cmd = workingPulse(m.ctl.Status().Started)
 	case "agent":
-		m.applyAgentEvent(*e.Agent)
 		m.refresh(follow)
 	case "notice", "error":
-		m.add(e.Kind, e.Text)
 		m.refresh(true)
 	case "session":
-		m.setEntries(e.Records)
-		if e.Operation != "compact" {
-			// A session change starts a fresh composer context, as /new and /resume always have.
-			m.pasteGeneration++
-			m.pasting = false
-			m.dismissFileCompletion()
-			m.fileIndexCache = nil
-		}
+		// A session change starts a fresh composer context, as /new and /resume always have.
+		m.cache = nil
+		m.pasteGeneration++
+		m.pasting = false
+		m.dismissFileCompletion()
+		m.fileIndexCache = nil
 		m.refresh(true)
 	case "done":
-		if e.Operation == "compact" && e.Message != "" {
-			m.add("notice", e.Message)
-		}
 		if len(e.Unsent) > 0 {
 			m.restoreUnsent(e.Unsent)
 		}
@@ -153,8 +146,4 @@ func (m *model) restoreUnsent(unsent []agent.Input) {
 	images = append(images, m.images...)
 	m.images = images
 	m.input.SetValue(strings.Join(texts, "\n\n"))
-}
-
-func (m *model) applyAgentEvent(e agent.Event) {
-	m.entries = agent.ApplyEvent(m.entries, e)
 }

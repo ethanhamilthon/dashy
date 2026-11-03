@@ -60,7 +60,7 @@ func TestCompactFailureKeepsHistory(t *testing.T) {
 
 // Automatic compaction runs before a request that exceeds the threshold, and the
 // display is rebuilt from the compacted history: old turns disappear, the summary appears.
-func TestAutomaticCompactionReplacesDisplayWithSummary(t *testing.T) {
+func TestAutomaticCompactionShrinksHistoryAndReports(t *testing.T) {
 	fp := &fakeProvider{reply: func(n int, body string) string {
 		if strings.Contains(body, `"stream":true`) {
 			return textReply("after")
@@ -73,12 +73,12 @@ func TestAutomaticCompactionReplacesDisplayWithSummary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var reset bool
+	var reported bool
 	for _, e := range events {
-		reset = reset || e.Kind == "reset"
+		reported = reported || e.Kind == "notice" && strings.HasPrefix(e.Text, "Compacted")
 	}
 	joined := fmt.Sprint(a.Records())
-	if !reset || !strings.Contains(joined, "Compacted conversation: SUMMARY") || strings.Contains(joined, "turn 0") {
-		t.Fatalf("reset %v, records %s", reset, joined)
+	if !reported || !strings.Contains(joined, "Compacted conversation: SUMMARY") || strings.Contains(joined, "turn 0") {
+		t.Fatalf("reported %v, records %s", reported, joined)
 	}
 }

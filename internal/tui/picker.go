@@ -20,13 +20,9 @@ const (
 	pickerSetup    = "setup" // provider prompts after "Add provider"
 )
 
-// Action rows of the pickers. Provider and model rows have none, so their names can be anything.
-const (
-	actionAdd         = "add"
-	actionReasoning   = "reasoning"
-	actionAutoCompact = "autocompact"
-	actionLines       = "lines"
-)
+// actionAdd is the "Add provider" row. Settings rows have a control.Setting* action;
+// provider and model rows have none, so their names can be anything.
+const actionAdd = "add"
 
 // modelChoices carries the result of listing models for the settings picker.
 type modelChoices struct {
@@ -70,12 +66,12 @@ func (m *model) openPicker(kind string) tea.Cmd {
 // rebuildSettingsMenu lists the settings rows followed by the models known so far.
 func (m *model) rebuildSettingsMenu() {
 	s := m.ctl.Settings()
-	m.menu = []command{
-		{name: "Reasoning summary", icon: "*", label: "Reasoning summary: " + control.OnOff(s.ReasoningSummary), action: actionReasoning},
-		{name: "Auto compact", icon: "*", label: "Auto compact: " + control.OnOff(s.AutoCompact), action: actionAutoCompact},
-		{name: "Show lines", icon: "*", label: "Show lines: " + s.ShowLines, action: actionLines},
-		{name: "Add provider", icon: "+", description: "Create provider", label: "+ Add provider", action: actionAdd},
+	m.menu = nil
+	for _, row := range []struct{ name, setting string }{{"Reasoning summary", control.SettingReasoning},
+		{"Auto compact", control.SettingAutoCompact}, {"Compact threshold", control.SettingThreshold}, {"Show lines", control.SettingLines}} {
+		m.menu = append(m.menu, command{name: row.name, icon: "*", label: control.SettingLabel(row.setting, s), action: row.setting})
 	}
+	m.menu = append(m.menu, command{name: "Add provider", icon: "+", description: "Create provider", label: "+ Add provider", action: actionAdd})
 	for _, c := range m.pickerModels {
 		m.menu = append(m.menu, command{name: c.Model, description: c.Provider, label: c.Model + "  " + c.Provider})
 		if c.Provider == s.Provider && c.Model == s.Model {
@@ -161,16 +157,8 @@ func (m model) pickerEnter() (tea.Model, tea.Cmd, bool) {
 		m.refresh(true)
 		return m, nil, true
 	}
-	var toggle error
-	switch chosen.action {
-	case actionReasoning:
-		toggle = m.ctl.ToggleReasoningSummary()
-	case actionAutoCompact:
-		toggle = m.ctl.ToggleAutoCompact()
-	case actionLines:
-		toggle = m.ctl.CycleShowLines()
-	}
 	if chosen.action != "" {
+		toggle := m.ctl.ChangeSetting(chosen.action)
 		m.rebuildSettingsMenu()
 		m.refresh(true)
 		if toggle != nil {

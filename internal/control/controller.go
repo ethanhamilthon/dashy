@@ -22,7 +22,7 @@ type Controller struct {
 	active   *operation
 	idle     chan struct{} // closed when active ends; nil while idle
 	deferred *deferredAction
-	journal  []agent.Record // display journal, the same records the agent persists
+	journal  []agent.Record // the display timeline: the one copy every view reads
 	custom   string         // /rename title
 	first    string         // first line of the first user message
 	ctx      int64          // context size shown in the status line
@@ -52,6 +52,8 @@ func New(a *agent.Agent, emit func(Event)) *Controller {
 		emit = func(Event) {}
 	}
 	c := &Controller{a: a, emit: emit, journal: a.Records(), closed: make(chan struct{})}
+	// Input pushed while idle (a notification, dashy view) starts a turn at once.
+	a.Queue().OnPush(func() { go c.view(func() { c.deliverLocked() }) })
 	c.custom = a.CustomTitle()
 	c.first = a.DefaultTitle()
 	c.ctx = a.ContextTokens()
@@ -99,6 +101,11 @@ func (c *Controller) Context() (tokens int64) {
 	return tokens
 }
 
+// Note applies a display event of the interface (a notice, error or info) to the timeline without emitting it.
+func (c *Controller) Note(e agent.Event) {
+	c.view(func() { c.journal = agent.ApplyEvent(c.journal, e) })
+}
+
 // History returns the display journal of the session.
 func (c *Controller) History() (records []agent.Record) {
 	c.view(func() { records = slices.Clone(c.journal) })
@@ -119,12 +126,6 @@ func (c *Controller) Settings() (s agent.Settings) {
 
 // AttachmentsDir is where pasted and viewed images are saved.
 func (c *Controller) AttachmentsDir() string { return c.a.AttachmentsDir() }
-
-// Deliver starts a turn for pending external notifications when idle.
-func (c *Controller) Deliver() (started bool) {
-	c.view(func() { started = c.deliverLocked() })
-	return started
-}
 
 // Close cancels any active operation and waits for it to finish. It does not save.
 func (c *Controller) Close() {
@@ -155,7 +156,6 @@ func (c *Controller) closeLocked() error {
 		return nil
 	}
 	c.closing = true
-	c.a.RememberDisplay(c.journal)
 	if c.a.HasSavedSession() {
 		if err := c.a.Save(); err != nil {
 			c.closing = false
@@ -202,11 +202,6 @@ func (c *Controller) observe(op *operation, e agent.Event) {
 	c.view(func() {
 		if e.Meta != nil && e.Meta.ContextInput != nil {
 			c.ctx = *e.Meta.ContextInput
-		}
-		if e.Kind == "reset" {
-			// Automatic compaction replaced the history at a safe point: rebuild the display from it.
-			c.publish(Event{Kind: "session", Operation: "compact", Records: c.a.Records()})
-			return
 		}
 		c.publish(Event{Kind: "agent", Agent: &e})
 	})
@@ -259,12 +254,13 @@ func (c *Controller) finishCompact(op *operation, text string, err error) {
 		c.endLocked(op)
 		if status == "ok" {
 			c.ctx = c.a.ContextTokens()
-			c.publish(Event{Kind: "session", Operation: "compact", Records: c.a.Records()})
 		}
 		if status == "error" {
 			c.publish(Event{Kind: "error", Text: failure})
+		} else {
+			c.publish(Event{Kind: "notice", Text: message})
 		}
-		c.publish(Event{Kind: "done", Operation: "compact", Status: status, Error: failure, Message: message})
+		c.publish(Event{Kind: "done", Operation: "compact", Status: status, Error: failure})
 		c.settleLocked(nil)
 	})
 }
@@ -297,7 +293,6 @@ func (c *Controller) settleLocked(unsent []agent.Input) {
 
 // switchLocked changes the session. Callers guarantee that no operation runs.
 func (c *Controller) switchLocked(kind, id string) error {
-	c.a.RememberDisplay(c.journal)
 	var err error
 	if kind == "resume" {
 		err = c.a.Resume(id)

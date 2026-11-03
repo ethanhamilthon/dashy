@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -270,43 +271,56 @@ func (c *Controller) AddProvider(name, baseURL, apiKey string) error {
 	return err
 }
 
-// ToggleReasoningSummary, ToggleAutoCompact and CycleShowLines change one setting and save it.
-// They are rejected while an operation runs, so no turn ever sees settings change under it.
-func (c *Controller) ToggleReasoningSummary() error {
-	return c.changeSetting(func(s agent.Settings) (string, error) {
-		err := c.a.SetReasoningSummary(!s.ReasoningSummary)
-		return "Reasoning summary: " + OnOff(!s.ReasoningSummary), err
-	})
+// Settings rows that ChangeSetting toggles or cycles.
+const (
+	SettingReasoning   = "reasoning"
+	SettingAutoCompact = "autocompact"
+	SettingThreshold   = "threshold"
+	SettingLines       = "lines"
+)
+
+// SettingLabel shows one setting row, as in /settings and in the notice after a change.
+func SettingLabel(setting string, s agent.Settings) string {
+	switch setting {
+	case SettingReasoning:
+		return "Reasoning summary: " + OnOff(s.ReasoningSummary)
+	case SettingAutoCompact:
+		return "Auto compact: " + OnOff(s.AutoCompact)
+	case SettingThreshold:
+		return fmt.Sprintf("Compact at: %dK tokens", s.CompactThreshold/1000)
+	}
+	return "Show lines: " + s.ShowLines
 }
 
-func (c *Controller) ToggleAutoCompact() error {
-	return c.changeSetting(func(s agent.Settings) (string, error) {
-		err := c.a.SetAutoCompact(!s.AutoCompact)
-		return "Auto compact: " + OnOff(!s.AutoCompact), err
-	})
-}
-
-func (c *Controller) CycleShowLines() error {
-	return c.changeSetting(func(agent.Settings) (string, error) {
-		err := c.a.CycleShowLines()
-		return "Show lines: " + c.a.Settings().ShowLines, err
-	})
-}
-
-func (c *Controller) changeSetting(change func(agent.Settings) (string, error)) error {
+// ChangeSetting toggles or cycles one setting and saves it. It is rejected while an
+// operation runs, so no turn ever sees settings change under it.
+func (c *Controller) ChangeSetting(setting string) error {
 	var err error
 	c.view(func() {
 		if err = c.requireIdle("Wait for the active turn before changing settings."); err != nil {
 			return
 		}
-		text, e := change(c.a.Settings())
-		if e != nil {
+		if e := c.a.ChangeSettings(func(s *agent.Settings) { cycle(setting, s) }); e != nil {
 			err = fail("failed", "%s", e)
 			return
 		}
-		c.publish(Event{Kind: "notice", Text: text})
+		c.publish(Event{Kind: "notice", Text: SettingLabel(setting, c.a.Settings())})
 	})
 	return err
+}
+
+func cycle(setting string, s *agent.Settings) {
+	switch setting {
+	case SettingReasoning:
+		s.ReasoningSummary = !s.ReasoningSummary
+	case SettingAutoCompact:
+		s.AutoCompact = !s.AutoCompact
+	case SettingThreshold:
+		i := slices.IndexFunc(agent.CompactThresholds, func(t int64) bool { return t > s.CompactThreshold })
+		s.CompactThreshold = agent.CompactThresholds[max(i, 0)]
+	case SettingLines:
+		s.ShowLines = map[string]string{"short": "medium", "medium": "full", "full": "short"}[s.ShowLines]
+	}
 }
 
 // OnOff is how settings show a boolean.

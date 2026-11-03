@@ -15,6 +15,7 @@ import (
 	"github.com/muesli/termenv"
 
 	"dashy/internal/agent"
+	"dashy/internal/control"
 )
 
 func TestTimelineCacheAndResize(t *testing.T) {
@@ -24,13 +25,15 @@ func TestTimelineCacheAndResize(t *testing.T) {
 	}
 	m.refresh(true)
 	cached := m.cache[0].Text
-	m.applyAgentEvent(agent.Event{Kind: "delta", ID: "stream", Text: "First"})
+	m.ctl.Note(agent.Event{Kind: "delta", ID: "stream", Text: "First"})
 	m.refresh(true)
 	if unsafe.StringData(cached) != unsafe.StringData(m.cache[0].Text) {
 		t.Fatal("completed entry was reformatted")
 	}
 	inputWidth, inputHeight := m.inputWidth, m.inputHeight
-	next, _ := m.Update(agentEvent(agent.Event{Kind: "delta", ID: "stream", Text: " second"}))
+	second := agent.Event{Kind: "delta", ID: "stream", Text: " second"}
+	m.ctl.Note(second) // the controller applies an agent event before emitting it
+	next, _ := m.Update(agentEvent(second))
 	m = next.(model)
 	if m.inputWidth != inputWidth || m.inputHeight != inputHeight || unsafe.StringData(cached) != unsafe.StringData(m.cache[0].Text) {
 		t.Fatal("delta invalidated input layout or completed cache")
@@ -138,7 +141,7 @@ func TestTimelineLimitsAndHiddenSpacing(t *testing.T) {
 		t.Fatal("default code limit too short")
 	}
 	for i := 0; i < 2; i++ { // short -> medium -> full
-		if err := a.CycleShowLines(); err != nil {
+		if err := m.ctl.ChangeSetting(control.SettingLines); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -256,8 +259,8 @@ func TestSingleLineNotifications(t *testing.T) {
 		t.Fatal("restored notice not formatted")
 	}
 	live := bareModel(t, "/project")
-	live.applyAgentEvent(agent.Event{Kind: "notice", Text: note})
-	live.timeline()
+	live.ctl.Note(agent.Event{Kind: "notice", Text: note})
+	live.refresh(true)
 	if m.cache[0].Text != live.cache[0].Text {
 		t.Fatal("live and restored notifications differ")
 	}

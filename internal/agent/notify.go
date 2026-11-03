@@ -54,7 +54,6 @@ type sessionSocket struct {
 	path     string
 	listener net.Listener
 	queue    *Steering
-	views    chan shell.Image
 	slots    *imageSlots
 	done     chan struct{} // closed when the accept loop has returned
 	mu       sync.Mutex    // guards retired and current, and admission
@@ -93,9 +92,8 @@ func (a *Agent) listenNotifications() error {
 		return err
 	}
 	_ = os.Chmod(sockPath, 0600)
-	s := &sessionSocket{path: sockPath, listener: listener, queue: a.queue,
-		views: make(chan shell.Image, 4), slots: a.slots, done: make(chan struct{})}
-	a.sock, a.views = s, s.views
+	s := &sessionSocket{path: sockPath, listener: listener, queue: a.queue, slots: a.slots, done: make(chan struct{})}
+	a.sock = s
 	go func() {
 		defer close(s.done)
 		for connection, err := listener.Accept(); err == nil; connection, err = listener.Accept() {
@@ -134,7 +132,11 @@ func (s *sessionSocket) admit(message Message, err error) string {
 		case !s.slots.reserve(1):
 			return fmt.Sprintf("view: at most %d new images per model request", MaxPendingImages)
 		}
-		s.views <- *message.Image // the reservation bounds the queue to its capacity
+		// The image joins the input queue like a notification; it reaches the next model request.
+		if !s.queue.Push(Input{Text: "<notify>\nImage queued by dashy view.\n</notify>", Images: []shell.Image{*message.Image}, Notice: true}) {
+			s.slots.release(1)
+			return "notification queue is full"
+		}
 		return ""
 	}
 	if strings.TrimSpace(message.Text) == "" || len(message.Text) > MaxNotifyBytes {
@@ -185,10 +187,12 @@ func (s *imageSlots) reserve(n int) bool {
 }
 
 // ReleaseImages drops n admitted images that will not reach the history (returned unsent or recalled).
-func (a *Agent) ReleaseImages(n int) {
-	a.slots.mu.Lock()
-	defer a.slots.mu.Unlock()
-	a.slots.reserved = max(0, a.slots.reserved-n)
+func (a *Agent) ReleaseImages(n int) { a.slots.release(n) }
+
+func (s *imageSlots) release(n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reserved = max(0, s.reserved-n)
 }
 
 // commitImages moves n admitted images into the history, where they wait for the next request.
@@ -211,20 +215,6 @@ func (a *Agent) PendingImages() int {
 	a.slots.mu.Lock()
 	defer a.slots.mu.Unlock()
 	return a.slots.reserved + a.slots.committed
-}
-
-// viewed drains images queued by dashy view and commits them to the history.
-func (a *Agent) viewed() []shell.Image {
-	var images []shell.Image
-	for {
-		select {
-		case image := <-a.views:
-			images = append(images, image)
-		default:
-			a.commitImages(len(images))
-			return images
-		}
-	}
 }
 
 // validImage accepts only a PNG or JPEG data URL whose payload decodes as that format.

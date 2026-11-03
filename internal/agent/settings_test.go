@@ -71,16 +71,26 @@ func TestSelectionsAreAppliedAndSaved(t *testing.T) {
 	if a.Select("missing", "m", "") == nil || a.Settings().Model != "m2" {
 		t.Fatal("selection of an unknown provider accepted")
 	}
-	if err := a.SetAutoCompact(false); err != nil {
-		t.Fatal(err)
+	if err := a.ChangeSettings(func(s *Settings) { s.AutoCompact, s.ShowLines = false, "full" }); err != nil || a.Settings().ShowLines != "full" {
+		t.Fatalf("change: %v", err)
 	}
-	for _, want := range []string{"medium", "full", "short"} {
-		if err := a.CycleShowLines(); err != nil || a.Settings().ShowLines != want {
-			t.Fatalf("show lines %q, want %q (%v)", a.Settings().ShowLines, want, err)
-		}
+	if a.ChangeSettings(func(s *Settings) { s.ShowLines, s.CompactThreshold = "huge", 0 }) == nil || a.Settings().ShowLines != "full" {
+		t.Fatal("invalid settings accepted")
 	}
 	back, err := LoadSettings(a.SettingsPath())
 	if err != nil || back.Model != "m2" || back.Effort != "high" || back.AutoCompact || back.Providers["q"].BaseURL == "" {
 		t.Fatalf("saved settings: %+v %v", back, err)
+	}
+}
+
+// A settings file written before compact_threshold existed gets the default threshold.
+func TestCompactThresholdDefaultsForOlderSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(path, []byte(`{"show_lines":"short","providers":{}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := LoadSettings(path)
+	if err != nil || s.CompactThreshold != DefaultCompactThreshold {
+		t.Fatalf("threshold %d, %v", s.CompactThreshold, err)
 	}
 }

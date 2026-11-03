@@ -5,12 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"math"
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -77,14 +75,12 @@ type Agent struct {
 	prompt       string   // assembled system prompt, frozen once assembled
 	promptFrozen bool
 	promptSource string // startup, new or resume (DASHY_SOURCE)
-	records      []Record
 	title        string // custom title set by /rename; "" means the default title
 	defaultTitle string // first user line, saved at compaction because that message may be dropped
 	lastRequest  Metadata
 	sock         *sessionSocket // nil in print mode
 	queue        *Steering      // one ordered queue of input for the running turn, shared with the socket
-	views        chan shell.Image
-	slots        *imageSlots // shared allowance of new images per model request
+	slots        *imageSlots    // shared allowance of new images per model request
 }
 
 // New opens the project in dir. Options.Resume optionally resumes a saved session.
@@ -155,17 +151,6 @@ func (a *Agent) Run(ctx context.Context, text string, emit func(Event)) error {
 // RunInput runs one turn: the input, then model requests and bash calls until the
 // model stops. Events describe display changes; history is saved as it grows.
 func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event)) (err error) {
-	if a.records == nil {
-		a.records = a.Records()
-	}
-	forward := emit
-	emit = func(e Event) {
-		if e.Kind != "reset" { // reset already rebuilt a.records from the history
-			a.records = ApplyEvent(a.records, e)
-		}
-		forward(e)
-	}
-
 	defer func() {
 		err = a.safeError(err)
 		if err != nil && !errors.Is(err, context.Canceled) {
@@ -218,47 +203,15 @@ func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event)) (er
 			return ctx.Err()
 		}
 		acceptSteering()
-		if images := a.viewed(); len(images) > 0 {
-			text := "<notify>\nImages queued by dashy view." + imageOriginals(images) + "\n</notify>"
-			content := []any{map[string]any{"type": "input_text", "text": text}}
-			for _, img := range images {
-				content = append(content, map[string]any{"type": "input_image", "image_url": img.URL, "detail": "auto"})
-			}
-			a.History = append(a.History, raw(map[string]any{"role": "user", "content": content}))
-			emit(Event{Kind: "notice", Text: text})
-		}
 		a.compactIfNeeded(ctx, emit)
 		if e := a.Save(); e != nil {
 			return fmt.Errorf("could not save history: %w", e)
 		}
-		baseHistory := append([]json.RawMessage(nil), a.History...)
-		baseRecords := append([]Record(nil), a.records...)
-		finished := map[int64]json.RawMessage{}
-		var durableHistory []json.RawMessage
-		checkpoint := func(index int64, item json.RawMessage) error {
-			finished[index] = append(json.RawMessage(nil), item...)
-			durableHistory = append([]json.RawMessage(nil), baseHistory...)
-			for _, i := range slices.Sorted(maps.Keys(finished)) {
-				durableHistory = append(durableHistory, finished[i])
-			}
-			snapshot := *a
-			snapshot.History = durableHistory
-			if err := snapshot.Save(); err != nil {
-				return fmt.Errorf("could not save history: %w", err)
-			}
-			return nil
-		}
-		items, e := a.requestWithRetries(ctx, emit, checkpoint)
+		// A response is committed only when it completes: an interrupted stream leaves no trace in the history.
+		items, e := a.requestWithRetries(ctx, emit)
 		if e != nil {
-			if durableHistory != nil {
-				a.History = durableHistory
-			} else {
-				a.records = baseRecords
-			}
 			return e
 		}
-		// Discard streaming-only entries from the persistent journal.
-		a.records = baseRecords
 		meta := a.lastRequest
 		if meta.Usage == nil {
 			usageKnown = false
@@ -371,9 +324,8 @@ func (a *Agent) itemID(index int64) string {
 	return fmt.Sprintf("%s-%d", a.lastRequest.RequestID, index)
 }
 
-// request sends the history and returns the completed response items. checkpoint,
-// when not nil, receives every output item as soon as the provider completes it.
-func (a *Agent) request(ctx context.Context, emit func(Event), checkpoint func(int64, json.RawMessage) error) (items []json.RawMessage, err error) {
+// request sends the history and returns the completed response items.
+func (a *Agent) request(ctx context.Context, emit func(Event)) (items []json.RawMessage, err error) {
 	defer func() { err = a.safeError(err) }()
 	if hint := a.settings.SetupHint(); hint != "" {
 		return nil, errors.New(hint)
@@ -428,11 +380,6 @@ func (a *Agent) request(ctx context.Context, emit func(Event), checkpoint func(i
 				emit(Event{Kind: "code", Text: partialCode(arguments[event.OutputIndex]), Provisional: true, ID: a.itemID(event.OutputIndex), Final: true})
 			}
 		case "response.output_item.added", "response.output_item.done":
-			if event.Type == "response.output_item.done" && checkpoint != nil {
-				if err := checkpoint(event.OutputIndex, json.RawMessage(event.Item.RawJSON())); err != nil {
-					return nil, err
-				}
-			}
 			// Some providers deliver complete arguments without argument deltas.
 			if event.Item.Type == "function_call" {
 				names[event.OutputIndex] = event.Item.Name

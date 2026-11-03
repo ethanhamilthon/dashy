@@ -123,9 +123,7 @@ func (r *Reporter) HandleEvent(e control.Event) {
 			r.state, r.msg = "done", agent.FirstLine(e.Text) // e.Text: final assistant text
 		}
 	case "session":
-		if e.Operation != "compact" {
-			r.state, r.msg = "idle", ""
-		}
+		r.state, r.msg = "idle", ""
 	}
 	r.title = e.Title
 	r.reportLocked()

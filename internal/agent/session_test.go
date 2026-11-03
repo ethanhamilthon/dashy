@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -209,5 +210,32 @@ func TestLargeFirstMessageKeepsListTitle(t *testing.T) {
 	defer again.Close()
 	if again.DefaultTitle() != "Short title" {
 		t.Fatalf("reopened title = %q", again.DefaultTitle())
+	}
+}
+
+// The session list reads a title from the start of a file and stops there: later
+// lines, even a damaged one, are not parsed.
+func TestSessionListReadsTitleFromTheStart(t *testing.T) {
+	a := newTestAgent(t, &fakeProvider{}, Options{})
+	files := map[string]string{
+		"a.jsonl": `{"meta":{"title":"Custom","default_title":""}}` + "\n" + `{"role":"user","content":"first"}` + "\n",
+		"b.jsonl": `{"meta":{"title":"","default_title":"Saved first line"}}` + "\n" + `{"role":"user","content":"later"}` + "\n",
+		"c.jsonl": `{"type":"reasoning","summary":[]}` + "\n" + `{"role":"user","content":"\n  Hello there\nmore"}` + "\nnot json\n{}\n",
+	}
+	for name, data := range files {
+		if err := os.WriteFile(filepath.Join(a.sessionsDir, name), []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sessions, err := a.Sessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	titles := map[string]string{}
+	for _, s := range sessions {
+		titles[s.ID] = s.Title
+	}
+	if titles["a"] != "Custom" || titles["b"] != "Saved first line" || titles["c"] != "Hello there" {
+		t.Fatalf("titles %v", titles)
 	}
 }

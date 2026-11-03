@@ -15,12 +15,11 @@ import (
 // events in emission order and must not call the controller from the callback.
 type Event struct {
 	Kind      string         // started, agent, notice, error, done or session
-	Operation string         // started, done, session: turn or compact
+	Operation string         // started and done: turn or compact
 	Agent     *agent.Event   // agent: the unmodified event from the agent
 	Text      string         // started: the input text; notice and error: the text; done (ok): final assistant text
 	Status    string         // done: ok, error or cancelled
 	Error     string         // done: failure text
-	Message   string         // done (compact): summary or cancellation text
 	Unsent    []agent.Input  // done: queued inputs the model did not accept
 	Records   []agent.Record // session: display records after the change
 	Title     string         // session title after this event (rename, else first user line)

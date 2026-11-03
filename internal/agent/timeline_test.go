@@ -2,12 +2,13 @@ package agent
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
-// The live display records of a turn match the records derived from the saved history,
-// so a resumed session shows exactly what the live session showed.
-func TestLiveRecordsMatchRecordsDerivedFromHistory(t *testing.T) {
+// A turn displays as the records derived from its saved history, which is what a resumed
+// session shows.
+func TestRecordsDerivedFromHistory(t *testing.T) {
 	fp := &fakeProvider{reply: func(n int, body string) string {
 		if n == 1 {
 			return bashReply("c1", "echo hi")
@@ -18,14 +19,13 @@ func TestLiveRecordsMatchRecordsDerivedFromHistory(t *testing.T) {
 	if _, err := turn(t, a, "say hi"); err != nil {
 		t.Fatal(err)
 	}
-	live, derived := a.Records(), recordsOf(a.History)
-	if len(live) != 4 || len(live) != len(derived) {
-		t.Fatalf("live %+v, derived %+v", live, derived)
+	records := a.Records()
+	var kinds []string
+	for _, r := range records {
+		kinds = append(kinds, r.Kind)
 	}
-	for i := range live {
-		if live[i].Kind != derived[i].Kind || live[i].Text != derived[i].Text {
-			t.Fatalf("record %d: live %+v, derived %+v", i, live[i], derived[i])
-		}
+	if strings.Join(kinds, ",") != "user,code,output,assistant" {
+		t.Fatalf("records %+v", records)
 	}
 }
 
