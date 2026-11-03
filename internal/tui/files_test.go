@@ -31,6 +31,7 @@ func TestFindFileTokenBasics(t *testing.T) {
 		{"token with quotes", "@\"my file.txt\"", 13, true, "my file.txt", 0, 14},
 		{"multiline token", "line 1\nline 2 @src/main.go", 26, true, "src/main.go", 14, 26},
 		{"space after token", "@foo ", 5, false, "", 0, 0},
+		{"negative cursor", "@foo", -1, false, "", 0, 0},
 	}
 
 	for _, tc := range tests {

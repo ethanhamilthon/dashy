@@ -120,9 +120,6 @@ func (c *Controller) Settings() (s agent.Settings) {
 	return s
 }
 
-// SettingsPath is the file that stores settings.
-func (c *Controller) SettingsPath() string { return c.a.SettingsPath() }
-
 // AttachmentsDir is where pasted and viewed images are saved.
 func (c *Controller) AttachmentsDir() string { return c.a.AttachmentsDir() }
 
