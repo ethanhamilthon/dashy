@@ -111,7 +111,8 @@ type Agent struct {
 	promptFrozen bool
 	promptSource string // startup, new or resume (DASHY_SOURCE)
 	records      []Record
-	title        string // custom title set by /rename; "" means the first user message
+	title        string // custom title set by /rename; "" means the default title
+	defaultTitle string // first user line, saved at compaction because that message may be dropped
 	lastRequest  Metadata
 	listener     net.Listener
 	socketPath   string

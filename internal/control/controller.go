@@ -57,7 +57,7 @@ func New(a *agent.Agent, emit func(Event)) *Controller {
 	}
 	c := &Controller{a: a, emit: emit, journal: a.Records(), closed: make(chan struct{})}
 	c.custom = a.CustomTitle()
-	c.first = agent.DefaultTitle(c.journal)
+	c.first = a.DefaultTitle()
 	c.ctx = a.ContextTokens()
 	return c
 }
@@ -382,7 +382,7 @@ func (c *Controller) publish(e Event) {
 		c.journal = agent.ApplyEvent(c.journal, agent.Event{Kind: e.Kind, Text: e.Text})
 	case "session":
 		c.journal = slices.Clone(e.Records)
-		c.first = agent.DefaultTitle(e.Records)
+		c.first = c.a.DefaultTitle()
 	}
 	e.Title = c.titleLocked()
 	c.emit(e)

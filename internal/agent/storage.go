@@ -3,6 +3,7 @@ package agent
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -16,10 +17,11 @@ import (
 )
 
 // Session files hold one history item per line plus at most one {"meta":{...}}
-// line for the custom title.
+// line: the custom title, and the default title saved by compaction.
 type sessionMeta struct {
 	Meta *struct {
-		Title string `json:"title"`
+		Title        string `json:"title"`
+		DefaultTitle string `json:"default_title"`
 	} `json:"meta"`
 }
 
@@ -113,8 +115,8 @@ func (a *Agent) Sessions() ([]SessionSummary, error) {
 	return sessions, nil
 }
 
-// sessionSummary reads the title of a session file. The title is the
-// custom title if there is one, else the first line of the first user message.
+// sessionSummary reads the title of a session file: the custom title if there is
+// one, else the default title, else the first line of the first user message.
 func sessionSummary(path string) SessionSummary {
 	var summary SessionSummary
 	file, err := os.Open(path)
@@ -124,6 +126,7 @@ func sessionSummary(path string) SessionSummary {
 	defer file.Close()
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	var custom, defaultTitle, fromHistory string
 	for scanner.Scan() {
 		line := bytes.TrimSpace(scanner.Bytes())
 		if len(line) == 0 || line[0] != '{' {
@@ -131,21 +134,19 @@ func sessionSummary(path string) SessionSummary {
 		}
 		var meta sessionMeta
 		if json.Unmarshal(line, &meta) == nil && meta.Meta != nil {
-			if meta.Meta.Title != "" {
-				summary.Title = meta.Meta.Title
-				return summary
-			}
+			custom, defaultTitle = meta.Meta.Title, meta.Meta.DefaultTitle
 			continue
 		}
-		if summary.Title == "" {
+		if fromHistory == "" {
 			for _, r := range RecordsForItem(line) {
 				if r.Kind == "user" {
-					summary.Title = FirstLine(r.Text)
+					fromHistory = FirstLine(r.Text)
 					break
 				}
 			}
 		}
 	}
+	summary.Title = cmp.Or(custom, defaultTitle, fromHistory)
 	return summary
 }
 
@@ -172,13 +173,14 @@ func FirstLine(text string) string {
 	return ""
 }
 
-// DefaultTitle is the first line of the first user message in records.
-func DefaultTitle(records []Record) string {
-	for _, r := range records {
-		if r.Kind == "user" {
-			if line := FirstLine(r.Text); line != "" {
-				return line
-			}
+// DefaultTitle is the first line of the first user message, or the value saved by compaction.
+func (a *Agent) DefaultTitle() string {
+	if a.defaultTitle != "" {
+		return a.defaultTitle
+	}
+	for _, r := range a.Records() {
+		if line := FirstLine(r.Text); r.Kind == "user" && line != "" {
+			return line
 		}
 	}
 	return ""
@@ -186,8 +188,8 @@ func DefaultTitle(records []Record) string {
 
 func (a *Agent) sessionData() ([]byte, error) {
 	var buffer bytes.Buffer
-	if a.title != "" {
-		meta, err := json.Marshal(map[string]any{"meta": map[string]string{"title": a.title}})
+	if a.title != "" || a.defaultTitle != "" {
+		meta, err := json.Marshal(map[string]any{"meta": map[string]string{"title": a.title, "default_title": a.defaultTitle}})
 		if err != nil {
 			return nil, err
 		}
@@ -216,7 +218,7 @@ func (a *Agent) readSession() error {
 		lines = lines[:len(lines)-1]
 	}
 	var history []json.RawMessage
-	var title string
+	var title, defaultTitle string
 	for i, line := range lines {
 		line = bytes.TrimSpace(line)
 		if len(line) == 0 {
@@ -230,12 +232,12 @@ func (a *Agent) readSession() error {
 			return fmt.Errorf("session line %d is not a JSON object", i+1)
 		}
 		if meta.Meta != nil {
-			title = meta.Meta.Title
+			title, defaultTitle = meta.Meta.Title, meta.Meta.DefaultTitle
 			continue
 		}
 		history = append(history, append(json.RawMessage(nil), line...))
 	}
-	a.History, a.title = history, title
+	a.History, a.title, a.defaultTitle = history, title, defaultTitle
 	return nil
 }
 

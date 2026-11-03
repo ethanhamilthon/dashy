@@ -1,8 +1,10 @@
 package agent
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -61,6 +63,44 @@ func TestResumeKeepsTitleHistoryAndEstimatesContext(t *testing.T) {
 	defer again.Close()
 	if again.CustomTitle() != "Kept" || len(again.History) != 2 || again.ContextTokens() <= 0 {
 		t.Fatalf("resumed: title %q, %d items, ctx %d", again.CustomTitle(), len(again.History), again.ContextTokens())
+	}
+}
+
+// Compaction drops the first user message ("turn 0"), but the default title stays
+// "turn 0" in the list and after reopening; a rename is separate and its reset
+// restores that default.
+func TestDefaultTitleSurvivesCompaction(t *testing.T) {
+	fp := &fakeProvider{reply: func(int, string) string { return summaryReply("SUMMARY") }}
+	a := newTestAgent(t, fp, Options{})
+	compactTurns(t, a, 6, 1)
+	if _, err := a.Compact(context.Background(), ""); err != nil {
+		t.Fatal(err)
+	}
+	const want = "turn 0 x"
+	if strings.Contains(fmt.Sprint(a.Records()), want) || a.DefaultTitle() != want {
+		t.Fatalf("after compaction: default %q, records %v", a.DefaultTitle(), a.Records())
+	}
+	if err := a.Rename("Mine"); err != nil {
+		t.Fatal(err)
+	}
+	if sessions, _ := a.Sessions(); sessions[0].Title != "Mine" {
+		t.Fatalf("renamed list title = %q", sessions[0].Title)
+	}
+	if err := a.Rename(""); err != nil {
+		t.Fatal(err)
+	}
+	if sessions, _ := a.Sessions(); sessions[0].Title != want {
+		t.Fatalf("reset list title = %q", sessions[0].Title)
+	}
+	id := a.SessionID()
+	a.Close()
+	again, err := New(a.Shell.Dir, Options{Resume: id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer again.Close()
+	if again.DefaultTitle() != want || again.CustomTitle() != "" {
+		t.Fatalf("reopened: default %q, custom %q", again.DefaultTitle(), again.CustomTitle())
 	}
 }
 

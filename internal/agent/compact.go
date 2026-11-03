@@ -131,6 +131,7 @@ func (a *Agent) Compact(ctx context.Context, prompt string) (string, error) {
 	}
 	item := raw(map[string]any{"role": "user", "content": "<compact_summary>\n" + summary + "\n</compact_summary>"})
 	history, records := a.History, a.records
+	a.defaultTitle = a.DefaultTitle() // kept before the first user message can be dropped
 	a.History = append([]json.RawMessage{item}, a.History[cut:]...)
 	a.records = recordsOf(a.History)
 	if err := a.Save(); err != nil {
