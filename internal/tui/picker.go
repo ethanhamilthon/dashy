@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"strings"
 
@@ -54,12 +55,7 @@ func (m *model) openPicker(kind string) tea.Cmd {
 		m.menu = append(m.menu, command{name: "Add", icon: "+", description: "Create provider", label: "+ Add provider", action: actionAdd})
 		return nil
 	}
-	m.effort = 0
-	for i, e := range agent.Efforts {
-		if e == m.ctl.Settings().Effort {
-			m.effort = i
-		}
-	}
+	m.effort = slices.Index(agent.Efforts, m.ctl.Settings().Effort)
 	m.pickerModels = nil
 	m.rebuildSettingsMenu()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -125,11 +121,16 @@ func (m model) pickerKey(key tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		if m.menuKind != pickerSettings {
 			return m, nil, false
 		}
-		delta := 1
-		if key.String() == "left" {
-			delta = -1
+		delta := map[string]int{"left": -1, "right": 1}[key.String()]
+		effort := (m.effort + delta + len(agent.Efforts)) % len(agent.Efforts)
+		if s := m.ctl.Settings(); s.Provider != "" && s.Model != "" {
+			// A configured model's effort is applied and saved at once; a rejected change keeps the saved value.
+			if err := m.ctl.SelectModel(s.Provider, s.Model, agent.Efforts[effort]); err != nil {
+				next, cmd := m.reject(err)
+				return next, cmd, true
+			}
 		}
-		m.effort = (m.effort + delta + len(agent.Efforts)) % len(agent.Efforts)
+		m.effort = effort
 	case "up", "down", "tab":
 		if matches := m.completions(); len(matches) > 0 {
 			delta := 1

@@ -143,3 +143,21 @@ func TestPickerNamesThatMatchActionsAreChoices(t *testing.T) {
 		t.Fatalf("model named Show lines: model %q, show lines %q", s.Model, s.ShowLines)
 	}
 }
+
+// With a configured model, Left/Right saves the effort at once: Escape keeps it.
+func TestEffortChangeIsSavedBeforeEscape(t *testing.T) {
+	m, a := freshModel(t)
+	if err := a.AddProvider("p", agent.Provider{BaseURL: modelServer(t, `{"data":[{"id":"m1"}]}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Select("p", "m1", ""); err != nil {
+		t.Fatal(err)
+	}
+	m = openPickerCmd(t, m, "/settings")
+	m = key(m, tea.KeyMsg{Type: tea.KeyRight}) // effort: "" -> none
+	m = key(m, tea.KeyMsg{Type: tea.KeyEsc})
+	saved, err := agent.LoadSettings(a.SettingsPath())
+	if m.menuKind != "" || a.Settings().Effort != "none" || err != nil || saved.Effort != "none" {
+		t.Fatalf("picker %q, effective effort %q, saved effort %q (%v)", m.menuKind, a.Settings().Effort, saved.Effort, err)
+	}
+}
