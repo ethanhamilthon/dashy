@@ -19,7 +19,7 @@ type Event struct {
 	Operation string         // started, done, session: turn or compact
 	Source    string         // started: user, notify or queued
 	Agent     *agent.Event   // agent: the unmodified event from the agent
-	Text      string         // started: the input text; notice and error: the text
+	Text      string         // started: the input text; notice and error: the text; done (ok): final assistant text
 	Status    string         // done: ok, error or cancelled
 	Error     string         // done: failure text
 	Message   string         // done (compact): summary or cancellation text

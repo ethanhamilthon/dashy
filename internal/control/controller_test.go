@@ -173,7 +173,7 @@ func TestTurnEmitsStartedThenExactlyOneDone(t *testing.T) {
 	if got := strings.Join(kinds, ","); got != "started,agent,agent,done" {
 		t.Fatalf("kinds = %s", got)
 	}
-	if done := doneEvents(events); len(done) != 1 || done[0].Status != "ok" {
+	if done := doneEvents(events); len(done) != 1 || done[0].Status != "ok" || done[0].Text != "answer 1" {
 		t.Fatalf("done = %+v", done)
 	}
 }

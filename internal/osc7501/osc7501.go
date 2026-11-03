@@ -84,7 +84,6 @@ type Reporter struct {
 	state   string
 	msg     string
 	title   string
-	final   string // text of the latest assistant message, shown when a turn finishes
 	last    []byte // last transmitted report
 	pending []byte // latest report not yet transmitted; nil when none
 	lastAt  time.Time
@@ -102,7 +101,6 @@ func (r *Reporter) HandleEvent(e control.Event) {
 	defer r.mu.Unlock()
 	switch e.Kind {
 	case "started":
-		r.final = ""
 		r.state = "working"
 		if e.Operation == "compact" {
 			r.msg = "Compacting"
@@ -110,13 +108,7 @@ func (r *Reporter) HandleEvent(e control.Event) {
 			r.msg = agent.FirstLine(e.Text)
 		}
 	case "agent":
-		switch {
-		case e.Agent == nil:
-		case e.Agent.Kind == "assistant":
-			r.final = e.Agent.Text
-		case e.Agent.Kind == "code" || e.Agent.Kind == "output" || e.Agent.Kind == "error":
-			r.final = "" // a tool ran; only text after it is the final answer
-		case e.Agent.Kind == "notice" && strings.HasPrefix(e.Agent.Text, "Retrying"):
+		if e.Agent != nil && e.Agent.Kind == "notice" && strings.HasPrefix(e.Agent.Text, "Retrying") {
 			r.state = "working"
 		}
 	case "error":
@@ -128,7 +120,7 @@ func (r *Reporter) HandleEvent(e control.Event) {
 		case e.Status == "cancelled" || e.Operation == "compact":
 			r.state, r.msg = "idle", ""
 		default:
-			r.state, r.msg = "done", agent.FirstLine(r.final)
+			r.state, r.msg = "done", agent.FirstLine(e.Text) // e.Text: final assistant text
 		}
 	case "session":
 		if e.Operation != "compact" {

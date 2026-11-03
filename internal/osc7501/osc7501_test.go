@@ -104,8 +104,7 @@ func TestReporterMapsControllerEvents(t *testing.T) {
 	if got := lastState(out.String()); got != "working" || !strings.Contains(out.String(), b64("build it")) {
 		t.Fatalf("started: %q", out.String())
 	}
-	r.HandleEvent(control.Event{Kind: "agent", Agent: &agent.Event{Kind: "assistant", Text: "All done.\nSee below."}})
-	r.HandleEvent(control.Event{Kind: "done", Operation: "turn", Status: "ok"})
+	r.HandleEvent(control.Event{Kind: "done", Operation: "turn", Status: "ok", Text: "All done.\nSee below."})
 	time.Sleep(interval + 20*time.Millisecond)
 	if !strings.HasSuffix(out.String(), b64("All done.")+"\x1b\\") || lastState(out.String()) != "done" {
 		t.Fatalf("done: %q", out.String())
@@ -119,6 +118,22 @@ func TestReporterMapsControllerEvents(t *testing.T) {
 	r.Close()
 	if lastState(out.String()) != "idle" {
 		t.Fatalf("close must deliver idle: %q", out.String())
+	}
+}
+
+// The done message is the first line of the committed final answer, which may
+// hold several message items. Streamed drafts and committed items never become it.
+func TestDoneMessageIsFirstLineOfFinalAnswer(t *testing.T) {
+	out := &syncBuffer{}
+	r := New(out, true)
+	r.HandleEvent(control.Event{Kind: "started", Operation: "turn", Text: "go"})
+	r.HandleEvent(control.Event{Kind: "agent", Agent: &agent.Event{Kind: "delta", Text: "first"}})
+	r.HandleEvent(control.Event{Kind: "agent", Agent: &agent.Event{Kind: "assistant", Text: "first part", Final: true}})
+	r.HandleEvent(control.Event{Kind: "agent", Agent: &agent.Event{Kind: "assistant", Text: "second part", Final: true}})
+	r.HandleEvent(control.Event{Kind: "done", Operation: "turn", Status: "ok", Text: "first part\nsecond part"})
+	time.Sleep(interval + 20*time.Millisecond)
+	if lastState(out.String()) != "done" || !strings.HasSuffix(out.String(), b64("first part")+"\x1b\\") {
+		t.Fatalf("done message: %q", out.String())
 	}
 }
 

@@ -260,7 +260,11 @@ func (c *Controller) finishTurn(op *operation, err error) {
 			}
 		}
 		c.endLocked(op)
-		c.publish(Event{Kind: "done", Turn: op.id, Operation: "turn", Status: status, Error: text, Unsent: unsent})
+		final := ""
+		if status == "ok" {
+			final = c.a.FinalText() // committed history: the answer after the last tool output
+		}
+		c.publish(Event{Kind: "done", Turn: op.id, Operation: "turn", Status: status, Error: text, Unsent: unsent, Text: final})
 		if promote {
 			c.beginTurnLocked(pending[0], "queued")
 			for _, in := range pending[1:] {
