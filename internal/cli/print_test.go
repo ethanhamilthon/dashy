@@ -72,11 +72,38 @@ func TestPrintModeEndToEndFakeProvider(t *testing.T) {
 				},
 			})
 		} else {
-			// Second response: final assistant answer
+			// Second response: the request must carry the bash result for call_1
 			var req struct {
-				Input []json.RawMessage `json:"input"`
+				Input []struct {
+					Type   string `json:"type"`
+					CallID string `json:"call_id"`
+					Output string `json:"output"`
+				} `json:"input"`
 			}
-			_ = json.NewDecoder(r.Body).Decode(&req)
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Errorf("decode second request: %v", err)
+			}
+			found := false
+			for _, item := range req.Input {
+				if item.Type != "function_call_output" || item.CallID != "call_1" {
+					continue
+				}
+				found = true
+				var result struct {
+					Output   string `json:"output"`
+					ExitCode int    `json:"exit_code"`
+				}
+				if err := json.Unmarshal([]byte(item.Output), &result); err != nil {
+					t.Errorf("tool output is not a result object: %v", err)
+				}
+				if result.Output != "hello from tool\n" || result.ExitCode != 0 {
+					t.Errorf("tool result = %+v, want output %q with exit code 0", result, "hello from tool\n")
+				}
+			}
+			if !found {
+				t.Errorf("second request has no function_call_output for call_1")
+			}
+			// Final assistant answer
 			item := map[string]any{
 				"type": "message",
 				"role": "assistant",
@@ -116,8 +143,15 @@ func TestPrintModeEndToEndFakeProvider(t *testing.T) {
 	if !strings.Contains(errOut, "$ echo hello from tool") {
 		t.Fatalf("stderr missing command progress: %q", errOut)
 	}
-	if !strings.Contains(errOut, "hello from tool") {
-		t.Fatalf("stderr missing tool output: %q", errOut)
+	// The result is its own line; the command line "$ echo hello from tool" does not count.
+	resultLine := false
+	for _, line := range strings.Split(errOut, "\n") {
+		if line == "hello from tool" {
+			resultLine = true
+		}
+	}
+	if !resultLine {
+		t.Fatalf("stderr missing tool result line: %q", errOut)
 	}
 	if !strings.Contains(errOut, "session: ") {
 		t.Fatalf("stderr missing session: %q", errOut)
