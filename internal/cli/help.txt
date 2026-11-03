@@ -58,18 +58,25 @@ DASHY BLOCKS
   - Execution limits: 30 s timeout, 64 KiB stdout+stderr limit.
   - On failure, replaced by '[dashy block failed: <reason>]' with a stderr tail.
   - Output replaces the block verbatim (trailing newline trimmed).
-  - Environment passed to blocks: DASHY_MODE, DASHY_SOURCE, DASHY_SESSION_ID, DASHY_HOME.
+  - Environment passed to blocks: DASHY_MODE, DASHY_SOURCE, DASHY_SESSION_ID,
+    DASHY_ENDPOINT, DASHY_HOME.
   - Blocks run each time the prompt is assembled (see above), not on every request.
 
 ENVIRONMENT VARIABLES
   DASHY_HOME        Base directory for dashy state and settings (default: ~/.dashy).
   DASHY_SESSION_ID  ID of active session; exported to bash tool and dashy blocks.
-  DASHY_ENDPOINT    Unix socket path of active session; exported to bash tool.
+  DASHY_ENDPOINT    Unix socket path of the session; exported to the bash tool and blocks.
+                    Every session has its own, a dashy -p sub-agent too; it is never
+                    inherited from a parent dashy.
   DASHY_MODE        Execution mode in dashy blocks: 'tui' or 'print'.
   DASHY_SOURCE      Assembly source in dashy blocks: 'startup', 'new', or 'resume'.
 
 SUB-AGENT RECIPES
-  Sub-agents run via 'dashy -p' from the bash tool or terminal:
+  Sub-agents run via 'dashy -p' from the bash tool or terminal. A sub-agent has its own
+  socket while it works: notify and view from its shell reach the sub-agent itself, and
+  input still queued when it finishes runs before it exits. To report to another
+  session, pass -s with that session's ID (the parent can put its $DASHY_SESSION_ID
+  into TASK):
   - Role-specific reviewer (custom prompt without global instructions):
       dashy -p "Review diff against main" --config .dashy/reviewer.md --no-global
   - Cheaper or stronger model for one task (IDs from 'dashy models'):

@@ -28,9 +28,9 @@ type Runner struct {
 }
 
 // Command builds `bash -c script` in its own process group in dir. extra
-// overrides the inherited environment; BASH_ENV, DASHY_MODE and DASHY_SOURCE are
-// always dropped from the inherited environment, pagers are disabled and the running binary's directory leads PATH. Cancelling ctx kills
-// the whole group. Start it with cmd.Start and finish it with Reap.
+// overrides the inherited environment; BASH_ENV and the session variables DASHY_MODE,
+// DASHY_SOURCE and DASHY_ENDPOINT are never inherited, pagers are disabled and the running
+// binary's directory leads PATH. Cancelling ctx kills the whole group. Start it with cmd.Start and finish it with Reap.
 func Command(ctx context.Context, dir string, extra map[string]string, script string) *exec.Cmd {
 	bash := "/bin/bash"
 	if _, err := os.Stat(bash); err != nil {
@@ -46,8 +46,8 @@ func Command(ctx context.Context, dir string, extra map[string]string, script st
 	}
 	for _, entry := range os.Environ() {
 		key, _, _ := strings.Cut(entry, "=")
-		// DASHY_MODE and DASHY_SOURCE belong to dashy blocks only: never inherit them.
-		if _, overridden := extra[key]; overridden || key == "BASH_ENV" || key == "PATH" || key == "PAGER" || key == "GIT_PAGER" || key == "DASHY_MODE" || key == "DASHY_SOURCE" {
+		// Session variables belong to this session: a sub-agent must not inherit its parent's endpoint.
+		if _, overridden := extra[key]; overridden || key == "BASH_ENV" || key == "PATH" || key == "PAGER" || key == "GIT_PAGER" || key == "DASHY_MODE" || key == "DASHY_SOURCE" || key == "DASHY_ENDPOINT" {
 			continue
 		}
 		cmd.Env = append(cmd.Env, entry)

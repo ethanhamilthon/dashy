@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"dashy/internal/agent"
 )
 
 type mockTerminalReader struct {
@@ -167,7 +169,7 @@ func TestPrintModeEndToEndFakeProvider(t *testing.T) {
 		t.Fatalf("stderr leaked final assistant answer: %q", errOut)
 	}
 
-	// -p mode must start NO socket
+	// -p mode leaves no socket behind once it exits
 	runDir := filepath.Join(home, "run")
 	if entries, err := os.ReadDir(runDir); err == nil && len(entries) > 0 {
 		t.Fatalf("found sockets in %s: %v", runDir, entries)
@@ -395,5 +397,43 @@ func TestPrintModeRetryOnStderr(t *testing.T) {
 	}
 	if !strings.Contains(diag.String(), "session: ") {
 		t.Fatalf("expected session id on stderr, got: %s", diag.String())
+	}
+}
+
+// A sub-agent has its own socket: its shell gets its own DASHY_ENDPOINT, not the parent's,
+// and a notification sent to it while it works reaches its model.
+func TestPrintModeHasItsOwnNotifySocket(t *testing.T) {
+	t.Setenv("DASHY_ENDPOINT", "/tmp/parent-dashy.sock")
+	var bodies []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, string(body))
+		w.Header().Set("Content-Type", "text/event-stream")
+		item := map[string]any{"type": "message", "role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": "done"}}}
+		switch len(bodies) {
+		case 1:
+			args, _ := json.Marshal(map[string]any{"command": `echo "endpoint=$DASHY_ENDPOINT"`, "timeout": nil, "max_output": nil})
+			item = map[string]any{"type": "function_call", "id": "c1", "call_id": "c1", "name": "bash", "arguments": string(args)}
+		case 2:
+			// The model's next request carries the endpoint its shell saw; notify it there.
+			rest := string(body)[strings.LastIndex(string(body), "endpoint=")+len("endpoint="):]
+			endpoint, _, _ := strings.Cut(rest, `\`)
+			if endpoint == "" || endpoint == "/tmp/parent-dashy.sock" {
+				t.Errorf("sub-agent shell endpoint = %q", endpoint)
+			} else if err := agent.Send(endpoint, agent.Message{Text: "late note"}); err != nil {
+				t.Errorf("notify the sub-agent: %v", err)
+			}
+		}
+		data, _ := json.Marshal(map[string]any{"type": "response.completed", "response": map[string]any{"output": []any{item}}})
+		fmt.Fprintf(w, "data: %s\n\n", data)
+	}))
+	defer server.Close()
+	setupTestHome(t, server.URL)
+	var stdout, stderr bytes.Buffer
+	if err := Run(context.Background(), []string{"-p", "work"}, strings.NewReader(""), &stdout, &stderr); err != nil {
+		t.Fatalf("run: %v\n%s", err, stderr.String())
+	}
+	if len(bodies) != 3 || !strings.Contains(bodies[2], "late note") || !strings.Contains(stderr.String(), "late note") {
+		t.Fatalf("notification did not reach the sub-agent: %d requests\n%s", len(bodies), stderr.String())
 	}
 }

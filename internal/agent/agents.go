@@ -141,10 +141,8 @@ func blockFailure(reason string, out *blockOutputs) string {
 func (a *Agent) runBlock(turn context.Context, script, mode, source string) (string, error) {
 	ctx, cancel := context.WithTimeout(turn, blockTimeout)
 	defer cancel()
-	env := map[string]string{
-		"DASHY_MODE": mode, "DASHY_SOURCE": source,
-		"DASHY_SESSION_ID": a.SessionID(), "DASHY_HOME": a.home,
-	}
+	env := a.shellEnv()
+	env["DASHY_MODE"], env["DASHY_SOURCE"], env["DASHY_HOME"] = mode, source, a.home
 	out := &blockOutputs{}
 	cmd := shell.Command(ctx, a.Shell.Dir, env, script)
 	cmd.Stdout, cmd.Stderr = blockWriter{out, false}, blockWriter{out, true}

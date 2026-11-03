@@ -55,7 +55,7 @@ type Options struct {
 	Config   string // --config FILE, relative to the project directory
 	NoGlobal bool   // --no-global
 	Resume   string // --resume ID; "" starts a new session
-	Print    bool   // -p: no session socket, DASHY_MODE=print
+	Print    bool   // -p: one task without a TUI, DASHY_MODE=print
 	// Provider, Model and Effort override the saved selection for this run only; "" keeps it.
 	Provider, Model, Effort string
 }

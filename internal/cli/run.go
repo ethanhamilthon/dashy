@@ -321,7 +321,10 @@ func cancelledOr(ctx context.Context, err error) error {
 	return err
 }
 
-// runPrint runs one turn without a TUI. Only the final answer goes to out; progress goes to diagnostics.
+// runPrint runs the task without a TUI. Notifications and dashy view images sent to the
+// sub-agent while it works are taken as steering; those still queued when the task ends
+// run as further turns, after the socket is closed so nothing arrives unanswered.
+// Only the final answer goes to out; progress goes to diagnostics.
 func runPrint(ctx context.Context, a *agent.Agent, prompt string, out, diagnostics io.Writer) error {
 	emit := func(e agent.Event) {
 		switch {
@@ -332,10 +335,20 @@ func runPrint(ctx context.Context, a *agent.Agent, prompt string, out, diagnosti
 				fmt.Fprintln(diagnostics, s)
 			}
 		case e.Kind == "notice" && strings.TrimSpace(e.Text) != "":
-			fmt.Fprintln(diagnostics, e.Text)
+			fmt.Fprintln(diagnostics, strings.TrimSpace(strings.NewReplacer("<notify>", "", "</notify>", "").Replace(e.Text)))
 		}
 	}
 	err := a.Run(ctx, prompt, emit)
+	for err == nil && ctx.Err() == nil {
+		next, ok := a.Queue().Pop()
+		if !ok {
+			if a.StopNotifications() {
+				continue // the socket is closed now: look once more for input that just arrived
+			}
+			break
+		}
+		err = a.RunInput(ctx, next, emit)
+	}
 	if ctx.Err() != nil {
 		fmt.Fprintf(diagnostics, "session: %s\n", a.SessionID())
 		return cancelled

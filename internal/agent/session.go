@@ -8,7 +8,8 @@ import (
 	"syscall"
 )
 
-// acquire takes the exclusive per-session lock and, outside print mode, opens the session socket.
+// acquire takes the exclusive per-session lock and opens the session socket. Every session has
+// its own socket, a dashy -p sub-agent too, so notify and view from its shell reach it.
 func (a *Agent) acquire() error {
 	lockPath := filepath.Join(a.sessionsDir, a.SessionID()+".lock")
 	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
@@ -25,22 +26,16 @@ func (a *Agent) acquire() error {
 		return err
 	}
 	a.owner = file
-	if !a.opts.Print {
-		if err := a.listenNotifications(); err != nil {
-			a.release()
-			return err
-		}
+	if err := a.listenNotifications(); err != nil {
+		a.release()
+		return err
 	}
 	return nil
 }
 
 // release closes the socket, drops the lock and removes the lock file of an unsaved session.
 func (a *Agent) release() {
-	if a.sock != nil {
-		a.sock.retire()
-		_ = os.Remove(a.sock.path)
-		a.sock = nil
-	}
+	a.StopNotifications()
 	if a.owner != nil {
 		_ = syscall.Flock(int(a.owner.Fd()), syscall.LOCK_UN)
 		_ = a.owner.Close()
@@ -49,6 +44,18 @@ func (a *Agent) release() {
 			_ = os.Remove(filepath.Join(a.sessionsDir, a.SessionID()+".lock"))
 		}
 	}
+}
+
+// StopNotifications closes the session socket; later notify and view calls are refused.
+// It reports whether a socket was open.
+func (a *Agent) StopNotifications() bool {
+	if a.sock == nil {
+		return false
+	}
+	a.sock.retire()
+	_ = os.Remove(a.sock.path)
+	a.sock = nil
+	return true
 }
 
 // HasSavedSession reports whether the session has history or a file on disk.
