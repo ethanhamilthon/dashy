@@ -28,8 +28,8 @@ type Runner struct {
 }
 
 // Command builds `bash -c script` in its own process group in dir. extra
-// overrides the inherited environment; BASH_ENV is always dropped, pagers are
-// disabled and the running binary's directory leads PATH. Cancelling ctx kills
+// overrides the inherited environment; BASH_ENV, DASHY_MODE and DASHY_SOURCE are
+// always dropped from the inherited environment, pagers are disabled and the running binary's directory leads PATH. Cancelling ctx kills
 // the whole group. Start it with cmd.Start and finish it with Reap.
 func Command(ctx context.Context, dir string, extra map[string]string, script string) *exec.Cmd {
 	bash := "/bin/bash"
@@ -46,7 +46,8 @@ func Command(ctx context.Context, dir string, extra map[string]string, script st
 	}
 	for _, entry := range os.Environ() {
 		key, _, _ := strings.Cut(entry, "=")
-		if _, overridden := extra[key]; overridden || key == "BASH_ENV" || key == "PATH" || key == "PAGER" || key == "GIT_PAGER" {
+		// DASHY_MODE and DASHY_SOURCE belong to dashy blocks only: never inherit them.
+		if _, overridden := extra[key]; overridden || key == "BASH_ENV" || key == "PATH" || key == "PAGER" || key == "GIT_PAGER" || key == "DASHY_MODE" || key == "DASHY_SOURCE" {
 			continue
 		}
 		cmd.Env = append(cmd.Env, entry)

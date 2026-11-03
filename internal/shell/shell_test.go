@@ -97,6 +97,22 @@ func TestOutputLimitKeepsFirstAndLastHalves(t *testing.T) {
 	}
 }
 
+func TestBlockOnlyVariablesAreNotInherited(t *testing.T) {
+	t.Setenv("DASHY_MODE", "tui")
+	t.Setenv("DASHY_SOURCE", "startup")
+	t.Setenv("DASHY_ENDPOINT", "/run/inherited.sock")
+	const script = `echo "mode=$DASHY_MODE source=$DASHY_SOURCE endpoint=$DASHY_ENDPOINT"`
+	dir := t.TempDir()
+	got, err := Command(context.Background(), dir, nil, script).Output()
+	if err != nil || string(got) != "mode= source= endpoint=/run/inherited.sock\n" {
+		t.Fatalf("inherited: %q %v", got, err)
+	}
+	got, err = Command(context.Background(), dir, map[string]string{"DASHY_MODE": "print", "DASHY_SOURCE": "new"}, script).Output()
+	if err != nil || string(got) != "mode=print source=new endpoint=/run/inherited.sock\n" {
+		t.Fatalf("block env: %q %v", got, err)
+	}
+}
+
 func TestSetsProcessGroup(t *testing.T) {
 	cmd := Command(context.Background(), t.TempDir(), nil, "true")
 	if cmd.SysProcAttr == nil || !cmd.SysProcAttr.Setpgid {
