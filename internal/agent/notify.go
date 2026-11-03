@@ -59,11 +59,24 @@ type sessionSocket struct {
 	current  net.Conn // connection being read; retire closes it
 }
 
+// removeDeadSockets deletes the sockets in dir that no listener answers, as left by crashed sessions.
+func removeDeadSockets(dir string) {
+	paths, _ := filepath.Glob(filepath.Join(dir, "*.sock"))
+	for _, p := range paths {
+		if conn, err := net.DialTimeout("unix", p, 100*time.Millisecond); err == nil {
+			conn.Close()
+		} else {
+			_ = os.Remove(p)
+		}
+	}
+}
+
 func (a *Agent) listenNotifications() error {
 	runDir := filepath.Join(a.home, "run")
 	if err := os.MkdirAll(runDir, 0700); err != nil {
 		return err
 	}
+	removeDeadSockets(runDir)
 	sockPath := SocketPath(runDir, a.SessionID())
 
 	// Check if a stale socket exists and remove it if no active listener answers.

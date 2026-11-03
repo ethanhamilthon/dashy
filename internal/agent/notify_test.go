@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -142,5 +144,30 @@ func TestConnectionAcceptedBeforeNewSessionIsRetired(t *testing.T) {
 	}
 	if a.PendingImages() != 0 || len(a.viewed()) != 0 {
 		t.Fatal("image from the retired connection reached the new session")
+	}
+}
+
+// Sockets that no listener answers (left by a crashed session) are removed; a live one stays.
+func TestDeadSocketsAreRemoved(t *testing.T) {
+	dir := t.TempDir()
+	dead := filepath.Join(dir, "dead.sock")
+	l, err := net.Listen("unix", dead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.(*net.UnixListener).SetUnlinkOnClose(false)
+	l.Close()
+	live := filepath.Join(dir, "live.sock")
+	ll, err := net.Listen("unix", live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ll.Close()
+	removeDeadSockets(dir)
+	if _, err := os.Stat(dead); !os.IsNotExist(err) {
+		t.Fatalf("dead socket kept: %v", err)
+	}
+	if _, err := os.Stat(live); err != nil {
+		t.Fatalf("live socket removed: %v", err)
 	}
 }
