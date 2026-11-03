@@ -155,3 +155,17 @@ func TestPickerToggleRefusedWhenNotificationStartsTurn(t *testing.T) {
 		t.Fatalf("picker %q, setting %v, last entry %+v", f.m.menuKind, f.m.ctl.Settings().AutoCompact, last)
 	}
 }
+
+// An idle TUI starts a turn for an external notification on its follower tick.
+func TestFollowerTickStartsNotificationTurn(t *testing.T) {
+	f := newFixture(t, true)
+	hold := make(chan struct{})
+	f.hold.Store(&hold)
+	defer close(hold)
+	if err := agent.Notify(f.project, f.a.SessionID(), "background result"); err != nil {
+		t.Fatal(err)
+	}
+	next, _ := f.m.Update(followerTick{})
+	f.m = next.(model)
+	awaitRequest(t, f.m)
+}

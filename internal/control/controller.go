@@ -135,21 +135,6 @@ func (c *Controller) Deliver() (started bool) {
 	return started
 }
 
-// Run delivers external notifications until ctx ends. Notifications that arrive
-// while a turn runs are accepted by that turn at its next safe boundary.
-func (c *Controller) Run(ctx context.Context) error {
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-			c.Deliver()
-		}
-	}
-}
-
 // Close cancels any active operation and waits for it to finish. It does not save.
 func (c *Controller) Close() {
 	c.view(func() {
