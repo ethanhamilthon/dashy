@@ -206,6 +206,28 @@ func TestSteeringJoinsRunningTurn(t *testing.T) {
 	}
 }
 
+// A notification acknowledged during a busy turn precedes composer steering sent later.
+func TestNotificationKeepsOrderWithSteering(t *testing.T) {
+	gate := make(chan struct{})
+	h := newHarness(t, &fakeModel{gate: gate})
+	h.send("first")
+	h.inFlight(1)
+	if err := agent.Notify(h.dir, h.a.SessionID(), "notice A"); err != nil {
+		t.Fatal(err)
+	}
+	h.send("steer B")
+	close(gate)
+	h.settle()
+	reqs := h.model.requests()
+	if len(reqs) != 2 {
+		t.Fatalf("%d requests, want 2", len(reqs))
+	}
+	a, b := strings.Index(reqs[1], "notice A"), strings.Index(reqs[1], "steer B")
+	if a < 0 || b < a {
+		t.Fatalf("notification and steering out of order: A=%d B=%d", a, b)
+	}
+}
+
 // Stop cancels the turn, and unaccepted steering comes back as unsent input.
 func TestStopReturnsUnacceptedSteering(t *testing.T) {
 	gate := make(chan struct{})

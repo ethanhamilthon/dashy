@@ -42,7 +42,7 @@ func (c *Controller) queueLocked(input agent.Input) error {
 	if err := c.admit(input); err != nil {
 		return err
 	}
-	if !c.active.steering.PushInput(input) {
+	if !c.a.Queue().Push(input) {
 		c.a.ReleaseImages(len(input.Images))
 		return fail("queue_full", "Steering queue is full; your message remains in the input.")
 	}
@@ -74,7 +74,7 @@ func (c *Controller) Recall() (*agent.Input, error) {
 	var ok bool
 	c.view(func() {
 		if c.active != nil {
-			if input, ok = c.active.steering.RecallInput(); ok {
+			if input, ok = c.a.Queue().Recall(); ok {
 				c.a.ReleaseImages(len(input.Images))
 			}
 		}
@@ -132,7 +132,7 @@ func (c *Controller) switchRequest(kind, id string) error {
 			}
 		}
 		if c.active != nil {
-			for _, in := range c.active.steering.Pending() {
+			for _, in := range c.a.Queue().Pending() {
 				if len(in.Images) > 0 {
 					err = fail("pending_images", "Submit or remove pending images before switching sessions.")
 					return

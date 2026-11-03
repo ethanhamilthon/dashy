@@ -31,8 +31,8 @@ func TestSocketValidatesAndQueues(t *testing.T) {
 	if err := Send(a.sock.path, Message{Text: "<check & report>"}); err != nil {
 		t.Fatal(err)
 	}
-	if got := a.Notifications(); len(got) != 1 || got[0] != "<notify>\n&lt;check &amp; report&gt;\n</notify>" {
-		t.Fatalf("queued %q", got)
+	if got := a.Queue().Take(); len(got) != 1 || got[0].Text != "<notify>\n&lt;check &amp; report&gt;\n</notify>" || !got[0].Notice {
+		t.Fatalf("queued %+v", got)
 	}
 }
 

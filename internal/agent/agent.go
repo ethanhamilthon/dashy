@@ -114,7 +114,7 @@ type Agent struct {
 	defaultTitle string // first user line, saved at compaction because that message may be dropped
 	lastRequest  Metadata
 	sock         *sessionSocket // nil in print mode
-	inbox        chan string
+	queue        *Steering      // one ordered queue of input for the running turn, shared with the socket
 	views        chan shell.Image
 	slots        *imageSlots // shared allowance of new images per model request
 }
@@ -125,7 +125,7 @@ func New(dir string, opts Options) (*Agent, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &Agent{opts: opts, home: home, promptSource: "startup", Shell: &shell.Runner{Dir: dir}, slots: &imageSlots{}}
+	a := &Agent{opts: opts, home: home, promptSource: "startup", Shell: &shell.Runner{Dir: dir}, slots: &imageSlots{}, queue: &Steering{}}
 	a.Shell.Env = a.shellEnv
 	if err := a.loadConfig(dir); err != nil {
 		return nil, err
@@ -172,13 +172,13 @@ func (a *Agent) Save() error {
 }
 
 // Run is RunInput for a text message.
-func (a *Agent) Run(ctx context.Context, text string, emit func(Event), steering ...*Steering) error {
-	return a.RunInput(ctx, Input{Text: text}, emit, steering...)
+func (a *Agent) Run(ctx context.Context, text string, emit func(Event)) error {
+	return a.RunInput(ctx, Input{Text: text}, emit)
 }
 
 // RunInput runs one turn: the input, then model requests and bash calls until the
 // model stops. Events describe display changes; history is saved as it grows.
-func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event), steering ...*Steering) (err error) {
+func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event)) (err error) {
 	if a.records == nil {
 		a.records = a.Records()
 	}
@@ -219,15 +219,8 @@ func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event), ste
 		if ctx.Err() != nil {
 			return false
 		}
-		var instructions []Input
-		if len(steering) > 0 {
-			instructions = steering[0].TakeInputs()
-		}
-		for _, text := range a.Notifications() {
-			instructions = append(instructions, Input{Text: text})
-		}
 		accepted := false
-		for _, instruction := range instructions {
+		for _, instruction := range a.queue.Take() {
 			if strings.TrimSpace(instruction.Text) != "" || len(instruction.Images) > 0 {
 				a.addInput(instruction, emit, true)
 				accepted = true

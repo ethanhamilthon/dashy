@@ -14,6 +14,7 @@ import (
 type Input struct {
 	Text   string
 	Images []shell.Image
+	Notice bool // socket notification: queued in order with composer input, never recalled
 }
 
 func (input Input) Display() string {
@@ -67,18 +68,18 @@ func inputEvent(input Input, steering bool) Event {
 	return Event{Kind: kind, Text: input.Display(), Steering: steering}
 }
 
-// Steering serializes acceptance and recall; taken instructions cannot be recalled.
+// Steering is the session's one ordered queue of input waiting for the running turn: composer
+// input and socket notifications, in admission order. Taken input cannot be recalled.
 type Steering struct {
 	mu      sync.Mutex
 	pending []Input
 }
 
-func (s *Steering) Push(text string) bool { return s.PushInput(Input{Text: text}) }
+// Queue returns the session's steering queue.
+func (a *Agent) Queue() *Steering { return a.queue }
 
-func (s *Steering) PushInput(input Input) bool {
-	if s == nil {
-		return false
-	}
+// Push queues input behind everything waiting; false when the queue is full.
+func (s *Steering) Push(input Input) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.pending) >= 64 {
@@ -88,10 +89,8 @@ func (s *Steering) PushInput(input Input) bool {
 	return true
 }
 
-func (s *Steering) TakeInputs() []Input {
-	if s == nil {
-		return nil
-	}
+// Take removes all queued input, in order, for acceptance by the running turn.
+func (s *Steering) Take() []Input {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	pending := s.pending
@@ -99,26 +98,48 @@ func (s *Steering) TakeInputs() []Input {
 	return pending
 }
 
-func (s *Steering) RecallInput() (Input, bool) {
-	if s == nil {
-		return Input{}, false
-	}
+// Pop removes the oldest queued input, which starts the next turn.
+func (s *Steering) Pop() (Input, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.pending) == 0 {
 		return Input{}, false
 	}
-	i := len(s.pending) - 1
-	text := s.pending[i]
-	s.pending = s.pending[:i]
-	return text, true
+	input := s.pending[0]
+	s.pending = s.pending[1:]
+	return input, true
 }
 
-func (s *Steering) Pending() []Input {
-	if s == nil {
-		return nil
-	}
+// RemoveComposer removes the composer input a turn did not accept and returns it; notifications stay queued.
+func (s *Steering) RemoveComposer() []Input {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return slices.Clone(s.pending)
+	var composer []Input
+	s.pending = slices.DeleteFunc(s.pending, func(input Input) bool {
+		if !input.Notice {
+			composer = append(composer, input)
+		}
+		return !input.Notice
+	})
+	return composer
+}
+
+// Recall removes the newest composer input that is still queued.
+func (s *Steering) Recall() (Input, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := len(s.pending) - 1; i >= 0; i-- {
+		if input := s.pending[i]; !input.Notice {
+			s.pending = slices.Delete(s.pending, i, i+1)
+			return input, true
+		}
+	}
+	return Input{}, false
+}
+
+// Pending returns the composer input still queued.
+func (s *Steering) Pending() []Input {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.DeleteFunc(slices.Clone(s.pending), func(input Input) bool { return input.Notice })
 }

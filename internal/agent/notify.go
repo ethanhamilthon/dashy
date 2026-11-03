@@ -50,7 +50,7 @@ func SocketPath(runDir, id string) string {
 type sessionSocket struct {
 	path     string
 	listener net.Listener
-	inbox    chan string
+	queue    *Steering
 	views    chan shell.Image
 	slots    *imageSlots
 	done     chan struct{} // closed when the accept loop has returned
@@ -79,9 +79,9 @@ func (a *Agent) listenNotifications() error {
 		return err
 	}
 	_ = os.Chmod(sockPath, 0600)
-	s := &sessionSocket{path: sockPath, listener: listener, inbox: make(chan string, 64),
+	s := &sessionSocket{path: sockPath, listener: listener, queue: a.queue,
 		views: make(chan shell.Image, 4), slots: a.slots, done: make(chan struct{})}
-	a.sock, a.inbox, a.views = s, s.inbox, s.views
+	a.sock, a.views = s, s.views
 	go func() {
 		defer close(s.done)
 		for connection, err := listener.Accept(); err == nil; connection, err = listener.Accept() {
@@ -128,12 +128,10 @@ func (s *sessionSocket) admit(message Message, err error) string {
 	}
 	var escaped bytes.Buffer
 	_ = xml.EscapeText(&escaped, []byte(message.Text)) // writes to a bytes.Buffer never fail
-	select {
-	case s.inbox <- "<notify>\n" + escaped.String() + "\n</notify>":
-		return ""
-	default:
+	if !s.queue.Push(Input{Text: "<notify>\n" + escaped.String() + "\n</notify>", Notice: true}) {
 		return "notification queue is full"
 	}
+	return ""
 }
 
 // retire stops the socket before its session is replaced; no handler runs once it returns.
@@ -146,18 +144,6 @@ func (s *sessionSocket) retire() {
 	s.mu.Unlock()
 	s.listener.Close()
 	<-s.done
-}
-
-func (a *Agent) Notifications() []string {
-	var messages []string
-	for {
-		select {
-		case text := <-a.inbox:
-			messages = append(messages, text)
-		default:
-			return messages
-		}
-	}
 }
 
 // imageSlots counts the images of the next model request: reserved from admission until they

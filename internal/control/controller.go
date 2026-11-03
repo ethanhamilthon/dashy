@@ -40,7 +40,6 @@ type operation struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	started   time.Time
-	steering  *agent.Steering
 	cancelled bool
 }
 
@@ -78,9 +77,7 @@ func (c *Controller) Status() (s Status) {
 		if c.active != nil {
 			s.Busy, s.Cancelling = true, c.active.cancelled
 			s.Compacting, s.Started = c.active.kind == "compact", c.active.started
-			if c.active.steering != nil {
-				s.Queued = c.active.steering.Pending()
-			}
+			s.Queued = c.a.Queue().Pending()
 		}
 	})
 	return s
@@ -180,12 +177,11 @@ func (c *Controller) beginTurnLocked(input agent.Input, source string) {
 	c.count++
 	ctx, cancel := context.WithCancel(context.Background())
 	op := &operation{
-		id:       fmt.Sprintf("turn-%d", c.count),
-		kind:     "turn",
-		ctx:      ctx,
-		cancel:   cancel,
-		started:  time.Now(),
-		steering: &agent.Steering{},
+		id:      fmt.Sprintf("turn-%d", c.count),
+		kind:    "turn",
+		ctx:     ctx,
+		cancel:  cancel,
+		started: time.Now(),
 	}
 	c.active = op
 	c.idle = make(chan struct{})
@@ -211,7 +207,7 @@ func (c *Controller) endLocked(op *operation) {
 }
 
 func (c *Controller) runTurn(op *operation, input agent.Input) {
-	err := c.a.RunInput(op.ctx, input, func(e agent.Event) { c.observe(op, e) }, op.steering)
+	err := c.a.RunInput(op.ctx, input, func(e agent.Event) { c.observe(op, e) })
 	c.finishTurn(op, err)
 }
 
@@ -250,11 +246,11 @@ func (c *Controller) finishTurn(op *operation, err error) {
 			c.publish(Event{Kind: "notice", Text: "Turn cancelled."})
 		}
 		c.ctx = c.a.ContextTokens()
-		pending := op.steering.TakeInputs()
-		promote := status == "ok" && len(pending) > 0 && c.deferred == nil && !c.closing
+		// Queued input stays in the session queue and the next turn takes it in order. Composer
+		// input is handed back when the turn did not finish cleanly or the session is changing.
 		var unsent []agent.Input
-		if !promote {
-			unsent = pending
+		if status != "ok" || c.deferred != nil || c.closing {
+			unsent = c.a.Queue().RemoveComposer()
 			for _, in := range unsent {
 				c.a.ReleaseImages(len(in.Images))
 			}
@@ -265,13 +261,6 @@ func (c *Controller) finishTurn(op *operation, err error) {
 			final = c.a.FinalText() // committed history: the answer after the last tool output
 		}
 		c.publish(Event{Kind: "done", Turn: op.id, Operation: "turn", Status: status, Error: text, Unsent: unsent, Text: final})
-		if promote {
-			c.beginTurnLocked(pending[0], "queued")
-			for _, in := range pending[1:] {
-				c.active.steering.PushInput(in)
-			}
-			return
-		}
 		c.settleLocked(unsent)
 	})
 }
@@ -343,19 +332,20 @@ func (c *Controller) switchLocked(kind, id string) error {
 	return nil
 }
 
-// deliverLocked turns pending notifications into a turn when idle.
+// deliverLocked starts a turn with the oldest queued input when idle.
 func (c *Controller) deliverLocked() bool {
 	if c.active != nil || c.shut || c.closing {
 		return false
 	}
-	messages := c.a.Notifications()
-	if len(messages) == 0 {
+	next, ok := c.a.Queue().Pop()
+	if !ok {
 		return false
 	}
-	c.beginTurnLocked(agent.Input{Text: messages[0]}, "notify")
-	for _, text := range messages[1:] {
-		c.active.steering.Push(text)
+	source := "queued"
+	if next.Notice {
+		source = "notify"
 	}
+	c.beginTurnLocked(next, source)
 	return true
 }
 

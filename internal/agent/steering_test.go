@@ -18,15 +18,15 @@ func TestSteeringIsAcceptedAfterToolOutputs(t *testing.T) {
 		return textReply("done")
 	}}
 	a := newTestAgent(t, fp, Options{})
-	steering := &Steering{}
+	queue := a.Queue()
 	pushed := false
 	emit := func(e Event) {
 		if e.Kind == "code" && e.Final && !e.Provisional && !pushed {
 			pushed = true
-			steering.Push("also check Y")
+			queue.Push(Input{Text: "also check Y"})
 		}
 	}
-	if err := a.RunInput(context.Background(), Input{Text: "start"}, emit, steering); err != nil {
+	if err := a.RunInput(context.Background(), Input{Text: "start"}, emit); err != nil {
 		t.Fatal(err)
 	}
 	second := fp.requests()[1]
@@ -39,15 +39,15 @@ func TestSteeringIsAcceptedAfterToolOutputs(t *testing.T) {
 // A queued instruction can be recalled until it is accepted; accepted ones cannot.
 func TestSteeringRecallUntilAccepted(t *testing.T) {
 	s := &Steering{}
-	s.Push("first")
-	s.PushInput(Input{Text: "second", Images: []shell.Image{{URL: "data:image/png;base64,AA=="}}})
-	if in, ok := s.RecallInput(); !ok || in.Text != "second" || len(in.Images) != 1 {
+	s.Push(Input{Text: "first"})
+	s.Push(Input{Text: "second", Images: []shell.Image{{URL: "data:image/png;base64,AA=="}}})
+	if in, ok := s.Recall(); !ok || in.Text != "second" || len(in.Images) != 1 {
 		t.Fatalf("recalled %+v %v", in, ok)
 	}
-	if taken := s.TakeInputs(); len(taken) != 1 || taken[0].Text != "first" {
+	if taken := s.Take(); len(taken) != 1 || taken[0].Text != "first" {
 		t.Fatalf("taken %+v", taken)
 	}
-	if _, ok := s.RecallInput(); ok {
+	if _, ok := s.Recall(); ok {
 		t.Fatal("accepted instruction recalled")
 	}
 }
