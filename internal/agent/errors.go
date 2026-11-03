@@ -3,7 +3,6 @@ package agent
 import (
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/openai/openai-go/v3"
@@ -36,18 +35,7 @@ func (a *Agent) safeError(err error) error {
 			text += ": " + api.Message
 		}
 	}
-	for _, p := range a.settings.Providers {
-		keyEnv := ""
-		if p.APIKeyEnv != "" {
-			keyEnv = os.Getenv(p.APIKeyEnv)
-		}
-		for _, key := range []string{p.APIKey, keyEnv} {
-			if key != "" {
-				text = strings.ReplaceAll(text, key, "[redacted]")
-			}
-		}
-	}
-	return &providerError{text: text, cause: err}
+	return &providerError{text: Redact(a.settings, text), cause: err}
 }
 
 // streamFailure reports a failed stream event by its code and message, never the raw event.

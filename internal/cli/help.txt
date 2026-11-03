@@ -34,8 +34,21 @@ SYSTEM PROMPT (AGENTS.md)
   1. $DASHY_HOME/AGENTS.md (default ~/.dashy/AGENTS.md; skipped with --no-global)
   2. Local file: --config FILE if given, otherwise ./AGENTS.md (missing is fine)
   Each file is added under a '# <absolute path>' header, separated by a blank line.
-  The prompt is assembled once lazily before the first model request and frozen
-  for the entire session.
+  The prompt is assembled lazily before the first model request of a session and
+  then kept. /new and /resume read settings and AGENTS.md again and reassemble it.
+
+BASH TOOL
+  The model's only tool runs /bin/bash --noprofile --norc in the project directory.
+  - Each call is a fresh process: variables, functions, aliases and the working
+    directory do not persist. There is no TTY and stdin is empty.
+  - Result: {output, exit_code}; stdout and stderr are merged.
+  - timeout: seconds, default 120, maximum 600. A timeout (exit 124) or
+    cancellation (exit 130) kills the whole process group.
+  - max_output: bytes kept, default 8192, 0 = no truncation. When output is cut,
+    the middle is removed and the first and last halves are kept.
+  - Background processes do not outlive the call; for long work redirect output
+    to a file and run 'dashy notify' when it finishes.
+  - It runs with the user's permissions and is not a sandbox.
 
 DASHY BLOCKS
   Fenced code blocks in AGENTS.md with info string 'dashy' (```dashy) execute sequentially
@@ -44,7 +57,7 @@ DASHY BLOCKS
   - On failure, replaced by '[dashy block failed: <reason>]' with a stderr tail.
   - Output replaces the block verbatim (trailing newline trimmed).
   - Environment passed to blocks: DASHY_MODE, DASHY_SOURCE, DASHY_SESSION_ID, DASHY_HOME.
-  - Blocks run only once per session at initial prompt assembly.
+  - Blocks run each time the prompt is assembled (see above), not on every request.
 
 ENVIRONMENT VARIABLES
   DASHY_HOME        Base directory for dashy state and settings (default: ~/.dashy).

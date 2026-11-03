@@ -23,43 +23,8 @@ import (
 	"dashy/internal/shell"
 )
 
-const BashToolDescription = `Run a command in system Bash (/bin/bash --noprofile --norc).
-Each call starts a fresh process in the project directory; variables, functions,
-aliases and the working directory do not persist between calls. There is no TTY
-and stdin is empty. Programs run from PATH with the user's permissions.
-
-Result: {output, exit_code}. Stdout and stderr are merged.
-timeout: seconds, null = 120, maximum 600. A timeout (exit 124) or cancellation
-(exit 130) kills the whole process group.
-max_output: bytes kept, null = 8192, 0 = no truncation. When output is cut, the
-middle is removed and the first and last halves are kept.
-Prefer filtering: rg, grep, head, tail, sed -n, wc. Create files with a quoted heredoc.
-Background processes do not outlive the call; for long work redirect output to a
-file and run ` + "`dashy notify`" + ` when it finishes.
-This shell is not a sandbox. Do not do destructive things unless asked.
-
-You are running inside dashy, a minimal coding-agent harness. Your instructions are
-the AGENTS.md files you were given as the system prompt (~/.dashy/AGENTS.md, then
-the project's AGENTS.md or the file chosen with --config). A ` + "```dashy" + ` fenced block
-in those files was already run when the session started; its output is part of
-the prompt. Run ` + "`dashy --help`" + ` for the full reference.
-
-dashy commands you can run from the shell:
-- dashy -p "TASK" [--config FILE] [--no-global]
-    Run an independent sub-agent and print only its final answer to stdout
-    (progress goes to stderr; exit code is non-zero if it failed). It does not
-    see this conversation, so put everything it needs into TASK. Use --config
-    to give it a different AGENTS.md (a different role) and --no-global to drop
-    ~/.dashy/AGENTS.md. Text piped to stdin is appended to TASK.
-- dashy notify TEXT...
-    Send a message to this session. An idle session starts a turn; a busy one
-    receives it as a steering message. Needs DASHY_ENDPOINT (set in this shell).
-- dashy view PATH...
-    Attach PNG/JPEG images to your next model request (up to four).
-- dashy --help
-    Reference for flags, AGENTS.md and the dashy block.
-
-Every call has DASHY_SESSION_ID and DASHY_ENDPOINT set.`
+const BashToolDescription = "You are Dashy, a coding agent. Use the bash tool to help the user reach their goals. " +
+	"Run `dashy --help` to work with Dashy itself."
 
 var codeField = regexp.MustCompile(`"command"\s*:\s*"`)
 
@@ -406,11 +371,12 @@ func (a *Agent) itemID(index int64) string {
 	return fmt.Sprintf("%s-%d", a.lastRequest.RequestID, index)
 }
 
-// request sends the history and returns the completed response items.
-func (a *Agent) request(ctx context.Context, emit func(Event), checkpoints ...func(int64, json.RawMessage) error) (items []json.RawMessage, err error) {
+// request sends the history and returns the completed response items. checkpoint,
+// when not nil, receives every output item as soon as the provider completes it.
+func (a *Agent) request(ctx context.Context, emit func(Event), checkpoint func(int64, json.RawMessage) error) (items []json.RawMessage, err error) {
 	defer func() { err = a.safeError(err) }()
-	if strings.TrimSpace(a.settings.Model) == "" || strings.TrimSpace(a.settings.Provider) == "" {
-		return nil, fmt.Errorf("no provider or model selected: use /settings to choose a model (or /login to add a provider)")
+	if hint := a.settings.SetupHint(); hint != "" {
+		return nil, errors.New(hint)
 	}
 	prompt, err := a.instructions(ctx)
 	if err != nil {
@@ -462,8 +428,8 @@ func (a *Agent) request(ctx context.Context, emit func(Event), checkpoints ...fu
 				emit(Event{Kind: "code", Text: partialCode(arguments[event.OutputIndex]), Provisional: true, ID: a.itemID(event.OutputIndex), Final: true})
 			}
 		case "response.output_item.added", "response.output_item.done":
-			if event.Type == "response.output_item.done" && len(checkpoints) > 0 && checkpoints[0] != nil {
-				if err := checkpoints[0](event.OutputIndex, json.RawMessage(event.Item.RawJSON())); err != nil {
+			if event.Type == "response.output_item.done" && checkpoint != nil {
+				if err := checkpoint(event.OutputIndex, json.RawMessage(event.Item.RawJSON())); err != nil {
 					return nil, err
 				}
 			}

@@ -110,7 +110,7 @@ func notifyCommand(ctx context.Context, args []string, in io.Reader) error {
 	}
 	text := strings.Join(fs.Args(), " ")
 	if len(fs.Args()) == 0 {
-		data, err := readStdin(ctx, in, 128*1024+1)
+		data, err := readStdin(ctx, in, agent.MaxNotifyBytes+1)
 		if err != nil {
 			return cancelledOr(ctx, err)
 		}
@@ -284,7 +284,7 @@ func sessionCommand(ctx context.Context, args []string, in io.Reader, out, diagn
 		return err
 	}
 	defer a.Close()
-	if a.Settings().Provider == "" || a.Settings().Model == "" {
+	if a.Settings().SetupHint() != "" {
 		return errors.New("no provider or model configured: run dashy and choose one in /settings")
 	}
 	return runPrint(ctx, a, prompt, out, diagnostics)

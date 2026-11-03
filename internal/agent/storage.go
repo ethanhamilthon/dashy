@@ -78,9 +78,9 @@ func (a *Agent) createSession() error {
 
 // SessionSummary is the /resume view of a saved session.
 type SessionSummary struct {
-	ID    string
-	Title string
-	Mod   time.Time
+	ID      string
+	Title   string
+	Updated time.Time
 }
 
 // Sessions returns saved sessions of this project, most recently updated first.
@@ -105,14 +105,14 @@ func (a *Agent) Sessions() ([]SessionSummary, error) {
 		if err != nil {
 			return nil, err
 		}
-		summary.ID, summary.Mod = strings.TrimSuffix(e.Name(), ".jsonl"), info.ModTime()
+		summary.ID, summary.Updated = strings.TrimSuffix(e.Name(), ".jsonl"), info.ModTime()
 		sessions = append(sessions, summary)
 	}
 	sort.Slice(sessions, func(i, j int) bool {
-		if sessions[i].Mod.Equal(sessions[j].Mod) {
+		if sessions[i].Updated.Equal(sessions[j].Updated) {
 			return sessions[i].ID > sessions[j].ID
 		}
-		return sessions[i].Mod.After(sessions[j].Mod)
+		return sessions[i].Updated.After(sessions[j].Updated)
 	})
 	return sessions, nil
 }

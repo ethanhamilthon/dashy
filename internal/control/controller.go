@@ -3,7 +3,6 @@ package control
 import (
 	"context"
 	"errors"
-	"fmt"
 	"slices"
 	"sync"
 	"time"
@@ -20,7 +19,6 @@ type Controller struct {
 	emit func(Event)
 
 	mu       sync.Mutex
-	count    int
 	active   *operation
 	idle     chan struct{} // closed when active ends; nil while idle
 	deferred *deferredAction
@@ -35,7 +33,6 @@ type Controller struct {
 
 // operation is a turn or compaction holding the controller.
 type operation struct {
-	id        string
 	kind      string // turn or compact
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -109,7 +106,7 @@ func (c *Controller) History() (records []agent.Record) {
 }
 
 // Sessions lists saved sessions of this project, most recent first.
-func (c *Controller) Sessions() (sessions []SessionInfo, err error) {
+func (c *Controller) Sessions() (sessions []agent.SessionSummary, err error) {
 	c.view(func() { sessions, err = c.sessionsLocked() })
 	return sessions, err
 }
@@ -172,22 +169,21 @@ func (c *Controller) closeLocked() error {
 
 // beginLocked makes a new operation of kind (turn or compact) active.
 func (c *Controller) beginLocked(kind string) *operation {
-	c.count++
 	ctx, cancel := context.WithCancel(context.Background())
-	c.active = &operation{id: fmt.Sprintf("%s-%d", kind, c.count), kind: kind, ctx: ctx, cancel: cancel, started: time.Now()}
+	c.active = &operation{kind: kind, ctx: ctx, cancel: cancel, started: time.Now()}
 	c.idle = make(chan struct{})
 	return c.active
 }
 
-func (c *Controller) beginTurnLocked(input agent.Input, source string) {
+func (c *Controller) beginTurnLocked(input agent.Input) {
 	op := c.beginLocked("turn")
-	c.publish(Event{Kind: "started", Turn: op.id, Operation: "turn", Source: source, Text: input.Text})
+	c.publish(Event{Kind: "started", Operation: "turn", Text: input.Text})
 	go func() { c.finishTurn(op, c.a.RunInput(op.ctx, input, func(e agent.Event) { c.observe(op, e) })) }()
 }
 
 func (c *Controller) beginCompactLocked(prompt string) {
 	op := c.beginLocked("compact")
-	c.publish(Event{Kind: "started", Turn: op.id, Operation: "compact", Source: "compact", Text: prompt})
+	c.publish(Event{Kind: "started", Operation: "compact", Text: prompt})
 	go func() {
 		text, err := c.a.Compact(op.ctx, prompt)
 		c.finishCompact(op, text, err)
@@ -209,10 +205,10 @@ func (c *Controller) observe(op *operation, e agent.Event) {
 		}
 		if e.Kind == "reset" {
 			// Automatic compaction replaced the history at a safe point: rebuild the display from it.
-			c.publish(Event{Kind: "session", Turn: op.id, Operation: "compact", Records: c.a.Records()})
+			c.publish(Event{Kind: "session", Operation: "compact", Records: c.a.Records()})
 			return
 		}
-		c.publish(Event{Kind: "agent", Turn: op.id, Agent: &e})
+		c.publish(Event{Kind: "agent", Agent: &e})
 	})
 }
 
@@ -245,7 +241,7 @@ func (c *Controller) finishTurn(op *operation, err error) {
 		if status == "ok" {
 			final = c.a.FinalText() // committed history: the answer after the last tool output
 		}
-		c.publish(Event{Kind: "done", Turn: op.id, Operation: "turn", Status: status, Error: text, Unsent: unsent, Text: final})
+		c.publish(Event{Kind: "done", Operation: "turn", Status: status, Error: text, Unsent: unsent, Text: final})
 		c.settleLocked(unsent)
 	})
 }
@@ -263,12 +259,12 @@ func (c *Controller) finishCompact(op *operation, text string, err error) {
 		c.endLocked(op)
 		if status == "ok" {
 			c.ctx = c.a.ContextTokens()
-			c.publish(Event{Kind: "session", Turn: op.id, Operation: "compact", Records: c.a.Records()})
+			c.publish(Event{Kind: "session", Operation: "compact", Records: c.a.Records()})
 		}
 		if status == "error" {
 			c.publish(Event{Kind: "error", Text: failure})
 		}
-		c.publish(Event{Kind: "done", Turn: op.id, Operation: "compact", Status: status, Error: failure, Message: message})
+		c.publish(Event{Kind: "done", Operation: "compact", Status: status, Error: failure, Message: message})
 		c.settleLocked(nil)
 	})
 }
@@ -326,11 +322,7 @@ func (c *Controller) deliverLocked() bool {
 	if !ok {
 		return false
 	}
-	source := "queued"
-	if next.Notice {
-		source = "notify"
-	}
-	c.beginTurnLocked(next, source)
+	c.beginTurnLocked(next)
 	return true
 }
 
@@ -352,29 +344,14 @@ func (c *Controller) publish(e Event) {
 	c.emit(e)
 }
 
-func (c *Controller) sessionsLocked() ([]SessionInfo, error) {
-	summaries, err := c.a.Sessions()
-	if err != nil {
-		return nil, err
-	}
-	sessions := make([]SessionInfo, 0, len(summaries))
-	for _, s := range summaries {
-		sessions = append(sessions, SessionInfo{ID: s.ID, Title: s.Title, Updated: s.Mod})
-	}
-	return sessions, nil
-}
+func (c *Controller) sessionsLocked() ([]agent.SessionSummary, error) { return c.a.Sessions() }
 
 // setupError explains what is missing before a message can start a turn.
 func (c *Controller) setupError() error {
-	s := c.a.Settings()
-	if s.Provider != "" && s.Model != "" {
-		return nil
+	if hint := c.a.Settings().SetupHint(); hint != "" {
+		return fail("setup_required", "%s", hint)
 	}
-	hint := "No model selected. Choose a model with /settings (use /login to add more providers)."
-	if len(s.Providers) == 0 {
-		hint = "No provider configured. Use /login to add a provider, then choose a model with /settings."
-	}
-	return fail("setup_required", "%s", hint)
+	return nil
 }
 
 func (c *Controller) requireIdle(msg string) error {

@@ -27,7 +27,7 @@ Run `dashy` in a project directory. Open `/settings` to choose a provider and mo
 
 ## AGENTS.md and dashy blocks
 
-The system prompt is built from two AGENTS.md files, once per session:
+The system prompt is built from two AGENTS.md files before the first request of a session (`/new` and `/resume` build it again):
 
 1. `$DASHY_HOME/AGENTS.md` (default `~/.dashy/AGENTS.md`), skipped with `--no-global`.
 2. `./AGENTS.md`, or the file given with `--config FILE` (which replaces `./AGENTS.md`).
@@ -46,7 +46,7 @@ git log --oneline -3
 
 ## Sub-agents (`dashy -p`)
 
-`dashy -p "TASK"` runs one task in a new session: the final answer goes to stdout, progress to stderr, and the exit code is non-zero on failure.
+`dashy -p "TASK"` runs one task in a new session (or in a saved one with `--resume ID`): the final answer goes to stdout, progress to stderr, and the exit code is non-zero on failure.
 
 ```sh
 # A focused reviewer with its own instructions and no global ones

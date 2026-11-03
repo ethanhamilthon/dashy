@@ -144,7 +144,7 @@ func TestMissingModelSendsNoRequest(t *testing.T) {
 	fp := &fakeProvider{reply: func(int, string) string { return textReply("x") }}
 	a := newTestAgent(t, fp, Options{})
 	a.applySettings(DefaultSettings())
-	if _, err := turn(t, a, "hi"); err == nil || !strings.Contains(err.Error(), "no provider or model") {
+	if _, err := turn(t, a, "hi"); err == nil || !strings.Contains(err.Error(), "No provider configured") {
 		t.Fatalf("err = %v", err)
 	}
 	if len(fp.requests()) != 0 {

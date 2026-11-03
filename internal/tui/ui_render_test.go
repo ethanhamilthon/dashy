@@ -47,7 +47,7 @@ func TestTimelineCacheAndResize(t *testing.T) {
 func TestMarkdownAndNarrowTimeline(t *testing.T) {
 	text := "# Heading\n\n**bold** and *emphasis*\n\n- item\n\n```go\nfmt.Println(42)\n```\n\n| a | b |\n| - | - |\n| x | y |"
 	for _, width := range []int{1, 2, 3, 10, 40, 80} {
-		rendered := ansi.Strip(renderEntry(entry{Kind: "assistant", Text: text}, width))
+		rendered := ansi.Strip(renderEntry(entry{Kind: "assistant", Text: text}, width, -1))
 		if width >= 40 && (strings.Contains(rendered, "**bold**") || strings.Contains(rendered, "```")) {
 			t.Fatal("Markdown not rendered")
 		}
@@ -88,15 +88,9 @@ func TestMetadataAndBottomBar(t *testing.T) {
 func TestBlockLineLimits(t *testing.T) {
 	text := "first\nsecond\nthird\nfourth\nfifth\nsixth"
 	for _, kind := range []string{"code", "output", "reasoning"} {
-		for _, limit := range []int{0, 1, 4, 999} {
+		for _, limit := range []int{1, 4, 999} {
 			e := entry{Kind: kind, Text: text}
 			block := ansi.Strip(renderEntry(e, 80, limit))
-			if limit == 0 {
-				if block != "" {
-					t.Fatalf("hidden %s: %q", kind, block)
-				}
-				continue
-			}
 			rows := strings.Split(block, "\n")
 			if len(rows) != 1+min(6, limit) {
 				t.Fatalf("%s limit %d: %q", kind, limit, block)
@@ -114,7 +108,7 @@ func TestBlockLineLimits(t *testing.T) {
 		}
 	}
 	for _, kind := range []string{"code", "output", "reasoning"} {
-		_, headerColor, _ := eventColors(kind)
+		headerColor, _ := eventColors(kind)
 		want := darkGray
 		if kind == "code" {
 			want = codeGray
@@ -229,7 +223,7 @@ func TestSingleLineNotifications(t *testing.T) {
 	} {
 		e := entry{Kind: "notice", Text: tc.text, Meta: &agent.Metadata{}}
 		for _, width := range []int{1, 2, 5, 20, 80, 120} {
-			block := renderEntry(e, width)
+			block := renderEntry(e, width, -1)
 			plain := ansi.Strip(block)
 			if strings.ContainsAny(plain, "\r\n\t") || ansi.StringWidth(plain) > width {
 				t.Fatalf("notice must be one row at width %d: %q", width, plain)
@@ -245,7 +239,7 @@ func TestSingleLineNotifications(t *testing.T) {
 			t.Fatal("notification source text was modified")
 		}
 	}
-	_, fg, marker := eventColors("notice")
+	fg, marker := eventColors("notice")
 	if fg != muted || marker != "!" {
 		t.Fatal("notice must use a gray icon and text")
 	}

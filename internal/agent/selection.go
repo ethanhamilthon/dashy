@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 )
@@ -29,9 +28,6 @@ func AllModels(ctx context.Context, providers map[string]Provider) (choices []Mo
 	results := make(chan result, len(providers))
 	for name, p := range providers {
 		go func(name string, p Provider) {
-			if p.APIKey == "" && p.APIKeyEnv != "" {
-				p.APIKey = os.Getenv(p.APIKeyEnv)
-			}
 			client := newClient(p)
 			page := client.Models.ListAutoPaging(ctx)
 			var models []string
@@ -39,8 +35,8 @@ func AllModels(ctx context.Context, providers map[string]Provider) (choices []Mo
 				models = append(models, page.Current().ID)
 			}
 			err := page.Err()
-			if err != nil && p.APIKey != "" {
-				err = errors.New(strings.ReplaceAll(err.Error(), p.APIKey, "[redacted]"))
+			if err != nil && p.key() != "" {
+				err = errors.New(strings.ReplaceAll(err.Error(), p.key(), "[redacted]"))
 			}
 			results <- result{name, models, err}
 		}(name, p)

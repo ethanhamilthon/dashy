@@ -53,9 +53,9 @@ type model struct {
 	menu                     []command
 	effort, menuGeneration   int
 	menuCancel               context.CancelFunc
-	pickerModels             []control.ModelInfo
+	pickerModels             []agent.ModelChoice
 	setup                    []string
-	sessions                 []control.SessionInfo
+	sessions                 []agent.SessionSummary
 	fileGen, fileDebounceGen int
 	fileLoading              bool
 	fileCompletions          []string
@@ -86,7 +86,7 @@ func newModel(a *agent.Agent, cwd string, reporter *osc7501.Reporter) model {
 	base := lipgloss.NewStyle().Foreground(foreground)
 	style := textarea.Style{Base: base, CursorLine: base, Text: base, Placeholder: base.Foreground(muted), EndOfBuffer: base}
 	input.FocusedStyle, input.BlurredStyle = style, style
-	events := control.NewQueue[control.Event](0)
+	events := control.NewQueue[control.Event]()
 	ctl := control.New(a, func(e control.Event) { events.Push(e) })
 	m := model{ctl: ctl, events: events, input: input, viewport: viewport.New(80, 24), width: 80, height: 24, cwd: cwd, reporter: reporter}
 	reporter.HandleEvent(control.Event{Kind: "session", Title: ctl.Title()})
@@ -205,8 +205,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.add("notice", "Some providers failed to list models:\n"+strings.Join(failed, "\n"))
 		}
 		m.refresh(true)
-		return m, nil
-	case tea.QuitMsg:
 		return m, nil
 	case workingTick:
 		status := m.ctl.Status()

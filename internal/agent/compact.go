@@ -46,8 +46,8 @@ func userTurn(item json.RawMessage) bool {
 	if json.Unmarshal(item, &v) != nil || v.Role != "user" || v.Type == "function_call_output" {
 		return false
 	}
-	records := RecordsForItem(item)
-	return len(records) == 1 && records[0].Kind == "user" && !strings.HasPrefix(records[0].Text, "<compact_summary>")
+	records := RecordsForItem(item) // a compaction summary displays as a notice, not a user turn
+	return len(records) == 1 && records[0].Kind == "user"
 }
 
 // turnStart returns the index where the last n user turns begin, or 0 when there are fewer.

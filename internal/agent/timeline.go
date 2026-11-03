@@ -8,36 +8,36 @@ import (
 
 // Usage belongs to one request, never to the whole session.
 type Usage struct {
-	Input  int64 `json:"input"`
-	Output int64 `json:"output"`
-	Cached int64 `json:"cached"` // -1 means the provider omitted cached-token data.
+	Input  int64
+	Output int64
+	Cached int64 // -1 means the provider omitted cached-token data.
 }
 
 type Metadata struct {
-	Duration     time.Duration `json:"duration"`
-	Usage        *Usage        `json:"usage,omitempty"`
-	ContextInput *int64        `json:"context_input,omitempty"`
-	RequestID    string        `json:"request_id,omitempty"`
+	Duration     time.Duration
+	Usage        *Usage
+	ContextInput *int64
+	RequestID    string
 }
 
 type Record struct {
-	Preview bool      `json:"preview,omitempty"`
-	Kind    string    `json:"kind"`
-	Text    string    `json:"text,omitempty"`
-	ID      string    `json:"id,omitempty"`
-	Meta    *Metadata `json:"meta,omitempty"`
+	Preview bool
+	Kind    string
+	Text    string
+	ID      string
+	Meta    *Metadata
 }
 
 type Event struct {
-	Kind        string    `json:"kind"`
-	Text        string    `json:"text,omitempty"`
-	ID          string    `json:"id,omitempty"`
-	Meta        *Metadata `json:"meta,omitempty"`
-	Final       bool      `json:"final,omitempty"`
-	Provisional bool      `json:"provisional,omitempty"`
+	Kind        string
+	Text        string
+	ID          string
+	Meta        *Metadata
+	Final       bool
+	Provisional bool
 }
 
-// ApplyEvent is shared by live display and the persisted display journal.
+// ApplyEvent applies one display event to a list of display records.
 func ApplyEvent(records []Record, e Event) []Record {
 	kind := e.Kind
 	switch kind {

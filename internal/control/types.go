@@ -15,9 +15,7 @@ import (
 // events in emission order and must not call the controller from the callback.
 type Event struct {
 	Kind      string         // started, agent, notice, error, done or session
-	Turn      string         // operation identifier
 	Operation string         // started, done, session: turn or compact
-	Source    string         // started: user, notify or queued
 	Agent     *agent.Event   // agent: the unmodified event from the agent
 	Text      string         // started: the input text; notice and error: the text; done (ok): final assistant text
 	Status    string         // done: ok, error or cancelled
@@ -28,7 +26,7 @@ type Event struct {
 	Title     string         // session title after this event (rename, else first user line)
 }
 
-// Error is a structured rejection. Code is stable; Message is user-facing and never contains credentials.
+// Error is a rejection. Code tells the interface how to show it; Message is user-facing and never contains credentials.
 type Error struct {
 	Code    string
 	Message string
@@ -47,7 +45,7 @@ type CommandInfo struct {
 }
 
 var commandList = []CommandInfo{
-	{"/new", "Start a new chat and shell; re-read configuration"},
+	{"/new", "Start a new chat; re-read settings and AGENTS.md"},
 	{"/help", "Show commands and keyboard shortcuts"},
 	{"/quit", "Save the chat and exit"},
 	{"/resume", "Resume a saved session in this project"},
@@ -69,25 +67,6 @@ func Help(keyboard string) string {
 	help.WriteString("\n" + keyboard + "\n")
 	help.WriteString("\nHost access: the bash tool runs commands with your permissions; not an OS security sandbox.")
 	return help.String()
-}
-
-// SessionInfo describes one saved session of this project.
-type SessionInfo struct {
-	ID      string
-	Title   string
-	Updated time.Time
-}
-
-// ModelInfo is one model offered by a configured provider.
-type ModelInfo struct {
-	Provider string
-	Model    string
-}
-
-// ModelList is the result of listing models. Errors maps provider names to redacted failures.
-type ModelList struct {
-	Models []ModelInfo
-	Errors map[string]string
 }
 
 // Status is a consistent snapshot of the active operation.

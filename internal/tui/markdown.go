@@ -9,11 +9,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-func terminalLink(target string, labels ...string) string {
-	text := target
-	if len(labels) > 0 {
-		text = labels[0]
-	}
+// terminalLink makes text an OSC 8 hyperlink to target when target is a plain http(s) URL.
+func terminalLink(target, text string) string {
 	u, err := url.Parse(target)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || strings.ContainsFunc(target, unicode.IsControl) {
 		return text

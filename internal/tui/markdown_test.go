@@ -14,7 +14,7 @@ func TestMarkdownStylesAndLists(t *testing.T) {
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	defer lipgloss.SetColorProfile(previous)
 	text := "# One\n\n## Two\n\n### Three\n\n#### Four\n\n##### Five\n\n###### Six\n\n`inline blue`\n\n1. First\n2. Second\n   - Nested\n"
-	block := renderEntry(entry{Kind: "assistant", Text: text}, 100)
+	block := renderEntry(entry{Kind: "assistant", Text: text}, 100, -1)
 	plain := ansi.Strip(block)
 	for _, want := range []string{"1. First", "2. Second", "Nested", "inline blue"} {
 		if !strings.Contains(plain, want) {
@@ -34,17 +34,17 @@ func TestMarkdownHyperlinks(t *testing.T) {
 		"<https://example.com/docs>",
 		"| Link |\n| --- |\n| [Docs](https://example.com/docs) |",
 	} {
-		block := renderEntry(entry{Kind: "assistant", Text: text}, 100)
+		block := renderEntry(entry{Kind: "assistant", Text: text}, 100, -1)
 		if !strings.Contains(block, ansi.SetHyperlink("https://example.com/docs")) || !strings.Contains(block, ansi.ResetHyperlink()) {
 			t.Fatalf("missing OSC 8 link: %q", block)
 		}
 	}
 	for _, target := range []string{"javascript:alert(1)", "file:///tmp/test", "https://example.com/\x07bad"} {
-		if strings.Contains(terminalLink(target), "\x1b]8;") {
+		if strings.Contains(terminalLink(target, target), "\x1b]8;") {
 			t.Errorf("unsafe link allowed: %q", target)
 		}
 	}
-	body := terminalLink("https://example.com/long/path")
+	body := terminalLink("https://example.com/long/path", "https://example.com/long/path")
 	for _, width := range []int{1, 2, 10, 20} {
 		for _, row := range linkedRows(body, width) {
 			if ansi.StringWidth(row) > width || !strings.HasSuffix(row, ansi.ResetHyperlink()) {
@@ -62,7 +62,7 @@ func TestMarkdownHyperlinks(t *testing.T) {
 func TestWrappedMarkdownLinkTargetAndNoLeak(t *testing.T) {
 	target := "https://example.com/a/very/long/path?foo=bar&baz=qux"
 	for _, width := range []int{1, 2, 5, 10, 20, 80} {
-		block := renderEntry(entry{Kind: "assistant", Text: "[Docs](" + target + ")\n\nPlain paragraph."}, width)
+		block := renderEntry(entry{Kind: "assistant", Text: "[Docs](" + target + ")\n\nPlain paragraph."}, width, -1)
 		if strings.ContainsAny(block, "\u2063\u2064") {
 			t.Fatalf("internal markers leaked at %d", width)
 		}

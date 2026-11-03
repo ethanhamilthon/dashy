@@ -128,12 +128,10 @@ func (m model) handleControl(e control.Event) (tea.Model, tea.Cmd) {
 		}
 		m.refresh(follow)
 	}
-	if m.ctl.Closed() != nil {
-		select {
-		case <-m.ctl.Closed():
-			return m, tea.Quit
-		default:
-		}
+	select {
+	case <-m.ctl.Closed():
+		return m, tea.Quit
+	default:
 	}
 	return m, cmd
 }

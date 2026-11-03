@@ -15,11 +15,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Format check
-        run: test -z "$(gofmt -l . | grep -v '^$')" || (gofmt -l . && exit 1)
-      - name: Vet
-        run: go vet ./...
-      - name: Test
-        run: go test -race ./...
+      - name: Format, vet and race tests
+        run: make test
       - name: Build
         run: go build -o /dev/null .

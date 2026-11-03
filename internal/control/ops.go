@@ -2,7 +2,6 @@ package control
 
 import (
 	"context"
-	"os"
 	"slices"
 	"strings"
 
@@ -24,7 +23,7 @@ func (c *Controller) Input(input agent.Input) error {
 			if err = c.setupError(); err == nil {
 				if err = c.admit(input); err == nil {
 					c.noteImages(input)
-					c.beginTurnLocked(input, "user")
+					c.beginTurnLocked(input)
 				}
 			}
 		}
@@ -117,12 +116,12 @@ func (c *Controller) switchRequest(kind, id string) error {
 	var err error
 	c.view(func() {
 		if kind == "resume" {
-			var sessions []SessionInfo
+			var sessions []agent.SessionSummary
 			if sessions, err = c.sessionsLocked(); err != nil {
 				err = fail("failed", "%s", err)
 				return
 			}
-			if !slices.ContainsFunc(sessions, func(s SessionInfo) bool { return s.ID == id }) {
+			if !slices.ContainsFunc(sessions, func(s agent.SessionSummary) bool { return s.ID == id }) {
 				err = fail("not_found", "session not found in this project: %s", id)
 				return
 			}
@@ -191,10 +190,9 @@ func (c *Controller) Instructions() (paths []string) {
 	return paths
 }
 
-// Models lists models of all configured providers.
-func (c *Controller) Models(ctx context.Context) (ModelList, error) {
+// Models lists models of all configured providers; failures maps provider names to redacted errors.
+func (c *Controller) Models(ctx context.Context) (models []agent.ModelChoice, failures map[string]string, err error) {
 	var settings agent.Settings
-	var err error
 	c.view(func() {
 		if err = c.requireIdle("Wait for the active turn before changing settings."); err == nil && c.shut {
 			err = fail("closed", "the session is closed")
@@ -202,20 +200,17 @@ func (c *Controller) Models(ctx context.Context) (ModelList, error) {
 		settings = c.a.Settings()
 	})
 	if err != nil {
-		return ModelList{}, err
+		return nil, nil, err
 	}
-	choices, failures := agent.AllModels(ctx, settings.Providers)
+	models, errs := agent.AllModels(ctx, settings.Providers)
 	if ctx.Err() != nil {
-		return ModelList{}, fail("cancelled", "the model listing was cancelled")
+		return nil, nil, fail("cancelled", "the model listing was cancelled")
 	}
-	list := ModelList{Models: []ModelInfo{}, Errors: map[string]string{}}
-	for _, choice := range choices {
-		list.Models = append(list.Models, ModelInfo{Provider: choice.Provider, Model: choice.Model})
+	failures = map[string]string{}
+	for name, err := range errs {
+		failures[name] = agent.Redact(settings, err.Error())
 	}
-	for name, err := range failures {
-		list.Errors[name] = redact(err.Error(), providerSecrets(settings)...)
-	}
-	return list, nil
+	return models, failures, nil
 }
 
 // SelectModel sets the active provider, model and reasoning effort.
@@ -252,7 +247,7 @@ func (c *Controller) selectLocked(provider, model, effort string) error {
 		return fail("not_found", "provider not found: %s", provider)
 	}
 	if err := c.a.Select(provider, model, effort); err != nil {
-		return fail("failed", "%s", redact(err.Error(), providerSecrets(c.a.Settings())...))
+		return fail("failed", "%s", agent.Redact(c.a.Settings(), err.Error()))
 	}
 	c.publish(Event{Kind: "notice", Text: "Selected " + provider + " · " + model + "/" + effort + " (saved to " + c.a.SettingsPath() + ")"})
 	return nil
@@ -265,9 +260,9 @@ func (c *Controller) AddProvider(name, baseURL, apiKey string) error {
 		if err = c.requireIdle("Wait for the active turn before changing settings."); err != nil {
 			return
 		}
-		secrets := providerSecrets(c.a.Settings(), apiKey)
+		settings := c.a.Settings()
 		if err = c.a.AddProvider(name, agent.Provider{BaseURL: baseURL, APIKey: apiKey}); err != nil {
-			err = fail("failed", "%s", redact(err.Error(), secrets...))
+			err = fail("failed", "%s", agent.Redact(settings, err.Error(), apiKey))
 			return
 		}
 		c.publish(Event{Kind: "notice", Text: "Provider created in " + c.a.SettingsPath() + ". Choose a model with /settings."})
@@ -280,14 +275,14 @@ func (c *Controller) AddProvider(name, baseURL, apiKey string) error {
 func (c *Controller) ToggleReasoningSummary() error {
 	return c.changeSetting(func(s agent.Settings) (string, error) {
 		err := c.a.SetReasoningSummary(!s.ReasoningSummary)
-		return "Reasoning summary: " + onOff(!s.ReasoningSummary), err
+		return "Reasoning summary: " + OnOff(!s.ReasoningSummary), err
 	})
 }
 
 func (c *Controller) ToggleAutoCompact() error {
 	return c.changeSetting(func(s agent.Settings) (string, error) {
 		err := c.a.SetAutoCompact(!s.AutoCompact)
-		return "Auto compact: " + onOff(!s.AutoCompact), err
+		return "Auto compact: " + OnOff(!s.AutoCompact), err
 	})
 }
 
@@ -314,31 +309,10 @@ func (c *Controller) changeSetting(change func(agent.Settings) (string, error)) 
 	return err
 }
 
-func onOff(v bool) string {
+// OnOff is how settings show a boolean.
+func OnOff(v bool) string {
 	if v {
 		return "on"
 	}
 	return "off"
-}
-
-// redact removes credentials from text returned to a caller.
-func redact(text string, secrets ...string) string {
-	for _, secret := range secrets {
-		if secret != "" {
-			text = strings.ReplaceAll(text, secret, "[redacted]")
-		}
-	}
-	return text
-}
-
-// providerSecrets lists every configured credential so error text can be scrubbed.
-func providerSecrets(s agent.Settings, extra ...string) []string {
-	secrets := append([]string(nil), extra...)
-	for _, p := range s.Providers {
-		secrets = append(secrets, p.APIKey)
-		if p.APIKeyEnv != "" {
-			secrets = append(secrets, os.Getenv(p.APIKeyEnv))
-		}
-	}
-	return secrets
 }

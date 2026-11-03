@@ -29,6 +29,9 @@ type Message struct {
 	Image *shell.Image `json:"image,omitempty"`
 }
 
+// MaxNotifyBytes is the largest notification text a session accepts.
+const MaxNotifyBytes = 128 * 1024
+
 // SocketPath returns the unix socket path for the given session ID.
 // If the path exceeds the macOS limit of 104 bytes, a deterministic short hash is used.
 func SocketPath(runDir, id string) string {
@@ -79,12 +82,10 @@ func (a *Agent) listenNotifications() error {
 	removeDeadSockets(runDir)
 	sockPath := SocketPath(runDir, a.SessionID())
 
-	// Check if a stale socket exists and remove it if no active listener answers.
+	// removeDeadSockets left only sockets that answer, so an existing one is in use.
 	if conn, err := net.DialTimeout("unix", sockPath, 100*time.Millisecond); err == nil {
 		conn.Close()
 		return fmt.Errorf("session socket %s is in use", sockPath)
-	} else {
-		_ = os.Remove(sockPath)
 	}
 
 	listener, err := net.Listen("unix", sockPath)
@@ -131,13 +132,13 @@ func (s *sessionSocket) admit(message Message, err error) string {
 		case !validImage(*message.Image):
 			return "view requires a PNG or JPEG image"
 		case !s.slots.reserve(1):
-			return "view: at most four new images per model request"
+			return fmt.Sprintf("view: at most %d new images per model request", MaxPendingImages)
 		}
 		s.views <- *message.Image // the reservation bounds the queue to its capacity
 		return ""
 	}
-	if strings.TrimSpace(message.Text) == "" || len(message.Text) > 128*1024 {
-		return "notify requires 1..131072 bytes of message text"
+	if strings.TrimSpace(message.Text) == "" || len(message.Text) > MaxNotifyBytes {
+		return fmt.Sprintf("notify requires 1..%d bytes of message text", MaxNotifyBytes)
 	}
 	var escaped bytes.Buffer
 	_ = xml.EscapeText(&escaped, []byte(message.Text)) // writes to a bytes.Buffer never fail

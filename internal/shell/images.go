@@ -58,7 +58,7 @@ func captureImage(path, directory string) (Image, error) {
 		return Image{}, err
 	}
 	if len(data) > MaxImageInputBytes {
-		return Image{}, fmt.Errorf("view image exceeds 32 MiB")
+		return Image{}, fmt.Errorf("view image exceeds %d MiB", MaxImageInputBytes>>20)
 	}
 	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil || (format != "png" && format != "jpeg") {

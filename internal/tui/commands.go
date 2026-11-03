@@ -3,10 +3,10 @@ package tui
 import (
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
+	"dashy/internal/agent"
 	"dashy/internal/control"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -36,7 +36,7 @@ func commandMenu() []command {
 var commands = commandMenu()
 
 // sessionTitle is the first user message, shortened for the resume picker.
-func sessionTitle(s control.SessionInfo) string {
+func sessionTitle(s agent.SessionSummary) string {
 	title := []rune(s.Title)
 	if len(title) == 0 {
 		return "(no message)"
@@ -145,7 +145,7 @@ const keyboardHelp = "Enter: execute selected completion or send / steer while w
 	"Clipboard: Ctrl+V (Cmd+V when forwarded) · Ctrl+X: remove last image\n" +
 	"Tab: complete · Up/Down: select completion · unmatched slash text: send normally · Up on empty input: recall queued steering\n" +
 	"PgUp/PgDn or mouse wheel: scroll timeline\n" +
-	"Esc / Ctrl+C: cancel current turn"
+	"Esc / Ctrl+C: cancel current turn · Ctrl+C when idle or Ctrl+D on empty input: quit"
 
 // runCommand parses a slash command. Picker and completion steps stay in the
 // interface; every application operation goes through the controller.
@@ -174,12 +174,8 @@ func (m model) runCommand(name string) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
-		sessions := m.sessions
-		if sessions == nil {
-			sessions, _ = m.ctl.Sessions()
-		}
-		if len(verb) != 2 || !slices.ContainsFunc(sessions, func(s control.SessionInfo) bool { return s.ID == verb[1] }) {
-			return m.stop("error", "choose a session from /resume completions")
+		if len(verb) != 2 {
+			return m.stop("notice", "No saved sessions in this project.")
 		}
 		m.resetCompletions()
 		return m.submit(m.ctl.Resume(verb[1]))

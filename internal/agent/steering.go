@@ -74,6 +74,9 @@ type Steering struct {
 	pending []Input
 }
 
+// maxQueued bounds the steering queue.
+const maxQueued = 64
+
 // Queue returns the session's steering queue.
 func (a *Agent) Queue() *Steering { return a.queue }
 
@@ -81,7 +84,7 @@ func (a *Agent) Queue() *Steering { return a.queue }
 func (s *Steering) Push(input Input) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.pending) >= 64 {
+	if len(s.pending) >= maxQueued {
 		return false
 	}
 	s.pending = append(s.pending, input)

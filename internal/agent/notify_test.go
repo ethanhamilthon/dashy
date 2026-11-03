@@ -49,7 +49,7 @@ func TestImageAllowanceIsSharedWithView(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := Send(a.sock.path, Message{Image: &shell.Image{URL: pngURL()}}); err == nil || !strings.Contains(err.Error(), "four") {
+	if err := Send(a.sock.path, Message{Image: &shell.Image{URL: pngURL()}}); err == nil || !strings.Contains(err.Error(), "at most 4") {
 		t.Fatalf("fifth image admitted: %v", err)
 	}
 	if got := a.PendingImages(); got != 4 {
@@ -95,7 +95,7 @@ func TestImagesInHistoryCountUntilSent(t *testing.T) {
 	if !a.ReserveImages(1) {
 		t.Fatal("fourth image refused")
 	}
-	if _, err := a.request(context.Background(), func(Event) {}); err != nil {
+	if _, err := a.request(context.Background(), func(Event) {}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.Count(fp.requests()[0], "input_image"); got != 3 {

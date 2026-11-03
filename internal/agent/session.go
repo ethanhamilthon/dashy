@@ -57,7 +57,7 @@ func (a *Agent) HasSavedSession() bool {
 	return len(a.History) > 0 || err == nil
 }
 
-// Close stops running shell calls and releases the session.
+// Close releases the session: its socket and its lock.
 func (a *Agent) Close() { a.release() }
 
 // NewSession and Resume are called only when no turn is running.

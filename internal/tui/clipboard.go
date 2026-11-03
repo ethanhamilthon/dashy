@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -64,9 +63,6 @@ func readClipboard(ctx context.Context, directory string) (shell.Image, string, 
 	return readClipboardWith(ctx, directory, runtime.GOOS, clipboardCommand)
 }
 func readClipboardWith(ctx context.Context, directory, platform string, run clipboardRunner) (shell.Image, string, error) {
-	if directory == "" {
-		directory = filepath.Join(os.TempDir(), "dashy-images")
-	}
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		return shell.Image{}, "", err
 	}
@@ -143,10 +139,6 @@ func (m model) pasteClipboard() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	directory := m.ctl.AttachmentsDir()
-	if directory == "" {
-		home, _ := agent.DashyHome(m.cwd)
-		directory = filepath.Join(home, "attachments")
-	}
 	m.pasting = true
 	generation := m.pasteGeneration
 	return m, func() tea.Msg {

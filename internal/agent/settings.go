@@ -15,7 +15,7 @@ import (
 	"github.com/openai/openai-go/v3/option"
 )
 
-// Constants that used to be configurable.
+// Fixed limits of compaction, the bash tool and the timeline (show_lines).
 const (
 	CompactThreshold  = 400000 // estimated tokens that trigger automatic compaction
 	CompactKeepTurns  = 4
@@ -38,6 +38,28 @@ type Provider struct {
 	APIKeyEnv string `json:"api_key_env,omitempty"`
 }
 
+// key is the API key of p: the stored key or the value of its environment variable.
+func (p Provider) key() string {
+	if p.APIKey == "" && p.APIKeyEnv != "" {
+		return os.Getenv(p.APIKeyEnv)
+	}
+	return p.APIKey
+}
+
+// Redact replaces every configured API key (and any extra secret) in text with [redacted].
+func Redact(s Settings, text string, extra ...string) string {
+	secrets := extra
+	for _, p := range s.Providers {
+		secrets = append(secrets, p.APIKey, p.key())
+	}
+	for _, secret := range secrets {
+		if secret != "" {
+			text = strings.ReplaceAll(text, secret, "[redacted]")
+		}
+	}
+	return text
+}
+
 // Settings is the content of ~/.dashy/settings.json.
 type Settings struct {
 	Provider         string              `json:"provider"`
@@ -52,6 +74,17 @@ type Settings struct {
 // DefaultSettings is used when no settings file exists.
 func DefaultSettings() Settings {
 	return Settings{ReasoningSummary: true, AutoCompact: true, ShowLines: "short", Providers: map[string]Provider{}}
+}
+
+// SetupHint explains what must be configured before a model request; "" when nothing is missing.
+func (s Settings) SetupHint() string {
+	switch {
+	case s.Provider != "" && s.Model != "":
+		return ""
+	case len(s.Providers) == 0:
+		return "No provider configured. Use /login to add a provider, then choose a model with /settings."
+	}
+	return "No model selected. Choose a model with /settings (use /login to add more providers)."
 }
 
 // MaxLines is how many lines of a kind ("code", "output" or "reasoning") the timeline shows; -1 means all.
@@ -176,11 +209,7 @@ func (a *Agent) applySettings(s Settings) {
 		s.Providers = map[string]Provider{}
 	}
 	a.settings = s
-	p := s.Providers[s.Provider]
-	if p.APIKey == "" && p.APIKeyEnv != "" {
-		p.APIKey = os.Getenv(p.APIKeyEnv)
-	}
-	a.client = newClient(p)
+	a.client = newClient(s.Providers[s.Provider])
 }
 
 // applyAndSave validates, applies and persists next. A failed save restores the previous settings.
@@ -200,7 +229,7 @@ func (a *Agent) applyAndSave(next Settings) error {
 func newClient(p Provider) openai.Client {
 	return openai.NewClient(
 		option.WithBaseURL(strings.TrimRight(p.BaseURL, "/")+"/"),
-		option.WithAPIKey(p.APIKey),
+		option.WithAPIKey(p.key()),
 		option.WithMaxRetries(0),
 		option.WithRequestTimeout(10*time.Minute),
 	)

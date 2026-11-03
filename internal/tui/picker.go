@@ -31,7 +31,7 @@ const (
 // modelChoices carries the result of listing models for the settings picker.
 type modelChoices struct {
 	generation int
-	models     []control.ModelInfo
+	models     []agent.ModelChoice
 	errs       map[string]string
 	err        error
 }
@@ -62,11 +62,8 @@ func (m *model) openPicker(kind string) tea.Cmd {
 	m.menuCancel = cancel
 	generation, ctl := m.menuGeneration, m.ctl
 	return func() tea.Msg {
-		list, err := ctl.Models(ctx)
-		if err != nil {
-			return modelChoices{generation: generation, err: err}
-		}
-		return modelChoices{generation: generation, models: list.Models, errs: list.Errors}
+		models, errs, err := ctl.Models(ctx)
+		return modelChoices{generation: generation, models: models, errs: errs, err: err}
 	}
 }
 
@@ -74,8 +71,8 @@ func (m *model) openPicker(kind string) tea.Cmd {
 func (m *model) rebuildSettingsMenu() {
 	s := m.ctl.Settings()
 	m.menu = []command{
-		{name: "Reasoning summary", icon: "*", label: "Reasoning summary: " + onOff(s.ReasoningSummary), action: actionReasoning},
-		{name: "Auto compact", icon: "*", label: "Auto compact: " + onOff(s.AutoCompact), action: actionAutoCompact},
+		{name: "Reasoning summary", icon: "*", label: "Reasoning summary: " + control.OnOff(s.ReasoningSummary), action: actionReasoning},
+		{name: "Auto compact", icon: "*", label: "Auto compact: " + control.OnOff(s.AutoCompact), action: actionAutoCompact},
 		{name: "Show lines", icon: "*", label: "Show lines: " + s.ShowLines, action: actionLines},
 		{name: "Add provider", icon: "+", description: "Create provider", label: "+ Add provider", action: actionAdd},
 	}
@@ -85,13 +82,6 @@ func (m *model) rebuildSettingsMenu() {
 			m.selected = len(m.menu) - 1
 		}
 	}
-}
-
-func onOff(v bool) string {
-	if v {
-		return "on"
-	}
-	return "off"
 }
 
 func (m *model) closePicker() {

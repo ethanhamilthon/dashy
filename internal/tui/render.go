@@ -29,24 +29,24 @@ var (
 	mdRenderer *glamour.TermRenderer
 )
 
-func eventColors(kind string) (bg, fg lipgloss.TerminalColor, label string) {
+func eventColors(kind string) (fg lipgloss.TerminalColor, label string) {
 	switch kind {
 	case "user":
-		return lipgloss.NoColor{}, foreground, ""
+		return foreground, ""
 	case "assistant":
-		return lipgloss.NoColor{}, assistantColor, "*"
+		return assistantColor, "*"
 	case "code":
-		return lipgloss.NoColor{}, codeGray, ">_"
+		return codeGray, ">_"
 	case "reasoning":
-		return lipgloss.NoColor{}, darkGray, "~"
+		return darkGray, "~"
 	case "output":
-		return lipgloss.NoColor{}, darkGray, "<"
+		return darkGray, "<"
 	case "error":
-		return lipgloss.NoColor{}, errorColor, "error"
+		return errorColor, "error"
 	case "notice":
-		return lipgloss.NoColor{}, muted, "!"
+		return muted, "!"
 	default:
-		return lipgloss.NoColor{}, infoColor, "info"
+		return infoColor, "info"
 	}
 }
 
@@ -60,16 +60,9 @@ func paint(text string, width int, bg, fg lipgloss.TerminalColor) string {
 	return strings.Join(rows, "\n")
 }
 
-// An optional limit caps wrapped body rows; zero hides the entire entry.
-func renderEntry(e entry, width int, limits ...int) string {
-	limit := -1
-	if len(limits) > 0 {
-		limit = limits[0]
-	}
-	if limit == 0 && e.Kind != "error" {
-		return ""
-	}
-	bg, fg, label := eventColors(e.Kind)
+// renderEntry renders one timeline entry; a positive limit caps the wrapped body rows.
+func renderEntry(e entry, width, limit int) string {
+	fg, label := eventColors(e.Kind)
 
 	text := ansi.Strip(e.Text)
 	if e.Kind == "notice" || e.Kind == "error" {
@@ -87,7 +80,7 @@ func renderEntry(e entry, width int, limits ...int) string {
 			message := lipgloss.NewStyle().Foreground(darkGray).Render(" · " + text)
 			return paint(ansi.Truncate("  "+icon+message, max(1, width), "…"), max(1, width), lipgloss.NoColor{}, lipgloss.NoColor{})
 		}
-		return paint(ansi.Truncate("  "+label+" · "+text, max(1, width), "…"), max(1, width), bg, fg)
+		return paint(ansi.Truncate("  "+label+" · "+text, max(1, width), "…"), max(1, width), lipgloss.NoColor{}, fg)
 
 	}
 
@@ -111,7 +104,7 @@ func renderEntry(e entry, width int, limits ...int) string {
 	}
 	label += formatMetadata(e.Meta, e.Kind)
 	if body == "" && e.Kind == "code" {
-		return paint(ansi.Truncate("  "+label, max(1, width), "…"), width, bg, fg)
+		return paint(ansi.Truncate("  "+label, max(1, width), "…"), width, lipgloss.NoColor{}, fg)
 	}
 	if body == "" {
 		body = "(no output)"
@@ -123,7 +116,7 @@ func renderEntry(e entry, width int, limits ...int) string {
 	for i, line := range lines {
 		lines[i] = ansi.Truncate(strings.Repeat(" ", min(2, max(0, width-1)))+line, max(1, width), "…")
 	}
-	return paint(ansi.Truncate("  "+label, max(1, width), "…"), width, bg, fg) + "\n" + paint(strings.Join(lines, "\n"), width, bg, bodyColor(e.Kind))
+	return paint(ansi.Truncate("  "+label, max(1, width), "…"), width, lipgloss.NoColor{}, fg) + "\n" + paint(strings.Join(lines, "\n"), width, lipgloss.NoColor{}, bodyColor(e.Kind))
 }
 func bodyColor(kind string) lipgloss.TerminalColor {
 	switch kind {
@@ -150,22 +143,13 @@ func (m model) inputBlock() string {
 	return renderRail(m.input.View(), m.width)
 }
 
-// setupHint explains what is missing before the first message can be sent.
-func (m model) setupHint() string {
-	s := m.ctl.Settings()
-	if len(s.Providers) == 0 {
-		return "No provider configured. Use /login to add a provider, then choose a model with /settings."
-	}
-	return "No model selected. Choose a model with /settings (use /login to add more providers)."
-}
-
 func (m *model) timeline() string {
 	var out strings.Builder
 	out.WriteString(lipgloss.NewStyle().Foreground(cyan).Bold(true).Render("dashy. minimal coding agent."))
 	out.WriteString(lipgloss.NewStyle().Foreground(muted).Render(" v" + strings.TrimPrefix(Version, "v")))
 	out.WriteString("\n" + lipgloss.NewStyle().Foreground(muted).Render("Enter to send · Shift+Enter for newline · / for commands") + "\n")
-	if s := m.ctl.Settings(); s.Provider == "" || s.Model == "" {
-		out.WriteString(lipgloss.NewStyle().Foreground(warnColor).Render(m.setupHint()) + "\n")
+	if hint := m.ctl.Settings().SetupHint(); hint != "" {
+		out.WriteString(lipgloss.NewStyle().Foreground(warnColor).Render(hint) + "\n")
 	}
 	for _, path := range m.ctl.Instructions() {
 		row := "AGENTS.md " + shortPath(path)

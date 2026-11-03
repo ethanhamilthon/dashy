@@ -377,7 +377,7 @@ func TestSettingsRejectedWhileNotificationTurnRuns(t *testing.T) {
 			t.Errorf("%s while busy: %v", name, err)
 		}
 	}
-	if _, err := h.ctl.Models(t.Context()); codeOf(err) != "busy" {
+	if _, _, err := h.ctl.Models(t.Context()); codeOf(err) != "busy" {
 		t.Errorf("model listing while busy: %v", err)
 	}
 	if after := h.ctl.Settings(); after.ReasoningSummary != before.ReasoningSummary || after.ShowLines != before.ShowLines || after.Model != before.Model {
@@ -443,7 +443,7 @@ func tinyPNG(t *testing.T) []byte {
 // with a stable code when it cannot apply.
 func TestSettingsAndProvidersThroughTheController(t *testing.T) {
 	h := newHarness(t, &fakeModel{})
-	if _, err := h.ctl.Models(context.Background()); err != nil {
+	if _, _, err := h.ctl.Models(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if codeOf(h.ctl.SelectProvider("nope")) != "not_found" || codeOf(h.ctl.SelectModel("", "", "")) != "invalid" {

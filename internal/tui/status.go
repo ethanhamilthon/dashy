@@ -45,11 +45,8 @@ func renderBottomBar(width int, left, right string) string {
 }
 
 func (m model) status() (string, string) {
-	var provider, model, effort string
-	if m.ctl != nil {
-		s := m.ctl.Settings()
-		provider, model, effort = s.Provider, s.Model, s.Effort
-	}
+	s := m.ctl.Settings()
+	provider, model, effort := s.Provider, s.Model, s.Effort
 	mdl := model
 	if effort != "" {
 		mdl += "/" + effort

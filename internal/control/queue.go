@@ -5,34 +5,28 @@ import (
 	"sync"
 )
 
-// Queue hands items to one consumer. Push never blocks: the controller calls it
-// under its lock, so a bounded queue reports a full push instead of waiting.
+// Queue hands items to one consumer. Push never blocks, because the controller
+// calls it under its lock.
 type Queue[T any] struct {
 	mu    sync.Mutex
 	items []T
-	limit int // 0 means unbounded
 	wake  chan struct{}
 }
 
-// NewQueue returns a queue holding at most limit items; limit 0 is unbounded.
-func NewQueue[T any](limit int) *Queue[T] {
-	return &Queue[T]{limit: limit, wake: make(chan struct{}, 1)}
+// NewQueue returns an empty, unbounded queue.
+func NewQueue[T any]() *Queue[T] {
+	return &Queue[T]{wake: make(chan struct{}, 1)}
 }
 
-// Push appends item and reports false when a bounded queue is full.
-func (q *Queue[T]) Push(item T) bool {
+// Push appends item.
+func (q *Queue[T]) Push(item T) {
 	q.mu.Lock()
-	if q.limit > 0 && len(q.items) >= q.limit {
-		q.mu.Unlock()
-		return false
-	}
 	q.items = append(q.items, item)
 	q.mu.Unlock()
 	select {
 	case q.wake <- struct{}{}:
 	default:
 	}
-	return true
 }
 
 // TryPop returns the oldest item without blocking.
