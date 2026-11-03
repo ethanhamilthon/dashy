@@ -3,6 +3,7 @@ package osc7501
 import (
 	"bytes"
 	"encoding/base64"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -229,13 +230,85 @@ func TestCloseWaitsOutIntervalAfterTransmittedState(t *testing.T) {
 	}
 }
 
-// A disabled reporter (piped output, -p, TERM=dumb) writes nothing at all.
-func TestDisabledReporterWritesNothing(t *testing.T) {
-	out := &syncBuffer{}
-	r := New(out, false)
-	r.HandleEvent(control.Event{Kind: "started", Operation: "turn", Text: "x"})
-	r.Close()
-	if out.String() != "" {
-		t.Fatalf("wrote %q", out.String())
+// The output gate: Enabled decides whether a reporter may write at all. Each case
+// connects it to a reporter, drives events and closes it, then checks what reached
+// the output. Only a terminal on stdout and stdin, with TERM not "dumb", may get a
+// sequence; piped output must never contain one.
+func TestEnabledGatesEveryReport(t *testing.T) {
+	master, tty := openTTY(t)
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	inR, inW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { outR.Close(); outW.Close(); inR.Close(); inW.Close() })
+	cases := []struct {
+		name      string
+		out, read *os.File // reporter output, and the end it is read back from
+		stdin     *os.File
+		term      string
+		want      bool // whether a report may be written
+	}{
+		{"terminal", tty, master, tty, "xterm-256color", true},
+		{"piped stdout", outW, outR, tty, "xterm-256color", false},
+		{"piped stdin", tty, master, inR, "xterm-256color", false},
+		{"TERM=dumb", tty, master, tty, "dumb", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("TERM", c.term)
+			saved := os.Stdin
+			os.Stdin = c.stdin
+			t.Cleanup(func() { os.Stdin = saved })
+			enabled := Enabled(c.out)
+			if enabled != c.want {
+				t.Fatalf("Enabled = %v, want %v", enabled, c.want)
+			}
+			r := New(c.out, enabled)
+			r.HandleEvent(control.Event{Kind: "started", Operation: "turn", Text: "task"})
+			r.HandleEvent(control.Event{Kind: "done", Operation: "turn", Status: "ok", Text: "answer"})
+			r.Close()
+			got := readBack(t, c.out, c.read)
+			if (got != "") != c.want {
+				t.Fatalf("output %q, want a report: %v", got, c.want)
+			}
+			if c.want && !strings.HasPrefix(got, "\x1b]7501;state=") {
+				t.Fatalf("output %q is not a report", got)
+			}
+		})
+	}
+}
+
+// readBack writes a marker to out and reads read up to it, so everything the reporter
+// wrote before is collected without waiting for the stream to end.
+func readBack(t *testing.T, out, read *os.File) string {
+	t.Helper()
+	const marker = "<<end>>" // not in base64, so no report can contain it
+	if _, err := out.WriteString(marker); err != nil {
+		t.Fatal(err)
+	}
+	got := make(chan string, 1)
+	go func() {
+		var b strings.Builder
+		buf := make([]byte, 1024)
+		for !strings.Contains(b.String(), marker) {
+			n, err := read.Read(buf)
+			b.Write(buf[:n])
+			if err != nil {
+				break
+			}
+		}
+		got <- b.String()
+	}()
+	select {
+	case s := <-got:
+		before, _, _ := strings.Cut(s, marker)
+		return before
+	case <-time.After(5 * time.Second):
+		t.Fatal("marker did not come back")
+		return ""
 	}
 }
