@@ -22,7 +22,6 @@ const (
 	fileMaxCandidates = 100
 	fileMaxIndexed    = 20000
 	fileMaxDepth      = 20
-	fileMaxMenuRows   = 8
 )
 
 type fileDebounceMsg struct{ debounceGen, fileGen int }
@@ -36,10 +35,6 @@ type fileScanMsg struct {
 type fileToken struct {
 	start, end int
 	query      string
-	dir        bool
-	// unterminated marks a quoted reference with no closing quote on its line.
-	// Completion may still use it, but it is not a complete reference to attach.
-	unterminated bool
 }
 
 func hasControl(s string) bool {
@@ -117,7 +112,6 @@ func parseFileToken(runes []rune, at, cursor int) (fileToken, bool) {
 	}
 	var tokenEnd int
 	var query string
-	var unterminated bool
 	if at+1 < len(runes) && (runes[at+1] == '"' || runes[at+1] == '\'') {
 		quote := runes[at+1]
 		qEnd := at + 2
@@ -134,8 +128,6 @@ func parseFileToken(runes []rune, at, cursor int) (fileToken, bool) {
 		tokenEnd = qEnd
 		if qEnd < len(runes) && runes[qEnd] == quote {
 			tokenEnd++
-		} else {
-			unterminated = true
 		}
 		if cursor < 0 {
 			cursor = tokenEnd
@@ -162,7 +154,7 @@ func parseFileToken(runes []rune, at, cursor int) (fileToken, bool) {
 	if strings.ContainsRune(query, '@') || hasControl(query) {
 		return fileToken{}, false
 	}
-	return fileToken{start: at, end: tokenEnd, query: query, dir: strings.HasSuffix(query, "/"), unterminated: unterminated}, true
+	return fileToken{start: at, end: tokenEnd, query: query}, true
 }
 
 type pathCollector struct {

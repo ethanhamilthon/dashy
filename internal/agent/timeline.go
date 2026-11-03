@@ -72,7 +72,7 @@ func ApplyEvent(records []Record, e Event) []Record {
 	return append(records, Record{Kind: kind, Text: e.Text, ID: e.ID, Meta: e.Meta, Preview: e.Provisional})
 }
 
-// RecordsForItem is the only Responses-to-display conversion, including old histories.
+// RecordsForItem is the only Responses-to-display conversion.
 func RecordsForItem(item json.RawMessage) []Record {
 	var v struct {
 		Role, Type, Name, Arguments, Output string
@@ -125,14 +125,6 @@ func RecordsForItem(item json.RawMessage) []Record {
 		for _, p := range v.Summary {
 			if p.Text != "" {
 				texts = append(texts, p.Text)
-			}
-		}
-		if len(texts) == 0 {
-			var s struct {
-				Summary string `json:"summary"`
-			}
-			if json.Unmarshal(item, &s) == nil && s.Summary != "" {
-				texts = append(texts, s.Summary)
 			}
 		}
 		var parts []struct{ Text string }

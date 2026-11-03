@@ -14,24 +14,23 @@ import (
 
 func TestFindFileTokenBasics(t *testing.T) {
 	tests := []struct {
-		name    string
-		text    string
-		cursor  int
-		wantOk  bool
-		wantQ   string
-		wantDir bool
-		wantS   int
-		wantE   int
+		name   string
+		text   string
+		cursor int
+		wantOk bool
+		wantQ  string
+		wantS  int
+		wantE  int
 	}{
-		{"empty", "", 0, false, "", false, 0, 0},
-		{"just at", "@", 1, true, "", false, 0, 1},
-		{"at with word", "@foo", 4, true, "foo", false, 0, 4},
-		{"at with dir", "@dir/", 5, true, "dir/", true, 0, 5},
-		{"cursor inside token", "check @dir/file more", 12, true, "dir/f", false, 6, 15},
-		{"token with parens", "(@file)", 6, true, "file", false, 1, 6},
-		{"token with quotes", "@\"my file.txt\"", 13, true, "my file.txt", false, 0, 14},
-		{"multiline token", "line 1\nline 2 @src/main.go", 26, true, "src/main.go", false, 14, 26},
-		{"space after token", "@foo ", 5, false, "", false, 0, 0},
+		{"empty", "", 0, false, "", 0, 0},
+		{"just at", "@", 1, true, "", 0, 1},
+		{"at with word", "@foo", 4, true, "foo", 0, 4},
+		{"at with dir", "@dir/", 5, true, "dir/", 0, 5},
+		{"cursor inside token", "check @dir/file more", 12, true, "dir/f", 6, 15},
+		{"token with parens", "(@file)", 6, true, "file", 1, 6},
+		{"token with quotes", "@\"my file.txt\"", 13, true, "my file.txt", 0, 14},
+		{"multiline token", "line 1\nline 2 @src/main.go", 26, true, "src/main.go", 14, 26},
+		{"space after token", "@foo ", 5, false, "", 0, 0},
 	}
 
 	for _, tc := range tests {
@@ -43,9 +42,6 @@ func TestFindFileTokenBasics(t *testing.T) {
 			if ok {
 				if token.query != tc.wantQ {
 					t.Errorf("query = %q, want %q", token.query, tc.wantQ)
-				}
-				if token.dir != tc.wantDir {
-					t.Errorf("dir = %v, want %v", token.dir, tc.wantDir)
 				}
 				if token.start != tc.wantS || token.end != tc.wantE {
 					t.Errorf("range = [%d, %d], want [%d, %d]", token.start, token.end, tc.wantS, tc.wantE)
