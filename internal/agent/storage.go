@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bufio"
 	"bytes"
 	"cmp"
 	"crypto/rand"
@@ -102,7 +101,10 @@ func (a *Agent) Sessions() ([]SessionSummary, error) {
 		if err != nil {
 			return nil, err
 		}
-		summary := sessionSummary(filepath.Join(a.sessionsDir, e.Name()))
+		summary, err := sessionSummary(filepath.Join(a.sessionsDir, e.Name()))
+		if err != nil {
+			return nil, err
+		}
 		summary.ID, summary.Mod = strings.TrimSuffix(e.Name(), ".jsonl"), info.ModTime()
 		sessions = append(sessions, summary)
 	}
@@ -117,37 +119,25 @@ func (a *Agent) Sessions() ([]SessionSummary, error) {
 
 // sessionSummary reads the title of a session file: the custom title if there is
 // one, else the default title, else the first line of the first user message.
-func sessionSummary(path string) SessionSummary {
-	var summary SessionSummary
-	file, err := os.Open(path)
+// It uses the same reader as resume, so both show the same title.
+func sessionSummary(path string) (SessionSummary, error) {
+	history, custom, defaultTitle, err := readSessionFile(path)
 	if err != nil {
-		return summary
+		return SessionSummary{}, err
 	}
-	defer file.Close()
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
-	var custom, defaultTitle, fromHistory string
-	for scanner.Scan() {
-		line := bytes.TrimSpace(scanner.Bytes())
-		if len(line) == 0 || line[0] != '{' {
-			continue
-		}
-		var meta sessionMeta
-		if json.Unmarshal(line, &meta) == nil && meta.Meta != nil {
-			custom, defaultTitle = meta.Meta.Title, meta.Meta.DefaultTitle
-			continue
-		}
-		if fromHistory == "" {
-			for _, r := range RecordsForItem(line) {
-				if r.Kind == "user" {
-					fromHistory = FirstLine(r.Text)
-					break
-				}
+	return SessionSummary{Title: cmp.Or(custom, defaultTitle, firstUserLine(history))}, nil
+}
+
+// firstUserLine is the first non-empty line of the first user record of history.
+func firstUserLine(history []json.RawMessage) string {
+	for _, item := range history {
+		for _, r := range RecordsForItem(item) {
+			if line := FirstLine(r.Text); r.Kind == "user" && line != "" {
+				return line
 			}
 		}
 	}
-	summary.Title = cmp.Or(custom, defaultTitle, fromHistory)
-	return summary
+	return ""
 }
 
 // CustomTitle is the title set by /rename, or "" when the default applies.
@@ -207,18 +197,25 @@ func (a *Agent) sessionData() ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-// readSession loads history and the custom title. A torn last line is dropped.
+// readSession loads history and the custom title.
 func (a *Agent) readSession() error {
-	data, err := os.ReadFile(a.HistoryPath)
+	var err error
+	a.History, a.title, a.defaultTitle, err = readSessionFile(a.HistoryPath)
+	return err
+}
+
+// readSessionFile parses a session file into history items, the last custom title
+// and the last default title. A torn last line is dropped. There is no line length
+// limit: a valid item of any size must read the same for the list and for resume.
+func readSessionFile(path string) (history []json.RawMessage, title, defaultTitle string, err error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return err
+		return nil, "", "", err
 	}
 	lines := bytes.Split(data, []byte("\n"))
 	if len(lines) > 0 && len(lines[len(lines)-1]) == 0 {
 		lines = lines[:len(lines)-1]
 	}
-	var history []json.RawMessage
-	var title, defaultTitle string
 	for i, line := range lines {
 		line = bytes.TrimSpace(line)
 		if len(line) == 0 {
@@ -229,7 +226,7 @@ func (a *Agent) readSession() error {
 			if i == len(lines)-1 {
 				break // torn last line
 			}
-			return fmt.Errorf("session line %d is not a JSON object", i+1)
+			return nil, "", "", fmt.Errorf("%s: line %d is not a JSON object", path, i+1)
 		}
 		if meta.Meta != nil {
 			title, defaultTitle = meta.Meta.Title, meta.Meta.DefaultTitle
@@ -237,8 +234,7 @@ func (a *Agent) readSession() error {
 		}
 		history = append(history, append(json.RawMessage(nil), line...))
 	}
-	a.History, a.title, a.defaultTitle = history, title, defaultTitle
-	return nil
+	return history, title, defaultTitle, nil
 }
 
 func writePrivate(path string, data []byte) error {

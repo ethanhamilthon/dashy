@@ -187,3 +187,27 @@ func TestSessionFileHoldsHistoryItemsAndTitleOnly(t *testing.T) {
 		t.Fatalf("lines %d, meta lines %d:\n%s", len(lines), metas, data)
 	}
 }
+
+// A user message whose stored line is over 4 MiB still has its first line as the
+// title, in the resume list and after reopening.
+func TestLargeFirstMessageKeepsListTitle(t *testing.T) {
+	fp := &fakeProvider{reply: func(int, string) string { return textReply("ok") }}
+	a := newTestAgent(t, fp, Options{})
+	if _, err := turn(t, a, "Short title\n"+strings.Repeat("x", 5<<20)); err != nil {
+		t.Fatal(err)
+	}
+	sessions, err := a.Sessions()
+	if err != nil || len(sessions) != 1 || sessions[0].Title != "Short title" {
+		t.Fatalf("listed: %v %v", sessions, err)
+	}
+	id := a.SessionID()
+	a.Close()
+	again, err := New(a.Shell.Dir, Options{Resume: id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer again.Close()
+	if again.DefaultTitle() != "Short title" {
+		t.Fatalf("reopened title = %q", again.DefaultTitle())
+	}
+}
