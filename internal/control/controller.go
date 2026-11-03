@@ -170,30 +170,28 @@ func (c *Controller) closeLocked() error {
 	return nil
 }
 
-func (c *Controller) beginTurnLocked(input agent.Input, source string) {
+// beginLocked makes a new operation of kind (turn or compact) active.
+func (c *Controller) beginLocked(kind string) *operation {
 	c.count++
 	ctx, cancel := context.WithCancel(context.Background())
-	op := &operation{
-		id:      fmt.Sprintf("turn-%d", c.count),
-		kind:    "turn",
-		ctx:     ctx,
-		cancel:  cancel,
-		started: time.Now(),
-	}
-	c.active = op
+	c.active = &operation{id: fmt.Sprintf("%s-%d", kind, c.count), kind: kind, ctx: ctx, cancel: cancel, started: time.Now()}
 	c.idle = make(chan struct{})
+	return c.active
+}
+
+func (c *Controller) beginTurnLocked(input agent.Input, source string) {
+	op := c.beginLocked("turn")
 	c.publish(Event{Kind: "started", Turn: op.id, Operation: "turn", Source: source, Text: input.Text})
-	go c.runTurn(op, input)
+	go func() { c.finishTurn(op, c.a.RunInput(op.ctx, input, func(e agent.Event) { c.observe(op, e) })) }()
 }
 
 func (c *Controller) beginCompactLocked(prompt string) {
-	c.count++
-	ctx, cancel := context.WithCancel(context.Background())
-	op := &operation{id: fmt.Sprintf("compact-%d", c.count), kind: "compact", ctx: ctx, cancel: cancel, started: time.Now()}
-	c.active = op
-	c.idle = make(chan struct{})
+	op := c.beginLocked("compact")
 	c.publish(Event{Kind: "started", Turn: op.id, Operation: "compact", Source: "compact", Text: prompt})
-	go c.runCompact(op, prompt)
+	go func() {
+		text, err := c.a.Compact(op.ctx, prompt)
+		c.finishCompact(op, text, err)
+	}()
 }
 
 func (c *Controller) endLocked(op *operation) {
@@ -201,16 +199,6 @@ func (c *Controller) endLocked(op *operation) {
 	c.active = nil
 	close(c.idle)
 	c.idle = nil
-}
-
-func (c *Controller) runTurn(op *operation, input agent.Input) {
-	err := c.a.RunInput(op.ctx, input, func(e agent.Event) { c.observe(op, e) })
-	c.finishTurn(op, err)
-}
-
-func (c *Controller) runCompact(op *operation, prompt string) {
-	text, err := c.a.Compact(op.ctx, prompt)
-	c.finishCompact(op, text, err)
 }
 
 // observe applies one agent event to controller state before reporting it.

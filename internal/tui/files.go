@@ -72,10 +72,8 @@ func unescapeQuoted(s string) string {
 	for i := 0; i < len(runes); i++ {
 		if runes[i] == '\\' && i+1 < len(runes) {
 			i++
-			sb.WriteRune(runes[i])
-		} else {
-			sb.WriteRune(runes[i])
 		}
+		sb.WriteRune(runes[i])
 	}
 	return sb.String()
 }
@@ -201,18 +199,11 @@ func scanProjectFiles(ctx context.Context, root string) ([]string, error) {
 			if hasControl(name) || name == ".git" || name == ".dashy" || name == "node_modules" {
 				continue
 			}
-			entryRel := name
-			if rel != "" {
-				entryRel = rel + "/" + name
-			}
+			entryRel := strings.TrimPrefix(rel+"/"+name, "/")
 			if e.Type()&fs.ModeSymlink != 0 {
 				if fi, err := os.Stat(filepath.Join(root, entryRel)); err == nil && fi.IsDir() {
 					continue
 				}
-				if c.add(entryRel) {
-					return
-				}
-				continue
 			}
 			if e.IsDir() {
 				if c.add(entryRel + "/") {

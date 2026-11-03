@@ -23,6 +23,8 @@ curl -fsSL https://raw.githubusercontent.com/ethanhamilthon/dashy/main/scripts/i
 
 Run `dashy` in a project directory. Open `/settings` to choose a provider and model (`/login` adds a provider). Settings are saved to `$DASHY_HOME/settings.json` (default `~/.dashy/settings.json`).
 
+`dashy models` prints the exact model IDs of every configured provider, one `PROVIDER<TAB>MODEL` per line (`--provider NAME` limits it to one provider).
+
 ## AGENTS.md and dashy blocks
 
 The system prompt is built from two AGENTS.md files, once per session:
@@ -49,6 +51,9 @@ git log --oneline -3
 ```sh
 # A focused reviewer with its own instructions and no global ones
 dashy -p "Review the diff against main" --config .dashy/reviewer.md --no-global
+
+# Another provider, model or reasoning effort for this run only (settings stay unchanged)
+dashy -p "Summarize the diff" --provider openai --model gpt-5-mini --effort low
 
 # Parallel sub-agents
 dashy -p "Task A" > a.out 2> a.err &

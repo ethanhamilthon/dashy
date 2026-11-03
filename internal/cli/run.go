@@ -7,8 +7,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/mattn/go-isatty"
@@ -85,6 +87,8 @@ func Run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.W
 			return notifyCommand(ctx, args[1:], in)
 		case "view":
 			return viewCommand(args[1:])
+		case "models":
+			return modelsCommand(ctx, args[1:], out, diagnostics)
 		}
 	}
 	return sessionCommand(ctx, args, in, out, diagnostics)
@@ -153,9 +157,52 @@ func viewCommand(args []string) error {
 	return nil
 }
 
+// modelsCommand prints "PROVIDER<TAB>MODEL" for every model the configured providers offer.
+func modelsCommand(ctx context.Context, args []string, out, diagnostics io.Writer) error {
+	var provider string
+	fs := flagSet("models", func(fs *flag.FlagSet) { fs.StringVar(&provider, "provider", "", "provider name") })
+	if err := fs.Parse(args); err != nil || fs.NArg() > 0 {
+		return errors.New("usage: dashy models [--provider NAME]")
+	}
+	cwd, _ := os.Getwd() // only resolves a relative DASHY_HOME, which then reports its own error
+	home, err := agent.DashyHome(cwd)
+	if err != nil {
+		return err
+	}
+	settings, err := agent.LoadSettings(filepath.Join(home, "settings.json"))
+	if err != nil {
+		return err
+	}
+	providers := settings.Providers
+	if provider != "" {
+		p, ok := providers[provider]
+		if !ok {
+			return fmt.Errorf("provider %q is not configured", provider)
+		}
+		providers = map[string]agent.Provider{provider: p}
+	}
+	if len(providers) == 0 {
+		return errors.New("no providers configured: run dashy and add one with /login")
+	}
+	choices, errs := agent.AllModels(ctx, providers)
+	if ctx.Err() != nil {
+		return cancelled
+	}
+	for _, c := range choices {
+		fmt.Fprintf(out, "%s\t%s\n", c.Provider, c.Model)
+	}
+	for _, name := range slices.Sorted(maps.Keys(errs)) {
+		fmt.Fprintf(diagnostics, "%s: %v\n", name, errs[name])
+	}
+	if len(errs) > 0 {
+		return &ExitError{Code: 1, Reported: true}
+	}
+	return nil
+}
+
 // sessionCommand is the TUI (no -p) or one-shot print mode (-p).
 func sessionCommand(ctx context.Context, args []string, in io.Reader, out, diagnostics io.Writer) error {
-	var prompt, config, resume string
+	var prompt, config, resume, provider, model, effort string
 	var noGlobal bool
 	printMode := false
 	fs := flagSet("dashy", func(fs *flag.FlagSet) {
@@ -163,6 +210,9 @@ func sessionCommand(ctx context.Context, args []string, in io.Reader, out, diagn
 		fs.StringVar(&config, "c", "", "alias for --config")
 		fs.BoolVar(&noGlobal, "no-global", false, "do not read ~/.dashy/AGENTS.md")
 		fs.StringVar(&resume, "resume", "", "resume a session ID of this project")
+		fs.StringVar(&provider, "provider", "", "provider for this -p run")
+		fs.StringVar(&model, "model", "", "model for this -p run")
+		fs.StringVar(&effort, "effort", "", "reasoning effort for this -p run")
 		fs.Func("p", "run one task and print the final answer", func(v string) error {
 			printMode, prompt = true, v
 			return nil
@@ -187,7 +237,13 @@ func sessionCommand(ctx context.Context, args []string, in io.Reader, out, diagn
 	if err != nil {
 		return err
 	}
-	opts := agent.Options{Config: config, NoGlobal: noGlobal, Resume: resume, Print: printMode}
+	if !printMode && provider+model+effort != "" {
+		return errors.New("--provider, --model and --effort need -p; use /settings in the TUI")
+	}
+	if provider != "" && model == "" {
+		return errors.New("--provider needs --model (see dashy models)")
+	}
+	opts := agent.Options{Config: config, NoGlobal: noGlobal, Resume: resume, Print: printMode, Provider: provider, Model: model, Effort: effort}
 	if !printMode {
 		if !isTerminal(in) || !isTerminal(out) {
 			return errors.New("the interactive TUI needs a terminal; use dashy -p \"TASK\" for scripts")

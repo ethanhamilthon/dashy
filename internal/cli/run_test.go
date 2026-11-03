@@ -409,3 +409,56 @@ func TestTUIRefusesNonTerminalStdin(t *testing.T) {
 		t.Fatalf("a session was created: %v", entries)
 	}
 }
+
+// --provider, --model and --effort apply to one -p run and are not saved.
+func TestPrintSelectionFlagsOverrideSettingsForOneRun(t *testing.T) {
+	s := &stub{reply: func(int) string { return streamOf("ok") }}
+	srv := httptest.NewServer(s)
+	defer srv.Close()
+	home := setup(t, srv.URL)
+	before, _ := os.ReadFile(filepath.Join(home, "settings.json"))
+	if _, _, err := runCLI(t, "", "-p", "x", "--provider", "p", "--model", "other-model", "--effort", "low"); err != nil {
+		t.Fatal(err)
+	}
+	if body := s.bodies[0]; !strings.Contains(body, `"model":"other-model"`) || !strings.Contains(body, `"effort":"low"`) {
+		t.Fatalf("request body: %s", body)
+	}
+	if after, _ := os.ReadFile(filepath.Join(home, "settings.json")); !bytes.Equal(before, after) {
+		t.Fatalf("settings changed:\n%s", after)
+	}
+	for _, args := range [][]string{
+		{"-p", "x", "--effort", "huge"},
+		{"-p", "x", "--provider", "missing", "--model", "m"},
+		{"-p", "x", "--provider", "p"},
+		{"--model", "m"},
+	} {
+		if _, _, err := runCLI(t, "", args...); err == nil {
+			t.Errorf("accepted %v", args)
+		}
+	}
+}
+
+// dashy models prints PROVIDER<TAB>MODEL lines from the provider's model list.
+func TestModelsListsExactIDs(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"object":"list","data":[{"id":"b-model","object":"model"},{"id":"a/model","object":"model"}]}`)
+	}))
+	defer srv.Close()
+	setup(t, srv.URL)
+	stdout, stderr, err := runCLI(t, "", "models")
+	if err != nil || stdout != "p\ta/model\np\tb-model\n" {
+		t.Fatalf("stdout %q, stderr %q, err %v", stdout, stderr, err)
+	}
+	if _, _, err := runCLI(t, "", "models", "--provider", "missing"); err == nil {
+		t.Fatal("accepted an unknown provider")
+	}
+	setup(t, "http://127.0.0.1:1")
+	if _, stderr, err := runCLI(t, "", "models"); ExitCode(err) != 1 || !strings.HasPrefix(stderr, "p: ") {
+		t.Fatalf("stderr %q, err %v", stderr, err)
+	}
+}

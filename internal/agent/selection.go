@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -37,7 +38,11 @@ func AllModels(ctx context.Context, providers map[string]Provider) (choices []Mo
 			for page.Next() {
 				models = append(models, page.Current().ID)
 			}
-			results <- result{name, models, page.Err()}
+			err := page.Err()
+			if err != nil && p.APIKey != "" {
+				err = errors.New(strings.ReplaceAll(err.Error(), p.APIKey, "[redacted]"))
+			}
+			results <- result{name, models, err}
 		}(name, p)
 	}
 	errs = map[string]error{}

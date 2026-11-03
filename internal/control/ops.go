@@ -59,12 +59,8 @@ func (c *Controller) admit(input agent.Input) error {
 }
 
 func (c *Controller) noteImages(input agent.Input) {
-	switch len(input.Images) {
-	case 0:
-	case 1:
-		c.publish(Event{Kind: "notice", Text: "Image added to next model request."})
-	default:
-		c.publish(Event{Kind: "notice", Text: "Images added to next model request."})
+	if n := len(input.Images); n > 0 {
+		c.publish(Event{Kind: "notice", Text: map[bool]string{true: "Image", false: "Images"}[n == 1] + " added to next model request."})
 	}
 }
 

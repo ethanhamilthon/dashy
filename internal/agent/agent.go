@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -92,6 +93,8 @@ type Options struct {
 	NoGlobal bool   // --no-global
 	Resume   string // --resume ID; "" starts a new session
 	Print    bool   // -p: no session socket, DASHY_MODE=print
+	// Provider, Model and Effort override the saved selection for this run only; "" keeps it.
+	Provider, Model, Effort string
 }
 
 // Agent holds one session: its history, settings, prompt and ownership lock.
@@ -142,6 +145,14 @@ func New(dir string, opts Options) (*Agent, error) {
 func (a *Agent) loadConfig(dir string) error {
 	settings, err := LoadSettings(a.SettingsPath())
 	if err != nil {
+		return err
+	}
+	for field, value := range map[*string]string{&settings.Provider: a.opts.Provider, &settings.Model: a.opts.Model, &settings.Effort: a.opts.Effort} {
+		if value != "" {
+			*field = value
+		}
+	}
+	if err := validateSettings(settings); err != nil {
 		return err
 	}
 	files, err := instructionFiles(a.home, dir, a.opts)
@@ -261,14 +272,9 @@ func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event)) (er
 		var durableHistory []json.RawMessage
 		checkpoint := func(index int64, item json.RawMessage) error {
 			finished[index] = append(json.RawMessage(nil), item...)
-			indexes := make([]int, 0, len(finished))
-			for i := range finished {
-				indexes = append(indexes, int(i))
-			}
-			sort.Ints(indexes)
 			durableHistory = append([]json.RawMessage(nil), baseHistory...)
-			for _, i := range indexes {
-				durableHistory = append(durableHistory, finished[int64(i)])
+			for _, i := range slices.Sorted(maps.Keys(finished)) {
+				durableHistory = append(durableHistory, finished[i])
 			}
 			snapshot := *a
 			snapshot.History = durableHistory

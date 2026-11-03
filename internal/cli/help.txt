@@ -3,6 +3,8 @@ dashy - minimal AI coding agent (TUI and one-shot mode)
 USAGE
   dashy [--config FILE|-c FILE] [--no-global] [--resume ID]
   dashy -p "TASK" [--config FILE] [--no-global] [--resume ID]
+                  [--provider NAME] [--model ID] [--effort LEVEL]
+  dashy models [--provider NAME]
   dashy notify [-s ID] TEXT...
   dashy view [-s ID] PATH...
   dashy version
@@ -14,10 +16,17 @@ FLAGS & COMMANDS
   --config, -c    Path to local AGENTS.md instructions (replaces ./AGENTS.md).
   --no-global     Skip loading global instructions from $DASHY_HOME/AGENTS.md.
   --resume ID     Resume an existing session by ID from the project session store.
+  --provider NAME Provider for this -p run (needs --model). Not saved to settings.
+  --model ID      Model for this -p run, an exact ID from 'dashy models'. Not saved.
+  --effort LEVEL  Reasoning effort for this -p run: none, minimal, low, medium, high,
+                  xhigh or max. Not saved.
   -s ID           Target session ID for notify/view (defaults to $DASHY_ENDPOINT).
   --help, -h      Show this help reference.
   notify          Send text or piped stdin to a running session as user/steering input.
   view            Queue PNG/JPEG images for the session's next model request.
+  models          List exact model IDs as 'PROVIDER<TAB>MODEL' for the configured
+                  providers (or only --provider NAME). Failed providers go to stderr
+                  and make the exit code 1.
   version         Print the dashy version.
 
 SYSTEM PROMPT (AGENTS.md)
@@ -48,6 +57,8 @@ SUB-AGENT RECIPES
   Sub-agents run via 'dashy -p' from the bash tool or terminal:
   - Role-specific reviewer (custom prompt without global instructions):
       dashy -p "Review diff against main" --config .dashy/reviewer.md --no-global
+  - Cheaper or stronger model for one task (IDs from 'dashy models'):
+      dashy -p "Summarize the changes" --model MODEL_ID --effort low
   - Parallel background tasks with wait:
       dashy -p "Task A" > a.out 2> a.err &
       dashy -p "Task B" > b.out 2> b.err &

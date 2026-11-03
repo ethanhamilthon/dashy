@@ -85,8 +85,7 @@ func newModel(a *agent.Agent, cwd string, reporter *osc7501.Reporter) model {
 	input.KeyMap.InsertNewline.SetKeys("alt+enter", "ctrl+j")
 	base := lipgloss.NewStyle().Foreground(foreground)
 	style := textarea.Style{Base: base, CursorLine: base, Text: base, Placeholder: base.Foreground(muted), EndOfBuffer: base}
-	input.FocusedStyle = style
-	input.BlurredStyle = style
+	input.FocusedStyle, input.BlurredStyle = style, style
 	events := control.NewQueue[control.Event](0)
 	ctl := control.New(a, func(e control.Event) { events.Push(e) })
 	m := model{ctl: ctl, events: events, input: input, viewport: viewport.New(80, 24), width: 80, height: 24, cwd: cwd, reporter: reporter}
@@ -106,12 +105,7 @@ type followerTick struct{}
 func followerPulse() tea.Cmd {
 	return tea.Tick(time.Second, func(time.Time) tea.Msg { return followerTick{} })
 }
-func (m model) Init() tea.Cmd {
-	return tea.Batch(
-		textarea.Blink,
-		followerPulse(),
-	)
-}
+func (m model) Init() tea.Cmd { return tea.Batch(textarea.Blink, followerPulse()) }
 func (m *model) resizeInput() {
 	value, width, height := m.input.Value(), max(1, m.width-2), max(1, m.height/2)
 	if m.inputWidth == width && m.inputHeight == height && m.inputValue == value {
@@ -221,7 +215,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.refresh(follow)
 		return m, workingPulse(status.Started)
-
 	case tea.WindowSizeMsg:
 		m.width, m.height = max(1, v.Width), max(1, v.Height)
 		m.refresh(follow)
@@ -239,10 +232,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if v.cut {
 			key = tea.KeyMsg{Type: tea.KeyCtrlX}
 		}
-		if cmd, handled := m.composerKey(key); handled {
-			return m, cmd
-		}
-		return m, nil
+		cmd, _ := m.composerKey(key)
+		return m, cmd
 	case clipboardCopied:
 		if v.err != nil {
 			return m.stop("error", "Copy failed: "+v.err.Error())
@@ -275,10 +266,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.requestCancel()
 				return m, nil
 			}
-			return m.executeCommand("/quit")
+			return m.runCommand("/quit")
 		case "ctrl+d":
 			if !m.ctl.Status().Busy && m.input.Value() == "" {
-				return m.executeCommand("/quit")
+				return m.runCommand("/quit")
 			}
 		case "esc":
 			if m.fileLoading || m.hasFileCompletions() {
@@ -349,22 +340,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.pasting {
 				return m.stop("notice", "Clipboard read in progress; wait before submitting.")
 			}
-
 			if m.hasFileCompletions() {
 				cmd := m.acceptFileCompletion()
 				m.refresh(true)
 				return m, cmd
 			}
-
 			text := strings.TrimSpace(m.input.Value())
 			if text == "" && len(m.images) == 0 {
 				return m, nil
 			}
 			if matches := m.completions(); len(matches) > 0 && len(m.images) == 0 {
-				return m.executeCommand(matches[m.selected%len(matches)].name)
+				return m.runCommand(matches[m.selected%len(matches)].name)
 			}
-			return m.submitInput(text)
-
+			return m.sendInput(agent.Input{Text: text, Images: m.images})
 		}
 		return m, m.edit(follow, func() tea.Cmd { return m.updateInput(msg) })
 	}
@@ -397,11 +385,6 @@ func (m model) View() string {
 	return strings.Join(m.composerHighlight(lines), "\n")
 }
 
-// submitInput sends the composer as input.
-func (m model) submitInput(text string) (tea.Model, tea.Cmd) {
-	return m.sendInput(agent.Input{Text: text, Images: m.images})
-}
-
 // sendInput hands a complete input to the controller. Idle input starts a turn;
 // input during a turn is queued as steering. The composer clears only once accepted.
 func (m model) sendInput(input agent.Input) (tea.Model, tea.Cmd) {
@@ -420,8 +403,4 @@ func (m model) sendInput(input agent.Input) (tea.Model, tea.Cmd) {
 func (m *model) requestCancel() {
 	m.ctl.Stop()
 	m.refresh(false)
-}
-
-func (m model) executeCommand(name string) (tea.Model, tea.Cmd) {
-	return m.runCommand(name)
 }
