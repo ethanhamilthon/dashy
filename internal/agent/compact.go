@@ -80,8 +80,10 @@ func (a *Agent) summarize(ctx context.Context, old []json.RawMessage, prompt str
 	if err != nil {
 		return "", err
 	}
+	a.refreshSettings(nil)
+	settings, client := a.snapshot()
 	request := responses.ResponseNewParams{
-		Model:           a.settings.Model,
+		Model:           settings.Model,
 		Instructions:    openai.String(system),
 		Store:           openai.Bool(false),
 		MaxOutputTokens: openai.Int(summaryLimit),
@@ -92,10 +94,10 @@ func (a *Agent) summarize(ctx context.Context, old []json.RawMessage, prompt str
 			}},
 		}},
 	}
-	if a.settings.Effort != "" {
-		request.Reasoning.Effort = shared.ReasoningEffort(a.settings.Effort)
+	if settings.Effort != "" {
+		request.Reasoning.Effort = shared.ReasoningEffort(settings.Effort)
 	}
-	response, err := a.client.Responses.New(ctx, request)
+	response, err := client.Responses.New(ctx, request)
 	if err != nil {
 		return "", err
 	}
@@ -144,7 +146,8 @@ func (a *Agent) Compact(ctx context.Context, prompt string) (string, error) {
 // compactIfNeeded summarizes older turns before a request would exceed the token budget.
 // The display keeps the earlier conversation; only the history sent to the model shrinks.
 func (a *Agent) compactIfNeeded(ctx context.Context, emit func(Event)) {
-	if !a.settings.AutoCompact || estimateTokens(a.History) <= a.settings.CompactThreshold {
+	settings, _ := a.snapshot()
+	if !settings.AutoCompact || estimateTokens(a.History) <= settings.CompactThreshold {
 		return
 	}
 	result, err := a.Compact(ctx, "")
@@ -153,7 +156,7 @@ func (a *Agent) compactIfNeeded(ctx context.Context, emit func(Event)) {
 		return
 	}
 	emit(Event{Kind: "notice", Text: result})
-	if estimateTokens(a.History) > a.settings.CompactThreshold {
+	if estimateTokens(a.History) > settings.CompactThreshold {
 		emit(Event{Kind: "notice", Text: "Compaction could not reach threshold; older turns have been summarized."})
 	}
 }

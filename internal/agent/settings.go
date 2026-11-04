@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/openai/openai-go/v3"
@@ -20,21 +21,33 @@ const (
 	CompactKeepTurns  = 4
 	ShellTimeout      = 120  // seconds, default for a bash call
 	ShellMaxTimeout   = 600  // seconds
-	ShellOutput       = 8192 // bytes kept per bash call by default
-	shortCodeLines    = 10   // show_lines=short
-	shortResultLines  = 4
-	mediumCodeLines   = 40 // show_lines=medium
-	mediumResultLines = 16
+	ShellOutput       = 8192 // bytes kept per bash call by default (shell_output setting)
+	normalCodeLines   = 3    // show_lines=normal: first lines of a tool call, no output
+	normalReasonLines = 3
+	fullOutputLines   = 6 // show_lines=full: whole tool call, first lines of the output
+	fullReasonLines   = 6
 )
 
-// CompactThresholds are the compact_threshold values /settings cycles through;
-// settings.json may hold any positive value.
-var CompactThresholds = []int64{100_000, 200_000, 400_000, 800_000}
+// The compact_threshold range /settings steps through; settings.json may hold any positive value.
+const (
+	CompactMin  = 100_000
+	CompactMax  = 1_000_000
+	CompactStep = 100_000
+)
+
+// The shell_output range /settings steps through; settings.json may hold any value >= 0.
+const (
+	ShellOutputMin = 2048
+	ShellOutputMax = 65536
+)
+
+// ShowLinesModes are the show_lines values in /settings order.
+var ShowLinesModes = []string{"minimal", "normal", "full"}
 
 // DefaultCompactThreshold is the estimated history size, in tokens, that triggers automatic compaction.
 const DefaultCompactThreshold = 400_000
 
-// Efforts are the reasoning efforts offered by /settings; "" uses the provider default.
+// Efforts are the reasoning efforts offered by /models; "" uses the provider default.
 var Efforts = []string{"", "none", "minimal", "low", "medium", "high", "xhigh", "max"}
 
 // Provider is an OpenAI-compatible endpoint. APIKey and APIKeyEnv are exclusive.
@@ -75,12 +88,13 @@ type Settings struct {
 	AutoCompact      bool                `json:"auto_compact"`
 	CompactThreshold int64               `json:"compact_threshold"`
 	ShowLines        string              `json:"show_lines"`
+	ShellOutput      int                 `json:"shell_output"` // bytes of output kept per bash call, 0 = all
 	Providers        map[string]Provider `json:"providers"`
 }
 
 // DefaultSettings is used when no settings file exists.
 func DefaultSettings() Settings {
-	return Settings{ReasoningSummary: true, AutoCompact: true, CompactThreshold: DefaultCompactThreshold, ShowLines: "short", Providers: map[string]Provider{}}
+	return Settings{ReasoningSummary: true, AutoCompact: true, CompactThreshold: DefaultCompactThreshold, ShowLines: "normal", ShellOutput: ShellOutput, Providers: map[string]Provider{}}
 }
 
 // SetupHint explains what must be configured before a model request; "" when nothing is missing.
@@ -89,32 +103,48 @@ func (s Settings) SetupHint() string {
 	case s.Provider != "" && s.Model != "":
 		return ""
 	case len(s.Providers) == 0:
-		return "No provider configured. Use /login to add a provider, then choose a model with /settings."
+		return "No provider configured. Use /connect to add a provider, then choose a model with /models."
 	}
-	return "No model selected. Choose a model with /settings (use /login to add more providers)."
+	return "No model selected. Choose a model with /models (use /connect to add more providers)."
 }
 
-// MaxLines is how many lines of a kind ("code", "output" or "reasoning") the timeline shows; -1 means all.
+// MaxLines is how many lines of a kind ("code", "output" or "reasoning") the timeline shows;
+// 0 hides the block and -1 shows all of it.
+//
+//	minimal: only user and assistant messages
+//	normal:  messages, the first 3 lines of a tool call, no output
+//	full:    messages, the whole tool call, the first 6 lines of the output
 func (s Settings) MaxLines(kind string) int {
-	switch {
-	case s.ShowLines == "full":
-		return -1
-	case s.ShowLines == "medium" && kind == "code":
-		return mediumCodeLines
-	case s.ShowLines == "medium":
-		return mediumResultLines
-	case kind == "code":
-		return shortCodeLines
+	switch s.ShowLines {
+	case "minimal":
+		return 0
+	case "normal":
+		switch kind {
+		case "code":
+			return normalCodeLines
+		case "reasoning":
+			return normalReasonLines
+		}
+		return 0
 	}
-	return shortResultLines
+	switch kind {
+	case "code":
+		return -1
+	case "reasoning":
+		return fullReasonLines
+	}
+	return fullOutputLines
 }
 
 func validateSettings(s Settings) error {
-	if s.ShowLines != "short" && s.ShowLines != "medium" && s.ShowLines != "full" {
-		return fmt.Errorf("show_lines must be short, medium or full")
+	if !slices.Contains(ShowLinesModes, s.ShowLines) {
+		return fmt.Errorf("show_lines must be minimal, normal or full")
 	}
 	if s.CompactThreshold <= 0 {
 		return fmt.Errorf("compact_threshold must be a positive number of tokens")
+	}
+	if s.ShellOutput < 0 {
+		return fmt.Errorf("shell_output must be >= 0 bytes (0 = no truncation)")
 	}
 	if !slices.Contains(Efforts, s.Effort) {
 		return fmt.Errorf("unsupported effort %q", s.Effort)
@@ -160,8 +190,12 @@ func LoadSettings(path string) (Settings, error) {
 	if err := json.Unmarshal(data, &s); err != nil {
 		return Settings{}, fmt.Errorf("settings %s: %w", path, err)
 	}
-	if s.Providers == nil {
-		s.Providers = map[string]Provider{}
+	// show_lines used to be short, medium or full.
+	switch s.ShowLines {
+	case "short":
+		s.ShowLines = "normal"
+	case "medium":
+		s.ShowLines = "full"
 	}
 	if err := validateSettings(s); err != nil {
 		return Settings{}, fmt.Errorf("settings %s: %w", path, err)
@@ -206,33 +240,122 @@ func (a *Agent) SettingsPath() string { return filepath.Join(a.home, "settings.j
 // AttachmentsDir is where pasted and viewed images are saved.
 func (a *Agent) AttachmentsDir() string { return filepath.Join(a.home, "attachments") }
 
-// Settings returns a copy of the effective settings.
-func (a *Agent) Settings() Settings {
-	s := a.settings
-	s.Providers = maps.Clone(a.settings.Providers)
-	return s
+// settingsState is the live settings of an agent. The turn goroutine, the TUI and
+// file reloads share it, so every access goes through mu.
+type settingsState struct {
+	mu     sync.Mutex
+	s      Settings
+	client openai.Client
+	stamp  fileStamp // of settings.json when s was loaded or saved
+	warned fileStamp // last stamp whose reload failed, reported once
 }
 
-// applySettings makes s effective and rebuilds the API client for the selected provider.
-func (a *Agent) applySettings(s Settings) {
+// fileStamp identifies a version of settings.json by mtime and size.
+type fileStamp struct {
+	mod, size int64
+	exists    bool
+}
+
+func stampOf(path string) (st fileStamp, ok bool) {
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return fileStamp{}, true
+	}
+	if err != nil {
+		return fileStamp{}, false
+	}
+	return fileStamp{info.ModTime().UnixNano(), info.Size(), true}, true
+}
+
+// set makes s effective and rebuilds the API client for its provider. Callers hold mu or own c.
+func (c *settingsState) set(s Settings, stamp fileStamp) {
 	if s.Providers == nil {
 		s.Providers = map[string]Provider{}
 	}
-	a.settings = s
-	a.client = newClient(s.Providers[s.Provider])
+	c.s, c.stamp = s, stamp
+	c.client = newClient(s.Providers[s.Provider])
 }
 
-// applyAndSave validates, applies and persists next. A failed save restores the previous settings.
-func (a *Agent) applyAndSave(next Settings) error {
-	if err := validateSettings(next); err != nil {
+// readSettings loads settings.json with the per-run -p overrides applied and validated.
+func (a *Agent) readSettings() (Settings, fileStamp, error) {
+	stamp, _ := stampOf(a.SettingsPath())
+	s, err := LoadSettings(a.SettingsPath())
+	if err != nil {
+		return Settings{}, stamp, err
+	}
+	for field, value := range map[*string]string{&s.Provider: a.opts.Provider, &s.Model: a.opts.Model, &s.Effort: a.opts.Effort} {
+		if value != "" {
+			*field = value
+		}
+	}
+	return s, stamp, validateSettings(s)
+}
+
+// reloadLocked re-reads settings.json when its mtime or size changed. A broken file keeps
+// the previous settings and returns a warning, once per file version.
+func (a *Agent) reloadLocked() (warning string) {
+	c := a.cfg
+	stamp, ok := stampOf(a.SettingsPath())
+	if !ok || stamp == c.stamp {
+		return ""
+	}
+	s, stamp, err := a.readSettings()
+	if err != nil {
+		if stamp == c.warned {
+			return ""
+		}
+		c.warned = stamp
+		return "Settings file changed but could not be loaded; keeping the previous settings: " + Redact(c.s, err.Error())
+	}
+	c.set(s, stamp)
+	return ""
+}
+
+// refreshSettings picks up edits of settings.json made since the last request. emit may be nil.
+func (a *Agent) refreshSettings(emit func(Event)) {
+	a.cfg.mu.Lock()
+	warning := a.reloadLocked()
+	a.cfg.mu.Unlock()
+	if warning != "" && emit != nil {
+		emit(Event{Kind: "notice", Text: warning})
+	}
+}
+
+// snapshot is the settings and client for one model request.
+func (a *Agent) snapshot() (Settings, openai.Client) {
+	a.cfg.mu.Lock()
+	defer a.cfg.mu.Unlock()
+	return a.settingsLocked(), a.cfg.client
+}
+
+func (a *Agent) settingsLocked() Settings {
+	s := a.cfg.s
+	s.Providers = maps.Clone(s.Providers)
+	return s
+}
+
+// Settings returns a copy of the effective settings.
+func (a *Agent) Settings() Settings {
+	a.cfg.mu.Lock()
+	defer a.cfg.mu.Unlock()
+	return a.settingsLocked()
+}
+
+// update changes the latest settings (outside edits included), then validates, saves and
+// applies them. A failed change or save leaves the previous settings in place.
+func (a *Agent) update(change func(*Settings) error) error {
+	a.cfg.mu.Lock()
+	defer a.cfg.mu.Unlock()
+	a.reloadLocked()
+	next := a.settingsLocked()
+	if err := change(&next); err != nil {
 		return err
 	}
-	prev := a.settings
-	a.applySettings(next)
 	if err := writeSettings(a.SettingsPath(), next); err != nil {
-		a.applySettings(prev)
 		return err
 	}
+	stamp, _ := stampOf(a.SettingsPath())
+	a.cfg.set(next, stamp)
 	return nil
 }
 

@@ -13,22 +13,10 @@ import (
 
 type command struct{ name, icon, description, label, action string }
 
-// commandIcons are the completion glyphs.
-var commandIcons = map[string]string{
-	"/new":      "+",
-	"/help":     "?",
-	"/quit":     "->",
-	"/resume":   "<",
-	"/rename":   "#",
-	"/compact":  "=",
-	"/settings": "*",
-	"/login":    "+",
-}
-
 func commandMenu() []command {
 	var menu []command
 	for _, info := range control.Commands() {
-		menu = append(menu, command{name: info.Name, icon: commandIcons[info.Name], description: info.Description})
+		menu = append(menu, command{name: info.Name, icon: info.Icon, description: info.Description})
 	}
 	return menu
 }
@@ -65,7 +53,7 @@ func (m model) completions() []command {
 		var matches []command
 		for _, c := range m.menu {
 			haystack := c.name
-			if m.menuKind == pickerSettings {
+			if m.menuKind != pickerConnect {
 				haystack += " " + c.description + " " + c.label
 			}
 			if strings.Contains(strings.ToLower(haystack), strings.ToLower(text)) {
@@ -179,14 +167,8 @@ func (m model) runCommand(name string) (tea.Model, tea.Cmd) {
 		}
 		m.resetCompletions()
 		return m.submit(m.ctl.Resume(verb[1]))
-	case "/settings", "/login":
-		if m.ctl.Status().Busy {
-			return m.stop("notice", "Wait for the active turn before changing settings.")
-		}
-		kind := pickerSettings
-		if verb[0] == "/login" {
-			kind = pickerLogin
-		}
+	case "/settings", "/models", "/connect":
+		kind := map[string]string{"/settings": pickerSettings, "/models": pickerModels, "/connect": pickerConnect}[verb[0]]
 		cmd := m.openPicker(kind)
 		m.refresh(true)
 		return m, cmd

@@ -15,7 +15,6 @@ import (
 	"github.com/muesli/termenv"
 
 	"dashy/internal/agent"
-	"dashy/internal/control"
 )
 
 func TestTimelineCacheAndResize(t *testing.T) {
@@ -130,32 +129,45 @@ func TestTimelineLimitsAndHiddenSpacing(t *testing.T) {
 	}
 	defer a.Close()
 	m := newModel(a, "/project", osc7501.New(io.Discard, false))
-	for _, kind := range []string{"code", "output", "reasoning"} {
-		m.entries = append(m.entries, entry{Kind: kind, Text: "first\nsecond\nthird\nfourth\nfifth", Meta: &agent.Metadata{}})
+	text := "first\nsecond\nthird\nfourth\nfifth\nsixth\nseventh\neighth"
+	for _, kind := range []string{"code", "output", "reasoning", "assistant"} {
+		m.entries = append(m.entries, entry{Kind: kind, Text: text, Meta: &agent.Metadata{}})
 	}
-	m.timeline()
-	if strings.Contains(ansi.Strip(m.cache[1].Text), "fifth") || strings.Contains(ansi.Strip(m.cache[2].Text), "fifth") {
-		t.Fatal("default four-row limits not applied")
+	shown := func() (code, output, reasoning, assistant string) {
+		m.cache = nil
+		m.timeline()
+		return ansi.Strip(m.cache[0].Text), ansi.Strip(m.cache[1].Text), ansi.Strip(m.cache[2].Text), ansi.Strip(m.cache[3].Text)
 	}
-	if !strings.Contains(ansi.Strip(m.cache[0].Text), "fifth") {
-		t.Fatal("default code limit too short")
-	}
-	for i := 0; i < 2; i++ { // short -> medium -> full
-		if err := m.ctl.ChangeSetting(control.SettingLines); err != nil {
+	setLines := func(value string) {
+		if err := a.ChangeSettings(func(s *agent.Settings) { s.ShowLines = value }); err != nil {
 			t.Fatal(err)
 		}
 	}
-	m.cache = nil
-	m.timeline()
-	if !strings.Contains(ansi.Strip(m.cache[1].Text), "fifth") || !strings.Contains(ansi.Strip(m.cache[2].Text), "fifth") {
-		t.Fatal("full show_lines did not show all rows")
+	// minimal: messages only.
+	setLines("minimal")
+	code, output, reasoning, assistant := shown()
+	if code != "" || output != "" || reasoning != "" || !strings.Contains(assistant, "eighth") {
+		t.Fatalf("minimal: %q %q %q", code, output, reasoning)
+	}
+	// normal (the default): 3 lines of the tool call, no output.
+	setLines("normal")
+	code, output, _, _ = shown()
+	if !strings.Contains(code, "third") || strings.Contains(code, "fourth") || output != "" {
+		t.Fatalf("normal: code %q output %q", code, output)
+	}
+	// full: the whole tool call, 6 lines of the output.
+	setLines("full")
+	code, output, _, _ = shown()
+	if !strings.Contains(code, "eighth") || !strings.Contains(output, "sixth") || strings.Contains(output, "seventh") {
+		t.Fatalf("full: code %q output %q", code, output)
 	}
 	for _, e := range m.entries {
-		if !strings.Contains(e.Text, "fifth") {
+		if !strings.Contains(e.Text, "eighth") {
 			t.Fatal("UI limit changed source text")
 		}
 	}
 	m.entries = append(m.entries, entry{Kind: "error", Text: "API failure"})
+	setLines("minimal")
 	if !strings.Contains(ansi.Strip(m.timeline()), "API failure") {
 		t.Fatal("standalone errors must remain visible")
 	}

@@ -57,12 +57,9 @@ function run(argv) {
  return "image";
 }`
 
-type clipboardRunner func(context.Context, int, string, ...string) ([]byte, error)
-
-func readClipboard(ctx context.Context, directory string) (shell.Image, string, error) {
-	return readClipboardWith(ctx, directory, runtime.GOOS, clipboardCommand)
-}
-func readClipboardWith(ctx context.Context, directory, platform string, run clipboardRunner) (shell.Image, string, error) {
+// readClipboard saves a clipboard image into directory, or returns the clipboard text. The
+// platform and the command runner are parameters so that tests can fake them.
+func readClipboard(ctx context.Context, directory, platform string, run func(context.Context, int, string, ...string) ([]byte, error)) (shell.Image, string, error) {
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		return shell.Image{}, "", err
 	}
@@ -144,7 +141,7 @@ func (m model) pasteClipboard() (tea.Model, tea.Cmd) {
 	return m, func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		image, text, err := readClipboard(ctx, directory)
+		image, text, err := readClipboard(ctx, directory, runtime.GOOS, clipboardCommand)
 		return clipboardResult{generation, image, text, err}
 	}
 }

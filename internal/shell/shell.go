@@ -84,7 +84,7 @@ func killGroup(cmd *exec.Cmd) error {
 
 // Execute runs command with a timeout, keeping at most limit output bytes
 // (first and last halves; limit <= 0 keeps everything).
-func (r *Runner) Execute(ctx context.Context, command string, timeout time.Duration, limit int) (Result, error) {
+func (r *Runner) Execute(ctx context.Context, command string, timeout time.Duration, limit int) Result {
 	callCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	var env map[string]string
@@ -98,10 +98,10 @@ func (r *Runner) Execute(ctx context.Context, command string, timeout time.Durat
 	cmd.Stdout, cmd.Stderr = out, out
 	if err := cmd.Start(); err != nil {
 		if ctx.Err() != nil {
-			return Result{Output: "\n[dashy: cancelled]\n", ExitCode: 130, Error: true}, nil
+			return Result{Output: "\n[dashy: cancelled]\n", ExitCode: 130, Error: true}
 		}
 		io.WriteString(out, err.Error()+"\n")
-		return Result{Output: out.Text(), ExitCode: 127, Error: true}, nil
+		return Result{Output: out.Text(), ExitCode: 127, Error: true}
 	}
 	err := Reap(cmd)
 
@@ -125,5 +125,5 @@ func (r *Runner) Execute(ctx context.Context, command string, timeout time.Durat
 	}
 	result.Output = out.Text()
 	result.Error = result.ExitCode != 0
-	return result, nil
+	return result
 }

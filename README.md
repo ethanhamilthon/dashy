@@ -1,6 +1,6 @@
 # dashy
 
-dashy is a minimal AI coding agent with an interactive terminal UI (TUI) and a one-shot mode (`dashy -p`). The model gets one tool, `bash`; its instructions come from AGENTS.md files.
+dashy is a minimal AI coding agent with an interactive terminal UI (TUI) and a one-shot mode (`dashy -p`). The model gets one tool, `bash`; its instructions come from DASHY.md files.
 
 In the TUI, dashy reports its state (idle, working, done, error) to terminals that support OSC 7501.
 
@@ -21,16 +21,18 @@ curl -fsSL https://raw.githubusercontent.com/ethanhamilthon/dashy/main/scripts/i
 
 ## First start
 
-Run `dashy` in a project directory. Open `/settings` to choose a provider and model (`/login` adds a provider). Settings are saved to `$DASHY_HOME/settings.json` (default `~/.dashy/settings.json`).
+Run `dashy` in a project directory. Use `/connect` to add or select a provider, `/models` to choose a model and reasoning effort, and `/settings` for display, compaction and bash output options. Settings are saved to `$DASHY_HOME/settings.json` (default `~/.dashy/settings.json`).
+
+Settings apply on the fly: the file is re-read before each model request when it changes, and changes made in the TUI take effect immediately, even while the agent works. The running turn is not interrupted; its next request uses the new values. A broken file keeps the previous settings and shows a warning. `--provider`, `--model` and `--effort` keep priority over the file.
 
 `dashy models` prints the exact model IDs of every configured provider, one `PROVIDER<TAB>MODEL` per line (`--provider NAME` limits it to one provider).
 
-## AGENTS.md and dashy blocks
+## DASHY.md and dashy blocks
 
-The system prompt is built from two AGENTS.md files before the first request of a session (`/new`, `/resume` and `/reload` build it again):
+The system prompt is built from two DASHY.md files before the first request of a session (`/new`, `/resume` and `/reload` build it again):
 
-1. `$DASHY_HOME/AGENTS.md` (default `~/.dashy/AGENTS.md`), skipped with `--no-global`.
-2. `./AGENTS.md`, or the file given with `--config FILE` (which replaces `./AGENTS.md`).
+1. `$DASHY_HOME/DASHY.md` (default `~/.dashy/DASHY.md`). The TUI loads it unless `--no-global`; `dashy -p` skips it unless `--global`.
+2. `./DASHY.md`, or the file given with `--config FILE` (which replaces `./DASHY.md`).
 
 A fenced block with the info string `dashy` runs with `bash -c` in the project directory, and its output replaces the block. Blocks time out after 30 seconds and are capped at 64 KiB of output.
 
@@ -49,8 +51,11 @@ git log --oneline -3
 `dashy -p "TASK"` runs one task in a new session (or in a saved one with `--resume ID`): the final answer goes to stdout, progress to stderr, and the exit code is non-zero on failure. A sub-agent has its own `dashy notify` and `dashy view` while it works; to report to another session, pass `-s` with that session's ID.
 
 ```sh
-# A focused reviewer with its own instructions and no global ones
-dashy -p "Review the diff against main" --config .dashy/reviewer.md --no-global
+# A focused reviewer with its own instructions (-p skips the global DASHY.md)
+dashy -p "Review the diff against main" --config .dashy/reviewer.md
+
+# A sub-agent that also follows your global DASHY.md
+dashy -p "Refactor the parser" --global
 
 # Another provider, model or reasoning effort for this run only (settings stay unchanged)
 dashy -p "Summarize the diff" --provider openai --model gpt-5-mini --effort low

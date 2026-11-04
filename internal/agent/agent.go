@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -63,15 +62,14 @@ type Options struct {
 // Agent holds one session: its history, settings, prompt and ownership lock.
 type Agent struct {
 	opts         Options
-	home         string // DASHY_HOME
-	settings     Settings
-	client       openai.Client
+	home         string         // DASHY_HOME
+	cfg          *settingsState // live settings and API client, shared with the turn goroutine
 	Shell        *shell.Runner
 	History      []json.RawMessage
 	HistoryPath  string
 	sessionsDir  string
 	owner        *os.File
-	promptFiles  []string // AGENTS.md files selected at startup, /new or /resume
+	promptFiles  []string // DASHY.md files selected at startup, /new or /resume
 	prompt       string   // assembled system prompt, frozen once assembled
 	promptFrozen bool
 	promptSource string // startup, new or resume (DASHY_SOURCE)
@@ -102,25 +100,20 @@ func New(dir string, opts Options) (*Agent, error) {
 	return a, nil
 }
 
-// loadConfig reads settings and selects the AGENTS.md files for the project in dir.
+// loadConfig reads settings and selects the DASHY.md files for the project in dir.
 func (a *Agent) loadConfig(dir string) error {
-	settings, err := LoadSettings(a.SettingsPath())
+	if a.cfg == nil {
+		a.cfg = &settingsState{}
+	}
+	settings, stamp, err := a.readSettings()
 	if err != nil {
-		return err
-	}
-	for field, value := range map[*string]string{&settings.Provider: a.opts.Provider, &settings.Model: a.opts.Model, &settings.Effort: a.opts.Effort} {
-		if value != "" {
-			*field = value
-		}
-	}
-	if err := validateSettings(settings); err != nil {
 		return err
 	}
 	files, err := instructionFiles(a.home, dir, a.opts)
 	if err != nil {
 		return err
 	}
-	a.applySettings(settings)
+	a.cfg.set(settings, stamp)
 	a.promptFiles = files
 	return nil
 }
@@ -143,6 +136,14 @@ func (a *Agent) Save() error {
 	return writePrivate(a.HistoryPath, data)
 }
 
+// saveHistory is Save with the error worded for a turn.
+func (a *Agent) saveHistory() error {
+	if err := a.Save(); err != nil {
+		return fmt.Errorf("could not save history: %w", err)
+	}
+	return nil
+}
+
 // Run is RunInput for a text message.
 func (a *Agent) Run(ctx context.Context, text string, emit func(Event)) error {
 	return a.RunInput(ctx, Input{Text: text}, emit)
@@ -157,10 +158,9 @@ func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event)) (er
 			emit(Event{Kind: "error", Text: err.Error()})
 		}
 		if a.HasSavedSession() {
-			if e := a.Save(); e != nil {
-				saveError := fmt.Errorf("could not save history: %w", e)
-				err = errors.Join(err, saveError)
-				emit(Event{Kind: "error", Text: saveError.Error()})
+			if e := a.saveHistory(); e != nil {
+				err = errors.Join(err, e)
+				emit(Event{Kind: "error", Text: e.Error()})
 			}
 		}
 	}()
@@ -203,9 +203,10 @@ func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event)) (er
 			return ctx.Err()
 		}
 		acceptSteering()
+		a.refreshSettings(emit)
 		a.compactIfNeeded(ctx, emit)
-		if e := a.Save(); e != nil {
-			return fmt.Errorf("could not save history: %w", e)
+		if e := a.saveHistory(); e != nil {
+			return e
 		}
 		// A response is committed only when it completes: an interrupted stream leaves no trace in the history.
 		items, e := a.requestWithRetries(ctx, emit)
@@ -241,15 +242,12 @@ func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event)) (er
 				emit(Event{Kind: r.Kind, Text: r.Text, ID: a.itemID(int64(i)), Meta: &m, Final: true})
 			}
 		}
-		if e := a.Save(); e != nil {
-			return fmt.Errorf("could not save history: %w", e)
+		if e := a.saveHistory(); e != nil {
+			return e
 		}
 		for _, item := range items {
-			var call struct {
-				Type, Name, Arguments string
-				CallID                string `json:"call_id"`
-			}
-			if e = json.Unmarshal(item, &call); e != nil {
+			call, e := parseCall(item)
+			if e != nil {
 				return e
 			}
 			if call.Type != "function_call" {
@@ -258,13 +256,13 @@ func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event)) (er
 			calls++
 			started := time.Now()
 			result := a.runTool(ctx, call.Name, call.Arguments)
-			output := raw(map[string]any{"type": "function_call_output", "call_id": call.CallID, "output": string(raw(result))})
+			output := callOutput(call.CallID, result)
 			a.History = append(a.History, output)
 			for _, r := range RecordsForItem(output) {
 				emit(Event{Kind: r.Kind, Text: r.Text, Meta: &Metadata{Duration: time.Since(started)}, Final: true})
 			}
-			if e := a.Save(); e != nil {
-				return fmt.Errorf("could not save history: %w", e)
+			if e := a.saveHistory(); e != nil {
+				return e
 			}
 		}
 		if ctx.Err() != nil {
@@ -272,12 +270,24 @@ func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event)) (er
 		}
 		if steered := acceptSteering(); calls == 0 && !steered {
 			return nil
-		} else if steered {
-			if e := a.Save(); e != nil {
-				return fmt.Errorf("could not save history: %w", e)
-			}
 		}
 	}
+}
+
+// functionCall is the part of a response item that identifies a tool call.
+type functionCall struct {
+	Type, Name, Arguments string
+	CallID                string `json:"call_id"`
+}
+
+func parseCall(item json.RawMessage) (call functionCall, err error) {
+	err = json.Unmarshal(item, &call)
+	return call, err
+}
+
+// callOutput is the function_call_output history item that answers callID.
+func callOutput(callID string, result shell.Result) json.RawMessage {
+	return raw(map[string]any{"type": "function_call_output", "call_id": callID, "output": string(raw(result))})
 }
 
 // runTool executes one function call; failures become an error result for the model.
@@ -289,12 +299,11 @@ func (a *Agent) runTool(ctx context.Context, name, arguments string) shell.Resul
 		return shell.Result{Output: "Unknown tool: " + name, Error: true}
 	}
 	var args struct {
-		Command   string `json:"command"`
-		Timeout   *int64 `json:"timeout"`
-		MaxOutput *int64 `json:"max_output"`
+		Command string `json:"command"`
+		Timeout *int64 `json:"timeout"`
 	}
 	timeout := time.Duration(ShellTimeout) * time.Second
-	limit := ShellOutput
+	limit := a.Settings().ShellOutput
 	err := json.Unmarshal([]byte(arguments), &args)
 	if err == nil && args.Timeout != nil {
 		if *args.Timeout <= 0 || *args.Timeout > ShellMaxTimeout {
@@ -303,18 +312,8 @@ func (a *Agent) runTool(ctx context.Context, name, arguments string) shell.Resul
 			timeout = time.Duration(*args.Timeout) * time.Second
 		}
 	}
-	if err == nil && args.MaxOutput != nil {
-		if *args.MaxOutput < 0 || *args.MaxOutput > int64(math.MaxInt32) {
-			err = fmt.Errorf("max_output must be >= 0 bytes (0 = no truncation)")
-		} else {
-			limit = int(*args.MaxOutput)
-		}
-	}
 	if err == nil {
-		var result shell.Result
-		if result, err = a.Shell.Execute(ctx, args.Command, timeout, limit); err == nil {
-			return result
-		}
+		return a.Shell.Execute(ctx, args.Command, timeout, limit)
 	}
 	return shell.Result{Output: err.Error(), ExitCode: 2, Error: true}
 }
@@ -327,7 +326,10 @@ func (a *Agent) itemID(index int64) string {
 // request sends the history and returns the completed response items.
 func (a *Agent) request(ctx context.Context, emit func(Event)) (items []json.RawMessage, err error) {
 	defer func() { err = a.safeError(err) }()
-	if hint := a.settings.SetupHint(); hint != "" {
+	// One snapshot per request: settings changed meanwhile apply to the next request.
+	a.refreshSettings(emit)
+	settings, client := a.snapshot()
+	if hint := settings.SetupHint(); hint != "" {
 		return nil, errors.New(hint)
 	}
 	prompt, err := a.instructions(ctx)
@@ -342,7 +344,7 @@ func (a *Agent) request(ctx context.Context, emit func(Event)) (items []json.Raw
 		input[i] = param.Override[responses.ResponseInputItemUnionParam](item)
 	}
 	payload := responses.ResponseNewParams{
-		Model:        a.settings.Model,
+		Model:        settings.Model,
 		Instructions: openai.String(prompt),
 		Input:        responses.ResponseNewParamsInputUnion{OfInputItemList: input},
 		Store:        openai.Bool(false),
@@ -353,16 +355,16 @@ func (a *Agent) request(ctx context.Context, emit func(Event)) (items []json.Raw
 			Strict:      openai.Bool(true),
 		}}},
 	}
-	if a.settings.Effort != "" {
-		payload.Reasoning.Effort = shared.ReasoningEffort(a.settings.Effort)
+	if settings.Effort != "" {
+		payload.Reasoning.Effort = shared.ReasoningEffort(settings.Effort)
 	}
-	if a.settings.ReasoningSummary {
+	if settings.ReasoningSummary {
 		payload.Reasoning.Summary = shared.ReasoningSummaryAuto
 	}
 	started := time.Now()
 	a.lastRequest = Metadata{RequestID: fmt.Sprintf("r-%d", len(a.History))}
-	a.sentImages()
-	stream := a.client.Responses.NewStreaming(ctx, payload)
+	a.slots.sent()
+	stream := client.Responses.NewStreaming(ctx, payload)
 	defer stream.Close()
 	var completed []json.RawMessage
 	arguments := map[int64]string{}
@@ -460,7 +462,7 @@ func (a *Agent) FinalText() string {
 	return strings.Join(texts, "\n")
 }
 
-// PromptFiles lists the AGENTS.md files selected for the session, in prompt order.
+// PromptFiles lists the DASHY.md files selected for the session, in prompt order.
 func (a *Agent) PromptFiles() []string { return append([]string(nil), a.promptFiles...) }
 
 // SessionID is the ID of the active session.
@@ -478,12 +480,8 @@ func bashParameters() map[string]any {
 				"type":        []string{"integer", "null"},
 				"description": fmt.Sprintf("seconds, default %d, maximum %d", ShellTimeout, ShellMaxTimeout),
 			},
-			"max_output": map[string]any{
-				"type":        []string{"integer", "null"},
-				"description": fmt.Sprintf("output bytes to keep, default %d (first half + last half); 0 = no truncation", ShellOutput),
-			},
 		},
-		"required":             []string{"command", "timeout", "max_output"},
+		"required":             []string{"command", "timeout"},
 		"additionalProperties": false,
 	}
 }

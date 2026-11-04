@@ -2,7 +2,7 @@ dashy - minimal AI coding agent (TUI and one-shot mode)
 
 USAGE
   dashy [--config FILE|-c FILE] [--no-global] [--resume ID]
-  dashy -p "TASK" [--config FILE] [--no-global] [--resume ID]
+  dashy -p "TASK" [--config FILE] [--global] [--resume ID]
                   [--provider NAME] [--model ID] [--effort LEVEL]
   dashy models [--provider NAME]
   dashy notify [-s ID] TEXT...
@@ -13,8 +13,11 @@ USAGE
 FLAGS & COMMANDS
   -p "TASK"       Run a single task in one-shot mode and exit. Final assistant text
                   goes to stdout, progress to stderr. Piped stdin appends to TASK.
-  --config, -c    Path to local AGENTS.md instructions (replaces ./AGENTS.md).
-  --no-global     Skip loading global instructions from $DASHY_HOME/AGENTS.md.
+  --config, -c    Path to local DASHY.md instructions (replaces ./DASHY.md).
+  --no-global     Skip loading global instructions from $DASHY_HOME/DASHY.md. The TUI
+                  loads them by default; -p already skips them, so this changes nothing there.
+  --global        Load $DASHY_HOME/DASHY.md in -p mode, which skips it by default. The TUI
+                  always loads it unless --no-global. Cannot be combined with --no-global.
   --resume ID     Resume an existing session by ID from the project session store.
   --provider NAME Provider for this -p run (needs --model). Not saved to settings.
   --model ID      Model for this -p run, an exact ID from 'dashy models'. Not saved.
@@ -31,13 +34,18 @@ FLAGS & COMMANDS
                   and make the exit code 1.
   version         Print the dashy version.
 
-SYSTEM PROMPT (AGENTS.md)
-  The system prompt is assembled from AGENTS.md files:
-  1. $DASHY_HOME/AGENTS.md (default ~/.dashy/AGENTS.md; skipped with --no-global)
-  2. Local file: --config FILE if given, otherwise ./AGENTS.md (missing is fine)
+SYSTEM PROMPT (DASHY.md)
+  The system prompt is assembled from DASHY.md files:
+  1. $DASHY_HOME/DASHY.md (default ~/.dashy/DASHY.md). The TUI loads it unless --no-global;
+     dashy -p skips it unless --global.
+  2. Local file: --config FILE if given, otherwise ./DASHY.md (missing is fine)
   Each file is added under a '# <absolute path>' header, separated by a blank line.
   The prompt is assembled lazily before the first model request of a session and
-  then kept. /new, /resume and /reload read settings and AGENTS.md again and reassemble it.
+  then kept. /new, /resume and /reload read settings and DASHY.md again and reassemble it.
+  settings.json is also re-read before every model request when it changed (mtime or
+  size), and changes made in the TUI apply at once, even while a turn runs: the running
+  turn continues and its next request uses the new values. A broken file keeps the
+  previous settings and prints a warning. --provider/--model/--effort keep priority.
 
 BASH TOOL
   The model's only tool runs /bin/bash --noprofile --norc in the project directory.
@@ -46,16 +54,17 @@ BASH TOOL
   - Result: {output, exit_code}; stdout and stderr are merged.
   - timeout: seconds, default 120, maximum 600. A timeout (exit 124) or
     cancellation (exit 130) kills the whole process group.
-  - max_output: bytes kept, default 8192, 0 = no truncation. When output is cut,
-    the middle is removed and the first and last halves are kept.
+  - Output limit: the shell_output setting (settings.json or /settings), default 8192
+    bytes, 0 = no truncation; the model cannot change it. When output is cut, the middle
+    is removed and the first and last halves are kept.
   - Background processes do not outlive the call; for long work redirect output
     to a file and run 'dashy notify' when it finishes.
   - It runs with the user's permissions and is not a sandbox.
 
 DASHY BLOCKS
-  Fenced code blocks in AGENTS.md with info string 'dashy' (```dashy) execute sequentially
+  Fenced code blocks in DASHY.md with info string 'dashy' (```dashy) execute sequentially
   using 'bash -c' in the project directory when the prompt is assembled.
-  - Execution limits: 30 s timeout, 64 KiB stdout+stderr limit.
+  - Execution limits: 30 s timeout, 64 KiB stdout limit.
   - On failure, replaced by '[dashy block failed: <reason>]' with a stderr tail.
   - Output replaces the block verbatim (trailing newline trimmed).
   - Environment passed to blocks: DASHY_MODE, DASHY_SOURCE, DASHY_SESSION_ID,
@@ -77,8 +86,11 @@ SUB-AGENT RECIPES
   input still queued when it finishes runs before it exits. To report to another
   session, pass -s with that session's ID (the parent can put its $DASHY_SESSION_ID
   into TASK):
-  - Role-specific reviewer (custom prompt without global instructions):
-      dashy -p "Review diff against main" --config .dashy/reviewer.md --no-global
+  - A -p sub-agent does not read the global DASHY.md by default, so a role-specific
+    reviewer needs only a custom prompt:
+      dashy -p "Review diff against main" --config .dashy/reviewer.md
+  - Sub-agent that should follow your global instructions too:
+      dashy -p "Refactor the parser" --global
   - Cheaper or stronger model for one task (IDs from 'dashy models'):
       dashy -p "Summarize the changes" --model MODEL_ID --effort low
   - Parallel background tasks with wait:
@@ -91,7 +103,8 @@ SUB-AGENT RECIPES
 FILES
   $DASHY_HOME/settings.json              Providers, models, reasoning and display settings, and
                                          compaction: auto_compact and compact_threshold (the
-                                         estimated history size in tokens, default 400000).
+                                         estimated history size in tokens, default 400000), and shell_output
+                                         (bash output bytes kept per call, default 8192).
   $DASHY_HOME/projects/<hash>/<id>.jsonl LLM history items and <id>.lock flock.
   $DASHY_HOME/attachments/               Saved images from clipboard paste or dashy view.
   $DASHY_HOME/run/<id>.sock              Unix socket for notify/view. Paths over the macOS limit (~104 bytes)

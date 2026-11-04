@@ -43,7 +43,7 @@ func (b *OutputBuffer) Text() string {
 		return strings.ToValidUTF8(string(b.head)+string(b.tail), "")
 	}
 	head, tail := strings.ToValidUTF8(string(b.head), ""), strings.ToValidUTF8(string(b.tail), "")
-	return head + fmt.Sprintf("\n[output truncated: %d of %d bytes omitted (max_output=%d, first %d + last %d kept); "+
-		"filter with rg, grep, head, tail or pass a larger max_output]\n",
+	return head + fmt.Sprintf("\n[output truncated: %d of %d bytes omitted (shell_output=%d, first %d + last %d kept); "+
+		"filter with rg, grep, head or tail]\n",
 		b.size-len(b.head)-len(b.tail), b.size, b.limit, len(b.head), len(b.tail)) + tail
 }

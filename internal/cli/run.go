@@ -61,11 +61,8 @@ func IsReported(err error) bool {
 var cancelled = &ExitError{Code: 130, Reported: true}
 
 func isTerminal(v any) bool {
-	if f, ok := v.(*os.File); ok {
-		return isatty.IsTerminal(f.Fd()) || isatty.IsCygwinTerminal(f.Fd())
-	}
-	t, ok := v.(interface{ IsTerminal() bool })
-	return ok && t.IsTerminal()
+	f, ok := v.(*os.File)
+	return ok && isatty.IsTerminal(f.Fd())
 }
 
 // Run executes one command line. stdout receives results; diagnostics receives
@@ -182,7 +179,7 @@ func modelsCommand(ctx context.Context, args []string, out, diagnostics io.Write
 		providers = map[string]agent.Provider{provider: p}
 	}
 	if len(providers) == 0 {
-		return errors.New("no providers configured: run dashy and add one with /login")
+		return errors.New("no providers configured: run dashy and add one with /connect")
 	}
 	choices, errs := agent.AllModels(ctx, providers)
 	if ctx.Err() != nil {
@@ -203,12 +200,13 @@ func modelsCommand(ctx context.Context, args []string, out, diagnostics io.Write
 // sessionCommand is the TUI (no -p) or one-shot print mode (-p).
 func sessionCommand(ctx context.Context, args []string, in io.Reader, out, diagnostics io.Writer) error {
 	var prompt, config, resume, provider, model, effort string
-	var noGlobal bool
+	var noGlobal, global bool
 	printMode := false
 	fs := flagSet("dashy", func(fs *flag.FlagSet) {
-		fs.StringVar(&config, "config", "", "AGENTS.md file to use instead of ./AGENTS.md")
+		fs.StringVar(&config, "config", "", "DASHY.md file to use instead of ./DASHY.md")
 		fs.StringVar(&config, "c", "", "alias for --config")
-		fs.BoolVar(&noGlobal, "no-global", false, "do not read ~/.dashy/AGENTS.md")
+		fs.BoolVar(&noGlobal, "no-global", false, "do not read ~/.dashy/DASHY.md")
+		fs.BoolVar(&global, "global", false, "read ~/.dashy/DASHY.md in -p mode (the TUI always does unless --no-global)")
 		fs.StringVar(&resume, "resume", "", "resume a session ID of this project")
 		fs.StringVar(&provider, "provider", "", "provider for this -p run")
 		fs.StringVar(&model, "model", "", "model for this -p run")
@@ -238,12 +236,16 @@ func sessionCommand(ctx context.Context, args []string, in io.Reader, out, diagn
 		return err
 	}
 	if !printMode && provider+model+effort != "" {
-		return errors.New("--provider, --model and --effort need -p; use /settings in the TUI")
+		return errors.New("--provider, --model and --effort need -p; use /models in the TUI")
 	}
 	if provider != "" && model == "" {
 		return errors.New("--provider needs --model (see dashy models)")
 	}
-	opts := agent.Options{Config: config, NoGlobal: noGlobal, Resume: resume, Print: printMode, Provider: provider, Model: model, Effort: effort}
+	if global && noGlobal {
+		return errors.New("--global and --no-global contradict each other")
+	}
+	// A one-shot run skips the global DASHY.md unless --global asks for it.
+	opts := agent.Options{Config: config, NoGlobal: noGlobal || (printMode && !global), Resume: resume, Print: printMode, Provider: provider, Model: model, Effort: effort}
 	if !printMode {
 		if !isTerminal(in) || !isTerminal(out) {
 			return errors.New("the interactive TUI needs a terminal; use dashy -p \"TASK\" for scripts")
@@ -285,7 +287,7 @@ func sessionCommand(ctx context.Context, args []string, in io.Reader, out, diagn
 	}
 	defer a.Close()
 	if a.Settings().SetupHint() != "" {
-		return errors.New("no provider or model configured: run dashy and choose one in /settings")
+		return errors.New("no provider or model configured: run dashy and choose one in /models")
 	}
 	return runPrint(ctx, a, prompt, out, diagnostics)
 }
@@ -372,9 +374,6 @@ func runPrint(ctx context.Context, a *agent.Agent, prompt string, out, diagnosti
 func shortResult(s string, maxLines int) string {
 	s = strings.TrimRight(s, "\r\n")
 	lines := strings.Split(s, "\n")
-	if s == "" {
-		return ""
-	}
 	if len(lines) > maxLines {
 		return strings.Join(lines[:maxLines], "\n") + "\n..."
 	}

@@ -49,9 +49,6 @@ type deferredAction struct {
 
 // New returns a controller for a. The agent must outlive the controller.
 func New(a *agent.Agent, emit func(Event)) *Controller {
-	if emit == nil {
-		emit = func(Event) {}
-	}
 	c := &Controller{a: a, emit: emit, journal: a.Records(), closed: make(chan struct{})}
 	// Input pushed while idle (a notification, dashy view) starts a turn at once.
 	a.Queue().OnPush(func() { go c.view(func() { c.deliverLocked() }) })
@@ -115,7 +112,7 @@ func (c *Controller) History() (records []agent.Record) {
 
 // Sessions lists saved sessions of this project, most recent first.
 func (c *Controller) Sessions() (sessions []agent.SessionSummary, err error) {
-	c.view(func() { sessions, err = c.sessionsLocked() })
+	c.view(func() { sessions, err = c.a.Sessions() })
 	return sessions, err
 }
 
@@ -126,7 +123,10 @@ func (c *Controller) Settings() (s agent.Settings) {
 }
 
 // AttachmentsDir is where pasted and viewed images are saved.
-func (c *Controller) AttachmentsDir() string { return c.a.AttachmentsDir() }
+func (c *Controller) AttachmentsDir() (dir string) {
+	c.view(func() { dir = c.a.AttachmentsDir() })
+	return dir
+}
 
 // Close cancels any active operation and waits for it to finish. It does not save.
 func (c *Controller) Close() {
@@ -179,7 +179,7 @@ func (c *Controller) beginLocked(kind string) *operation {
 func (c *Controller) beginTurnLocked(input agent.Input) {
 	op := c.beginLocked("turn")
 	c.publish(Event{Kind: "started", Operation: "turn", Text: input.Text})
-	go func() { c.finishTurn(op, c.a.RunInput(op.ctx, input, func(e agent.Event) { c.observe(op, e) })) }()
+	go func() { c.finishTurn(op, c.a.RunInput(op.ctx, input, func(e agent.Event) { c.observe(e) })) }()
 }
 
 func (c *Controller) beginCompactLocked(prompt string) {
@@ -199,7 +199,7 @@ func (c *Controller) endLocked(op *operation) {
 }
 
 // observe applies one agent event to controller state before reporting it.
-func (c *Controller) observe(op *operation, e agent.Event) {
+func (c *Controller) observe(e agent.Event) {
 	c.view(func() {
 		if e.Meta != nil && e.Meta.ContextInput != nil {
 			c.ctx = *e.Meta.ContextInput
@@ -314,16 +314,13 @@ func (c *Controller) switchLocked(kind, id string) error {
 }
 
 // deliverLocked starts a turn with the oldest queued input when idle.
-func (c *Controller) deliverLocked() bool {
+func (c *Controller) deliverLocked() {
 	if c.active != nil || c.shut || c.closing {
-		return false
+		return
 	}
-	next, ok := c.a.Queue().Pop()
-	if !ok {
-		return false
+	if next, ok := c.a.Queue().Pop(); ok {
+		c.beginTurnLocked(next)
 	}
-	c.beginTurnLocked(next)
-	return true
 }
 
 // publish records an event in the display journal, stamps the title and emits it.
@@ -343,8 +340,6 @@ func (c *Controller) publish(e Event) {
 	e.Title = c.titleLocked()
 	c.emit(e)
 }
-
-func (c *Controller) sessionsLocked() ([]agent.SessionSummary, error) { return c.a.Sessions() }
 
 // setupError explains what is missing before a message can start a turn.
 func (c *Controller) setupError() error {

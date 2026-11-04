@@ -35,7 +35,7 @@ func (a *Agent) safeError(err error) error {
 			text += ": " + api.Message
 		}
 	}
-	return &providerError{text: Redact(a.settings, text), cause: err}
+	return &providerError{text: Redact(a.Settings(), text), cause: err}
 }
 
 // streamFailure reports a failed stream event by its code and message, never the raw event.

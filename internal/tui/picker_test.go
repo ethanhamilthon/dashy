@@ -49,9 +49,9 @@ func modelServer(t *testing.T, list string) string {
 	return server.URL
 }
 
-// /settings lists the settings rows and the models of every provider; toggles,
-// effort and a chosen model are applied and saved at once.
-func TestSettingsPickerChangesSettingsAndSelectsModel(t *testing.T) {
+// /settings toggles display options; /models lists the models of every provider and
+// applies and saves the effort and a chosen model at once.
+func TestSettingsAndModelsPickers(t *testing.T) {
 	m, a := freshModel(t)
 	if err := a.AddProvider("p", agent.Provider{BaseURL: modelServer(t, `{"data":[{"id":"m1"},{"id":"m2"}]}`)}); err != nil {
 		t.Fatal(err)
@@ -61,15 +61,41 @@ func TestSettingsPickerChangesSettingsAndSelectsModel(t *testing.T) {
 	}
 	m = openPickerCmd(t, m, "/settings")
 	m = selectRow(t, m, "Auto compact")
-	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = key(m, tea.KeyMsg{Type: tea.KeyRight})
 	if a.Settings().AutoCompact {
-		t.Fatal("auto compact not toggled off")
+		t.Fatal("auto compact not turned off")
+	}
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "[off]") || !strings.Contains(view, " on ") {
+		t.Fatalf("both options must be listed: %q", view)
+	}
+	m = key(m, tea.KeyMsg{Type: tea.KeyLeft})
+	if !a.Settings().AutoCompact {
+		t.Fatal("auto compact not turned back on")
+	}
+	m = selectRow(t, m, "Compact at")
+	for i := 0; i < 20; i++ {
+		m = key(m, tea.KeyMsg{Type: tea.KeyRight})
+	}
+	if a.Settings().CompactThreshold != 1_000_000 {
+		t.Fatalf("threshold stops at 1M, got %d", a.Settings().CompactThreshold)
+	}
+	for i := 0; i < 20; i++ {
+		m = key(m, tea.KeyMsg{Type: tea.KeyLeft})
+	}
+	if a.Settings().CompactThreshold != 100_000 {
+		t.Fatalf("threshold stops at 100K, got %d", a.Settings().CompactThreshold)
 	}
 	m = selectRow(t, m, "Show lines")
-	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if a.Settings().ShowLines != "medium" {
+	m = key(m, tea.KeyMsg{Type: tea.KeyRight})
+	if a.Settings().ShowLines != "full" {
 		t.Fatalf("show lines %q", a.Settings().ShowLines)
 	}
+	m = key(m, tea.KeyMsg{Type: tea.KeyRight})
+	if a.Settings().ShowLines != "full" {
+		t.Fatalf("show lines passed its last option: %q", a.Settings().ShowLines)
+	}
+	m = key(m, tea.KeyMsg{Type: tea.KeyEsc})
+	m = openPickerCmd(t, m, "/models")
 	m = key(m, tea.KeyMsg{Type: tea.KeyRight}) // effort: "" -> none
 	m = key(m, tea.KeyMsg{Type: tea.KeyRight}) // none -> minimal
 	m = selectRow(t, m, "m3")
@@ -79,10 +105,10 @@ func TestSettingsPickerChangesSettingsAndSelectsModel(t *testing.T) {
 	}
 }
 
-// /login lists providers and adds one through the setup prompts; the key is never shown.
-func TestLoginAddsProviderWithoutShowingKey(t *testing.T) {
+// /connect lists providers and adds one through the setup prompts; the key is never shown.
+func TestConnectAddsProviderWithoutShowingKey(t *testing.T) {
 	m, a := freshModel(t)
-	m = openPickerCmd(t, m, "/login")
+	m = openPickerCmd(t, m, "/connect")
 	m = selectRow(t, m, "Add")
 	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
 	for _, value := range []string{"corp", "https://llm.example.com/v1", "sk-secret-key"} {
@@ -123,20 +149,20 @@ func TestPickerNamesThatMatchActionsAreChoices(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	m = openPickerCmd(t, m, "/login")
+	m = openPickerCmd(t, m, "/connect")
 	m = selectRow(t, m, "Add")
 	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if a.Settings().Provider != "Add" || m.menuKind != "" {
 		t.Fatalf("provider row named Add: provider %q, picker %q", a.Settings().Provider, m.menuKind)
 	}
-	m = openPickerCmd(t, m, "/settings")
+	m = openPickerCmd(t, m, "/models")
 	before := a.Settings()
 	m = selectModel(t, m, "Reasoning summary")
 	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if s := a.Settings(); s.Model != "Reasoning summary" || s.ReasoningSummary != before.ReasoningSummary {
 		t.Fatalf("model named like a setting: model %q, reasoning summary %v", s.Model, s.ReasoningSummary)
 	}
-	m = openPickerCmd(t, m, "/settings")
+	m = openPickerCmd(t, m, "/models")
 	before = a.Settings()
 	m = selectModel(t, m, "Show lines")
 	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -154,7 +180,7 @@ func TestEffortChangeIsSavedBeforeEscape(t *testing.T) {
 	if err := a.Select("p", "m1", ""); err != nil {
 		t.Fatal(err)
 	}
-	m = openPickerCmd(t, m, "/settings")
+	m = openPickerCmd(t, m, "/models")
 	m = key(m, tea.KeyMsg{Type: tea.KeyRight}) // effort: "" -> none
 	m = key(m, tea.KeyMsg{Type: tea.KeyEsc})
 	saved, err := agent.LoadSettings(a.SettingsPath())
@@ -163,10 +189,10 @@ func TestEffortChangeIsSavedBeforeEscape(t *testing.T) {
 	}
 }
 
-// The /login menu shows its add row once, as "+ Add provider".
-func TestLoginMenuAddRowRendersOnce(t *testing.T) {
+// The /connect menu shows its add row once, as "+ Add provider".
+func TestConnectMenuAddRowRendersOnce(t *testing.T) {
 	m, _ := freshModel(t)
-	view := ansi.Strip(openPickerCmd(t, m, "/login").View())
+	view := ansi.Strip(openPickerCmd(t, m, "/connect").View())
 	if !strings.Contains(view, "+ Add provider") || strings.Contains(view, "+ +") {
 		t.Fatalf("add row: %q", view)
 	}

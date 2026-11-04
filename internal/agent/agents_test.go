@@ -16,15 +16,15 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
-// systemPrompt assembles the prompt of a fresh agent with the given global and local AGENTS.md content.
+// systemPrompt assembles the prompt of a fresh agent with the given global and local DASHY.md content.
 func systemPrompt(t *testing.T, global, local string) string {
 	t.Helper()
 	a := newTestAgentWith(t, &fakeProvider{reply: func(int, string) string { return "" }}, Options{}, func(home, dir string) {
 		if global != "" {
-			writeFile(t, filepath.Join(home, "AGENTS.md"), global)
+			writeFile(t, filepath.Join(home, "DASHY.md"), global)
 		}
 		if local != "" {
-			writeFile(t, filepath.Join(dir, "AGENTS.md"), local)
+			writeFile(t, filepath.Join(dir, "DASHY.md"), local)
 		}
 	})
 	prompt, err := a.instructions(context.Background())
@@ -37,7 +37,7 @@ func systemPrompt(t *testing.T, global, local string) string {
 // Files are added verbatim under "# path" headers, separated by exactly one blank line.
 func TestPromptKeepsFileBytesVerbatim(t *testing.T) {
 	a := newTestAgent(t, &fakeProvider{}, Options{})
-	global, local := filepath.Join(a.home, "AGENTS.md"), filepath.Join(a.Shell.Dir, "AGENTS.md")
+	global, local := filepath.Join(a.home, "DASHY.md"), filepath.Join(a.Shell.Dir, "DASHY.md")
 	writeFile(t, global, "g\r\nline")
 	writeFile(t, local, "l\n\n\n")
 	a.promptFiles = []string{global, local}
@@ -51,7 +51,7 @@ func TestPromptKeepsFileBytesVerbatim(t *testing.T) {
 	}
 }
 
-func TestNoAGENTSFilesMeansEmptyPrompt(t *testing.T) {
+func TestNoDashyFilesMeansEmptyPrompt(t *testing.T) {
 	if got := systemPrompt(t, "", ""); got != "" {
 		t.Fatalf("prompt = %q", got)
 	}
@@ -93,7 +93,7 @@ func TestBlockTimeoutIsAFailure(t *testing.T) {
 	}
 }
 
-// Stdout and stderr share the 64 KiB budget and keep the start of the output. Stdout
+// Stdout keeps the first 64 KiB of the output and stderr does not use that budget. Stdout
 // below the limit is kept exactly; a longer one is cut at the limit.
 func TestBlockOutputBudget(t *testing.T) {
 	a := newTestAgent(t, &fakeProvider{}, Options{})
@@ -106,7 +106,11 @@ func TestBlockOutputBudget(t *testing.T) {
 	if err != nil || len(cut) != blockOutput {
 		t.Fatalf("stdout over the limit kept %d bytes, err %v", len(cut), err)
 	}
-	// The failure text keeps only the stderr tail, even after the budget is used up.
+	noisy, err := a.runBlock(ctx, "head -c 100000 /dev/zero | tr '\\0' e >&2; echo out", "tui", "startup")
+	if err != nil || noisy != "out" {
+		t.Fatalf("stderr crowded out stdout: %q, err %v", noisy, err)
+	}
+	// The failure text keeps only the stderr tail.
 	many := "head -c 100000 /dev/zero | tr '\\0' a; for i in $(seq 1 40); do echo line$i >&2; done; exit 2"
 	failed, _ := a.runBlock(ctx, many, "tui", "startup")
 	if !strings.HasSuffix(failed, "line36\nline37\nline38\nline39\nline40") || strings.Count(failed, "\n") != blockTailLines {
@@ -114,12 +118,12 @@ func TestBlockOutputBudget(t *testing.T) {
 	}
 }
 
-// A selected AGENTS.md that cannot be read is an error, never a shorter prompt.
+// A selected DASHY.md that cannot be read is an error, never a shorter prompt.
 func TestSelectedFileVanishingIsAnError(t *testing.T) {
 	a := newTestAgentWith(t, &fakeProvider{}, Options{}, func(_, dir string) {
-		writeFile(t, filepath.Join(dir, "AGENTS.md"), "x")
+		writeFile(t, filepath.Join(dir, "DASHY.md"), "x")
 	})
-	if err := os.Remove(filepath.Join(a.Shell.Dir, "AGENTS.md")); err != nil {
+	if err := os.Remove(filepath.Join(a.Shell.Dir, "DASHY.md")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.instructions(context.Background()); err == nil {
@@ -129,7 +133,7 @@ func TestSelectedFileVanishingIsAnError(t *testing.T) {
 
 func TestCancelledTurnStopsWhileBlockRuns(t *testing.T) {
 	a := newTestAgentWith(t, &fakeProvider{}, Options{}, func(_, dir string) {
-		writeFile(t, filepath.Join(dir, "AGENTS.md"), "```dashy\nsleep 30\n```\n")
+		writeFile(t, filepath.Join(dir, "DASHY.md"), "```dashy\nsleep 30\n```\n")
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
@@ -146,10 +150,10 @@ func TestSameSessionResumeAssemblesAgain(t *testing.T) {
 	fp := &fakeProvider{reply: func(int, string) string { return textReply("ok") }}
 	a := newTestAgentWith(t, fp, Options{}, func(home, dir string) {
 		runs = filepath.Join(home, "runs")
-		writeFile(t, filepath.Join(dir, "AGENTS.md"), "v1\n```dashy\necho run >> "+runs+"; echo block1\n```\n")
+		writeFile(t, filepath.Join(dir, "DASHY.md"), "v1\n```dashy\necho run >> "+runs+"; echo block1\n```\n")
 	})
 	turn(t, a, "first")
-	writeFile(t, filepath.Join(a.Shell.Dir, "AGENTS.md"), "v2\n```dashy\necho run >> "+runs+"; echo block2\n```\n")
+	writeFile(t, filepath.Join(a.Shell.Dir, "DASHY.md"), "v2\n```dashy\necho run >> "+runs+"; echo block2\n```\n")
 	if err := a.Resume(a.SessionID()); err != nil {
 		t.Fatal(err)
 	}

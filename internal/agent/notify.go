@@ -61,32 +61,17 @@ type sessionSocket struct {
 	current  net.Conn // connection being read; retire closes it
 }
 
-// removeDeadSockets deletes the sockets in dir that no listener answers, as left by crashed sessions.
-func removeDeadSockets(dir string) {
-	paths, _ := filepath.Glob(filepath.Join(dir, "*.sock"))
-	for _, p := range paths {
-		if conn, err := net.DialTimeout("unix", p, 100*time.Millisecond); err == nil {
-			conn.Close()
-		} else {
-			_ = os.Remove(p)
-		}
-	}
-}
-
 func (a *Agent) listenNotifications() error {
 	runDir := filepath.Join(a.home, "run")
 	if err := os.MkdirAll(runDir, 0700); err != nil {
 		return err
 	}
-	removeDeadSockets(runDir)
 	sockPath := SocketPath(runDir, a.SessionID())
 
-	// removeDeadSockets left only sockets that answer, so an existing one is in use.
-	if conn, err := net.DialTimeout("unix", sockPath, 100*time.Millisecond); err == nil {
-		conn.Close()
-		return fmt.Errorf("session socket %s is in use", sockPath)
+	// The session lock is held, so no live listener owns this path: a file left by a crash is stale.
+	if err := os.Remove(sockPath); err != nil && !os.IsNotExist(err) {
+		return err
 	}
-
 	listener, err := net.Listen("unix", sockPath)
 	if err != nil {
 		return err
@@ -195,19 +180,19 @@ func (s *imageSlots) release(n int) {
 	s.reserved = max(0, s.reserved-n)
 }
 
-// commitImages moves n admitted images into the history, where they wait for the next request.
-func (a *Agent) commitImages(n int) {
-	a.slots.mu.Lock()
-	defer a.slots.mu.Unlock()
-	a.slots.reserved = max(0, a.slots.reserved-n)
-	a.slots.committed += n
+// commit moves n admitted images into the history, where they wait for the next request.
+func (s *imageSlots) commit(n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reserved = max(0, s.reserved-n)
+	s.committed += n
 }
 
-// sentImages runs when a request carrying the history is dispatched; those images are no longer new.
-func (a *Agent) sentImages() {
-	a.slots.mu.Lock()
-	defer a.slots.mu.Unlock()
-	a.slots.committed = 0
+// sent runs when a request carrying the history is dispatched; those images are no longer new.
+func (s *imageSlots) sent() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.committed = 0
 }
 
 // PendingImages counts the images that the next model request will carry.

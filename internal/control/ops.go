@@ -118,7 +118,7 @@ func (c *Controller) switchRequest(kind, id string) error {
 	c.view(func() {
 		if kind == "resume" {
 			var sessions []agent.SessionSummary
-			if sessions, err = c.sessionsLocked(); err != nil {
+			if sessions, err = c.a.Sessions(); err != nil {
 				err = fail("failed", "%s", err)
 				return
 			}
@@ -146,7 +146,7 @@ func (c *Controller) switchRequest(kind, id string) error {
 	return err
 }
 
-// Reload re-reads settings and AGENTS.md; a running turn is not interrupted, it applies once it ends.
+// Reload re-reads settings and DASHY.md; a running turn is not interrupted, it applies once it ends.
 func (c *Controller) Reload() {
 	c.view(func() {
 		if c.active != nil {
@@ -163,7 +163,7 @@ func (c *Controller) reloadLocked() {
 		c.publish(Event{Kind: "error", Text: err.Error()})
 		return
 	}
-	c.publish(Event{Kind: "notice", Text: "Settings and AGENTS.md reloaded; the prompt is rebuilt before the next request."})
+	c.publish(Event{Kind: "notice", Text: "Settings and DASHY.md reloaded; the prompt is rebuilt before the next request."})
 }
 
 // Rename sets the title of the current session; an empty name restores the first user message.
@@ -205,7 +205,7 @@ func (c *Controller) Compact(prompt string) error {
 	return err
 }
 
-// Instructions lists the AGENTS.md files of the session, in prompt order.
+// Instructions lists the DASHY.md files of the session, in prompt order.
 func (c *Controller) Instructions() (paths []string) {
 	c.view(func() { paths = c.a.PromptFiles() })
 	return paths
@@ -215,7 +215,7 @@ func (c *Controller) Instructions() (paths []string) {
 func (c *Controller) Models(ctx context.Context) (models []agent.ModelChoice, failures map[string]string, err error) {
 	var settings agent.Settings
 	c.view(func() {
-		if err = c.requireIdle("Wait for the active turn before changing settings."); err == nil && c.shut {
+		if c.shut {
 			err = fail("closed", "the session is closed")
 		}
 		settings = c.a.Settings()
@@ -238,9 +238,6 @@ func (c *Controller) Models(ctx context.Context) (models []agent.ModelChoice, fa
 func (c *Controller) SelectModel(provider, model, effort string) error {
 	var err error
 	c.view(func() {
-		if err = c.requireIdle("Wait for the active turn before changing settings."); err != nil {
-			return
-		}
 		if provider == "" || model == "" {
 			err = fail("invalid", "a model and its provider are required")
 			return
@@ -254,9 +251,6 @@ func (c *Controller) SelectModel(provider, model, effort string) error {
 func (c *Controller) SelectProvider(name string) error {
 	var err error
 	c.view(func() {
-		if err = c.requireIdle("Wait for the active turn before changing settings."); err != nil {
-			return
-		}
 		s := c.a.Settings()
 		err = c.selectLocked(name, s.Model, s.Effort)
 	})
@@ -278,15 +272,12 @@ func (c *Controller) selectLocked(provider, model, effort string) error {
 func (c *Controller) AddProvider(name, baseURL, apiKey string) error {
 	var err error
 	c.view(func() {
-		if err = c.requireIdle("Wait for the active turn before changing settings."); err != nil {
-			return
-		}
 		settings := c.a.Settings()
 		if err = c.a.AddProvider(name, agent.Provider{BaseURL: baseURL, APIKey: apiKey}); err != nil {
 			err = fail("failed", "%s", agent.Redact(settings, err.Error(), apiKey))
 			return
 		}
-		c.publish(Event{Kind: "notice", Text: "Provider created in " + c.a.SettingsPath() + ". Choose a model with /settings."})
+		c.publish(Event{Kind: "notice", Text: "Provider created in " + c.a.SettingsPath() + ". Choose a model with /models."})
 	})
 	return err
 }
@@ -297,56 +288,129 @@ const (
 	SettingAutoCompact = "autocompact"
 	SettingThreshold   = "threshold"
 	SettingLines       = "lines"
+	SettingShellOutput = "shelloutput"
 )
 
-// SettingLabel shows one setting row, as in /settings and in the notice after a change.
-func SettingLabel(setting string, s agent.Settings) string {
-	switch setting {
-	case SettingReasoning:
-		return "Reasoning summary: " + OnOff(s.ReasoningSummary)
-	case SettingAutoCompact:
-		return "Auto compact: " + OnOff(s.AutoCompact)
-	case SettingThreshold:
-		return fmt.Sprintf("Compact at: %dK tokens", s.CompactThreshold/1000)
-	}
-	return "Show lines: " + s.ShowLines
+// settingRow describes one /settings row: its label, its values with the index of the
+// current one (-1 when the stored value is not one of them) and how a step changes it.
+type settingRow struct {
+	name    string
+	options func(agent.Settings) (options []string, current int)
+	step    func(delta int, s *agent.Settings)
 }
 
-// ChangeSetting toggles or cycles one setting and saves it. It is rejected while an
-// operation runs, so no turn ever sees settings change under it.
-func (c *Controller) ChangeSetting(setting string) error {
+var settingRows = map[string]settingRow{
+	SettingReasoning: {"Reasoning summary",
+		func(s agent.Settings) ([]string, int) { return onOff(s.ReasoningSummary) },
+		func(delta int, s *agent.Settings) { s.ReasoningSummary = delta < 0 }},
+	SettingAutoCompact: {"Auto compact",
+		func(s agent.Settings) ([]string, int) { return onOff(s.AutoCompact) },
+		func(delta int, s *agent.Settings) { s.AutoCompact = delta < 0 }},
+	SettingThreshold: {"Compact at",
+		func(s agent.Settings) (options []string, current int) {
+			current = -1
+			for v := int64(agent.CompactMin); v <= agent.CompactMax; v += agent.CompactStep {
+				if v == s.CompactThreshold {
+					current = len(options)
+				}
+				options = append(options, tokensLabel(v))
+			}
+			return options, current
+		},
+		func(delta int, s *agent.Settings) {
+			// From a value off the grid, a step goes to the next grid value in that direction.
+			v, grid := s.CompactThreshold, int64(agent.CompactStep)
+			switch {
+			case delta > 0:
+				v = (v/grid + 1) * grid
+			case v%grid == 0:
+				v -= grid
+			default:
+				v = v / grid * grid
+			}
+			s.CompactThreshold = min(max(v, agent.CompactMin), agent.CompactMax)
+		}},
+	SettingLines: {"Show lines",
+		func(s agent.Settings) ([]string, int) {
+			return agent.ShowLinesModes, slices.Index(agent.ShowLinesModes, s.ShowLines)
+		},
+		func(delta int, s *agent.Settings) {
+			i := max(slices.Index(agent.ShowLinesModes, s.ShowLines), 0)
+			if delta > 0 {
+				i++
+			} else {
+				i--
+			}
+			s.ShowLines = agent.ShowLinesModes[min(max(i, 0), len(agent.ShowLinesModes)-1)]
+		}},
+	SettingShellOutput: {"Bash output",
+		func(s agent.Settings) (options []string, current int) {
+			current = -1
+			for v := agent.ShellOutputMin; v <= agent.ShellOutputMax; v *= 2 {
+				if v == s.ShellOutput {
+					current = len(options)
+				}
+				options = append(options, fmt.Sprintf("%dK", v/1024))
+			}
+			return options, current
+		},
+		func(delta int, s *agent.Settings) {
+			// Doubling steps; from a value off the grid, a step goes to the next grid value in
+			// that direction. 0 (no truncation) is only reachable by editing settings.json.
+			v := s.ShellOutput
+			switch {
+			case v == 0 && delta > 0:
+				return
+			case v == 0:
+				v = agent.ShellOutputMax
+			case delta > 0:
+				n := agent.ShellOutputMin
+				for n <= v && n < agent.ShellOutputMax {
+					n *= 2
+				}
+				v = n
+			default:
+				n := agent.ShellOutputMax
+				for n >= v && n > agent.ShellOutputMin {
+					n /= 2
+				}
+				v = n
+			}
+			s.ShellOutput = v
+		}},
+}
+
+func onOff(v bool) ([]string, int) { return []string{"on", "off"}, map[bool]int{true: 0, false: 1}[v] }
+
+// SettingOptions lists every value of a setting row and the index of the current one
+// (-1 when the stored value is not one of them).
+func SettingOptions(setting string, s agent.Settings) (options []string, current int) {
+	return settingRows[setting].options(s)
+}
+
+func tokensLabel(v int64) string {
+	if v >= 1_000_000 && v%1_000_000 == 0 {
+		return fmt.Sprintf("%dM", v/1_000_000)
+	}
+	return fmt.Sprintf("%dK", v/1000)
+}
+
+// SettingName is the name of a setting row.
+func SettingName(setting string) string { return settingRows[setting].name }
+
+// ChangeSetting moves one setting a step back (delta < 0) or forward (delta > 0) and saves it.
+// Settings stop at their first and last value. It is allowed while a turn runs: that turn's
+// next model request picks the change up.
+func (c *Controller) ChangeSetting(setting string, delta int) error {
+	row, ok := settingRows[setting]
+	if !ok {
+		return fail("invalid", "unknown setting: %s", setting)
+	}
 	var err error
 	c.view(func() {
-		if err = c.requireIdle("Wait for the active turn before changing settings."); err != nil {
-			return
-		}
-		if e := c.a.ChangeSettings(func(s *agent.Settings) { cycle(setting, s) }); e != nil {
+		if e := c.a.ChangeSettings(func(s *agent.Settings) { row.step(delta, s) }); e != nil {
 			err = fail("failed", "%s", e)
-			return
 		}
-		c.publish(Event{Kind: "notice", Text: SettingLabel(setting, c.a.Settings())})
 	})
 	return err
-}
-
-func cycle(setting string, s *agent.Settings) {
-	switch setting {
-	case SettingReasoning:
-		s.ReasoningSummary = !s.ReasoningSummary
-	case SettingAutoCompact:
-		s.AutoCompact = !s.AutoCompact
-	case SettingThreshold:
-		i := slices.IndexFunc(agent.CompactThresholds, func(t int64) bool { return t > s.CompactThreshold })
-		s.CompactThreshold = agent.CompactThresholds[max(i, 0)]
-	case SettingLines:
-		s.ShowLines = map[string]string{"short": "medium", "medium": "full", "full": "short"}[s.ShowLines]
-	}
-}
-
-// OnOff is how settings show a boolean.
-func OnOff(v bool) string {
-	if v {
-		return "on"
-	}
-	return "off"
 }

@@ -1,25 +1,27 @@
-package control
+package tui
 
 import (
 	"context"
 	"sync"
+
+	"dashy/internal/control"
 )
 
-// Queue hands items to one consumer. Push never blocks, because the controller
+// eventQueue hands controller events to one consumer. Push never blocks, because the controller
 // calls it under its lock.
-type Queue[T any] struct {
+type eventQueue struct {
 	mu    sync.Mutex
-	items []T
+	items []control.Event
 	wake  chan struct{}
 }
 
-// NewQueue returns an empty, unbounded queue.
-func NewQueue[T any]() *Queue[T] {
-	return &Queue[T]{wake: make(chan struct{}, 1)}
+// newEventQueue returns an empty, unbounded queue.
+func newEventQueue() *eventQueue {
+	return &eventQueue{wake: make(chan struct{}, 1)}
 }
 
 // Push appends item.
-func (q *Queue[T]) Push(item T) {
+func (q *eventQueue) Push(item control.Event) {
 	q.mu.Lock()
 	q.items = append(q.items, item)
 	q.mu.Unlock()
@@ -30,7 +32,7 @@ func (q *Queue[T]) Push(item T) {
 }
 
 // TryPop returns the oldest item without blocking.
-func (q *Queue[T]) TryPop() (item T, ok bool) {
+func (q *eventQueue) TryPop() (item control.Event, ok bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if len(q.items) == 0 {
@@ -41,14 +43,14 @@ func (q *Queue[T]) TryPop() (item T, ok bool) {
 }
 
 // Pop blocks until an item arrives; false means ctx ended first.
-func (q *Queue[T]) Pop(ctx context.Context) (T, bool) {
+func (q *eventQueue) Pop(ctx context.Context) (control.Event, bool) {
 	for {
 		if item, ok := q.TryPop(); ok {
 			return item, true
 		}
 		select {
 		case <-ctx.Done():
-			var zero T
+			var zero control.Event
 			return zero, false
 		case <-q.wake:
 		}

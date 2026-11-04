@@ -28,7 +28,7 @@ type renderedEntry struct {
 }
 type model struct {
 	ctl                      *control.Controller
-	events                   *control.Queue[control.Event]
+	events                   *eventQueue
 	input                    textarea.Model
 	viewport                 viewport.Model
 	entries                  []entry // copy of the controller's timeline, refreshed by refresh
@@ -86,7 +86,7 @@ func newModel(a *agent.Agent, cwd string, reporter *osc7501.Reporter) model {
 	base := lipgloss.NewStyle().Foreground(foreground)
 	style := textarea.Style{Base: base, CursorLine: base, Text: base, Placeholder: base.Foreground(muted), EndOfBuffer: base}
 	input.FocusedStyle, input.BlurredStyle = style, style
-	events := control.NewQueue[control.Event]()
+	events := newEventQueue()
 	ctl := control.New(a, func(e control.Event) { events.Push(e) })
 	m := model{ctl: ctl, events: events, input: input, viewport: viewport.New(80, 24), width: 80, height: 24, cwd: cwd, reporter: reporter}
 	reporter.HandleEvent(control.Event{Kind: "session", Title: ctl.Title()})
@@ -169,7 +169,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case clipboardResult:
 		return m, m.edit(true, func() tea.Cmd { return m.acceptClipboard(v) })
 	case modelChoices:
-		if m.menuKind != pickerSettings || v.generation != m.menuGeneration {
+		if m.menuKind != pickerModels || v.generation != m.menuGeneration {
 			return m, nil
 		}
 		if v.err != nil {
@@ -177,7 +177,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.reject(v.err)
 		}
 		m.pickerModels = v.models
-		m.rebuildSettingsMenu()
+		m.rebuildModelsMenu()
 		var failed []string
 		for name, err := range v.errs {
 			failed = append(failed, name+": "+err)
@@ -186,7 +186,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case len(v.models) == 0 && len(failed) > 0:
 			m.add("error", "Could not list models.\n"+strings.Join(failed, "\n"))
-		case len(v.models) == 0 && len(m.ctl.Settings().Providers) > 0:
+		case len(m.ctl.Settings().Providers) == 0:
+			m.add("notice", "No providers yet. Use /connect to add one.")
+		case len(v.models) == 0:
 			m.add("notice", "No models returned by providers.")
 		case len(failed) > 0:
 			m.add("notice", "Some providers failed to list models:\n"+strings.Join(failed, "\n"))

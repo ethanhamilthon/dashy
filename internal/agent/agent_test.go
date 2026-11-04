@@ -63,7 +63,7 @@ func textReply(text string) string {
 
 // bashReply is a streamed response with one bash call.
 func bashReply(callID, command string) string {
-	args, _ := json.Marshal(map[string]any{"command": command, "timeout": nil, "max_output": nil})
+	args, _ := json.Marshal(map[string]any{"command": command, "timeout": nil})
 	return sse(fmt.Sprintf(`{"type":"response.completed","response":{"output":[{"type":"function_call","call_id":%q,"name":"bash","arguments":%q}]}}`, callID, args))
 }
 
@@ -143,7 +143,7 @@ func TestFinalTextIgnoresEarlierTurns(t *testing.T) {
 func TestMissingModelSendsNoRequest(t *testing.T) {
 	fp := &fakeProvider{reply: func(int, string) string { return textReply("x") }}
 	a := newTestAgent(t, fp, Options{})
-	a.applySettings(DefaultSettings())
+	a.update(func(s *Settings) error { *s = DefaultSettings(); return nil })
 	if _, err := turn(t, a, "hi"); err == nil || !strings.Contains(err.Error(), "No provider configured") {
 		t.Fatalf("err = %v", err)
 	}

@@ -6,7 +6,6 @@ package osc7501
 import (
 	"bytes"
 	"encoding/base64"
-	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -14,13 +13,13 @@ import (
 	"time"
 	"unicode"
 
-	"golang.org/x/term"
+	"github.com/mattn/go-isatty"
 
 	"dashy/internal/agent"
 	"dashy/internal/control"
 )
 
-// Protocol limits. A report above MaxSequence bytes is never sent.
+// Protocol limits. The text limits keep every report far below MaxSequence bytes.
 const (
 	MaxSequence   = 4096
 	maxTitleRunes = 60
@@ -38,18 +37,16 @@ func clean(s string, maxRunes, maxBytes int) string {
 	if len(runes) <= maxRunes && len(s) < maxBytes {
 		return s
 	}
-	for {
-		keep := min(len(runes), maxRunes-1)
-		if t := string(runes[:keep]) + "…"; len(t) < maxBytes || len(runes) == 0 {
-			return t
-		}
-		runes = runes[:len(runes)-1]
+	keep := min(len(runes), maxRunes-1)
+	for keep > 0 && len(string(runes[:keep]))+len("…") >= maxBytes {
+		keep--
 	}
+	return string(runes[:keep]) + "…"
 }
 
 // Encode returns the sequence for one report: ESC ] 7501 ; state=S:app=dashy[:title=B64][:msg=B64] ESC \.
 // Empty title or msg are omitted.
-func Encode(state, title, msg string) ([]byte, error) {
+func Encode(state, title, msg string) []byte {
 	var b strings.Builder
 	b.WriteString("\x1b]7501;state=" + state + ":app=dashy")
 	if t := clean(title, maxTitleRunes, maxTitleBytes); t != "" {
@@ -59,10 +56,7 @@ func Encode(state, title, msg string) ([]byte, error) {
 		b.WriteString(":msg=" + base64.StdEncoding.EncodeToString([]byte(m)))
 	}
 	b.WriteString("\x1b\\")
-	if b.Len() > MaxSequence {
-		return nil, fmt.Errorf("osc7501: report exceeds %d bytes", MaxSequence)
-	}
-	return []byte(b.String()), nil
+	return []byte(b.String())
 }
 
 // Enabled reports whether reports may be written to out: out and stdin must be
@@ -72,7 +66,7 @@ func Enabled(out io.Writer) bool {
 	if !ok || os.Getenv("TERM") == "" || os.Getenv("TERM") == "dumb" {
 		return false
 	}
-	return term.IsTerminal(int(f.Fd())) && term.IsTerminal(int(os.Stdin.Fd()))
+	return isatty.IsTerminal(f.Fd()) && isatty.IsTerminal(os.Stdin.Fd())
 }
 
 // Reporter tracks the state of the session and writes changed reports to out.
@@ -135,10 +129,7 @@ func (r *Reporter) reportLocked() {
 	if !r.enabled {
 		return
 	}
-	data, err := Encode(r.state, r.title, r.msg)
-	if err != nil {
-		return
-	}
+	data := Encode(r.state, r.title, r.msg)
 	if bytes.Equal(data, r.last) {
 		r.pending = nil
 		return
@@ -184,7 +175,7 @@ func (r *Reporter) Close() {
 	}
 	r.state, r.msg = "idle", ""
 	r.pending = nil // the final state replaces whatever was queued, even when it is not sent
-	if data, err := Encode(r.state, r.title, r.msg); err == nil && !bytes.Equal(data, r.last) {
+	if data := Encode(r.state, r.title, r.msg); !bytes.Equal(data, r.last) {
 		r.pending = data
 		// The final report obeys the same rate limit: wait out the rest of the interval.
 		if wait := interval - time.Since(r.lastAt); wait > 0 {

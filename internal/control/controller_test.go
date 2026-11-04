@@ -24,10 +24,9 @@ import (
 // request (not streamed) with SUMMARY. gate, when set, holds every request until
 // it is closed or the request is cancelled.
 type fakeModel struct {
-	mu      sync.Mutex
-	bodies  []string
-	gate    chan struct{}
-	summary bool
+	mu     sync.Mutex
+	bodies []string
+	gate   chan struct{}
 }
 
 func (f *fakeModel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -355,13 +354,12 @@ func TestImageAllowanceIsSharedAcrossSources(t *testing.T) {
 	}
 }
 
-// A settings change while a turn runs is rejected, and nothing changes. The turn
-// is started by an external notification, as it can be while the picker is open.
-func TestSettingsRejectedWhileNotificationTurnRuns(t *testing.T) {
+// Settings changed while a turn runs are accepted and saved; the turn keeps running.
+// The turn is started by an external notification, as it can be while the picker is open.
+func TestSettingsChangeWhileNotificationTurnRuns(t *testing.T) {
 	gate := make(chan struct{})
 	defer close(gate)
 	h := newHarness(t, &fakeModel{gate: gate})
-	before := h.ctl.Settings()
 	if err := agent.Notify(h.dir, h.a.SessionID(), "background result"); err != nil {
 		t.Fatal(err)
 	}
@@ -371,20 +369,21 @@ func TestSettingsRejectedWhileNotificationTurnRuns(t *testing.T) {
 		}
 	}
 	for name, err := range map[string]error{
-		"reasoning": h.ctl.ChangeSetting(SettingReasoning),
-		"compact":   h.ctl.ChangeSetting(SettingAutoCompact),
-		"lines":     h.ctl.ChangeSetting(SettingLines),
-		"model":     h.ctl.SelectModel("p", "other", ""),
+		"reasoning": h.ctl.ChangeSetting(SettingReasoning, 1),
+		"compact":   h.ctl.ChangeSetting(SettingAutoCompact, 1),
+		"lines":     h.ctl.ChangeSetting(SettingLines, 1),
+		"model":     h.ctl.SelectModel("p", "other", "high"),
 	} {
-		if codeOf(err) != "busy" {
+		if err != nil {
 			t.Errorf("%s while busy: %v", name, err)
 		}
 	}
-	if _, _, err := h.ctl.Models(t.Context()); codeOf(err) != "busy" {
-		t.Errorf("model listing while busy: %v", err)
+	after := h.ctl.Settings()
+	if after.ReasoningSummary || after.AutoCompact || after.ShowLines != "full" || after.Model != "other" || after.Effort != "high" {
+		t.Fatalf("settings not applied while busy: %+v", after)
 	}
-	if after := h.ctl.Settings(); after.ReasoningSummary != before.ReasoningSummary || after.ShowLines != before.ShowLines || after.Model != before.Model {
-		t.Fatalf("settings changed while busy: %+v", after)
+	if !h.ctl.Status().Busy {
+		t.Fatal("the running turn was interrupted by a settings change")
 	}
 }
 
@@ -461,13 +460,13 @@ func TestSettingsAndProvidersThroughTheController(t *testing.T) {
 	if codeOf(h.ctl.AddProvider("q", "https://q.example/v1", "")) != "failed" {
 		t.Fatal("duplicate provider accepted")
 	}
-	for _, setting := range []string{SettingReasoning, SettingAutoCompact, SettingLines, SettingThreshold} {
-		if err := h.ctl.ChangeSetting(setting); err != nil {
+	for _, setting := range []string{SettingReasoning, SettingAutoCompact, SettingLines, SettingThreshold, SettingShellOutput} {
+		if err := h.ctl.ChangeSetting(setting, 1); err != nil {
 			t.Fatal(err)
 		}
 	}
 	s := h.ctl.Settings()
-	if s.Model != "m2" || s.Effort != "high" || s.ShowLines != "medium" || s.AutoCompact || s.CompactThreshold != 800_000 || s.Providers["q"].APIKey != "sk-x" {
+	if s.Model != "m2" || s.Effort != "high" || s.ShowLines != "full" || s.AutoCompact || s.ReasoningSummary || s.CompactThreshold != 500_000 || s.ShellOutput != 16384 || s.Providers["q"].APIKey != "sk-x" {
 		t.Fatalf("settings: %+v", s)
 	}
 }
@@ -500,11 +499,30 @@ func TestBusyRejectionsAndQuitDuringTurn(t *testing.T) {
 	}
 }
 
-// /reload re-reads AGENTS.md (even one created after startup). While a turn runs it
+// AttachmentsDir is called from the UI (paste) while a deferred session switch rewrites
+// the agent on another goroutine, so it must go through the controller lock.
+func TestAttachmentsDirDuringSessionSwitch(t *testing.T) {
+	h := newHarness(t, &fakeModel{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range 200 {
+			_ = h.ctl.AttachmentsDir()
+		}
+	}()
+	for range 5 {
+		if err := h.ctl.NewSession(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	<-done
+}
+
+// /reload re-reads DASHY.md (even one created after startup). While a turn runs it
 // does not interrupt it and applies once the turn ends; idle it applies at once.
 func TestReloadRebuildsPromptAfterTurn(t *testing.T) {
 	h := newHarness(t, &fakeModel{})
-	local := filepath.Join(h.dir, "AGENTS.md")
+	local := filepath.Join(h.dir, "DASHY.md")
 	write := func(text string) {
 		if err := os.WriteFile(local, []byte(text), 0600); err != nil {
 			t.Fatal(err)
@@ -519,7 +537,7 @@ func TestReloadRebuildsPromptAfterTurn(t *testing.T) {
 	h.send("a")
 	turns(1)
 	if r := h.model.requests()[0]; strings.Contains(r, "v1") {
-		t.Fatalf("a AGENTS.md created after startup was used without /reload: %s", r)
+		t.Fatalf("a DASHY.md created after startup was used without /reload: %s", r)
 	}
 	h.ctl.Reload()
 	h.model.mu.Lock()

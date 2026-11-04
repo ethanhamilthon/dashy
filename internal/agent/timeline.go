@@ -41,12 +41,10 @@ type Event struct {
 func ApplyEvent(records []Record, e Event) []Record {
 	kind := e.Kind
 	switch kind {
-	case "delta":
+	case "delta", "refusal_delta":
 		kind = "assistant"
 	case "reasoning_delta":
 		kind = "reasoning"
-	case "refusal_delta":
-		kind = "assistant"
 	}
 	if e.ID != "" {
 		for i := len(records) - 1; i >= 0; i-- {

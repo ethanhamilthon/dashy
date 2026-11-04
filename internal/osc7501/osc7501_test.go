@@ -18,27 +18,27 @@ func b64(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) 
 
 // The protocol example, in dashy's app name.
 func TestEncodeMatchesProtocolForm(t *testing.T) {
-	got, err := Encode("working", "", "Installing updates")
+	got := Encode("working", "", "Installing updates")
 	want := "\x1b]7501;state=working:app=dashy:msg=" + b64("Installing updates") + "\x1b\\"
-	if err != nil || string(got) != want {
-		t.Fatalf("got %q, %v", got, err)
+	if string(got) != want {
+		t.Fatalf("got %q", got)
 	}
-	if got, _ := Encode("idle", "", ""); string(got) != "\x1b]7501;state=idle:app=dashy\x1b\\" {
+	if got := Encode("idle", "", ""); string(got) != "\x1b]7501;state=idle:app=dashy\x1b\\" {
 		t.Fatalf("empty msg and title must be omitted: %q", got)
 	}
-	if got, _ := Encode("idle", "Work", ""); !strings.Contains(string(got), ":title="+b64("Work")) {
+	if got := Encode("idle", "Work", ""); !strings.Contains(string(got), ":title="+b64("Work")) {
 		t.Fatalf("title missing: %q", got)
 	}
 }
 
 // Control characters and whitespace runs become single spaces; long text is cut on a rune boundary.
 func TestTextIsSanitizedAndBounded(t *testing.T) {
-	got, _ := Encode("done", "", "a\x07b\n\tc  \u0085 d")
+	got := Encode("done", "", "a\x07b\n\tc  \u0085 d")
 	if !strings.HasSuffix(string(got), ":msg="+b64("a b c d")+"\x1b\\") {
 		t.Fatalf("sanitized msg: %q", got)
 	}
 	long := strings.Repeat("é", 300)
-	got, _ = Encode("done", strings.Repeat("ß", 300), long)
+	got = Encode("done", strings.Repeat("ß", 300), long)
 	msg := decodedField(t, got, "msg")
 	title := decodedField(t, got, "title")
 	if !utf8.ValidString(msg) || utf8.RuneCountInString(msg) != 120 || !strings.HasSuffix(msg, "…") || len(msg) >= 2048 {
@@ -310,5 +310,18 @@ func readBack(t *testing.T, out, read *os.File) string {
 	case <-time.After(5 * time.Second):
 		t.Fatal("marker did not come back")
 		return ""
+	}
+}
+
+// The worst case (4-byte runes, huge text) stays under MaxSequence and is cut quickly.
+func TestWorstCaseSequenceIsBounded(t *testing.T) {
+	huge := strings.Repeat("😀", 1_000_000)
+	start := time.Now()
+	got := Encode("working", huge, huge)
+	if len(got) > MaxSequence || time.Since(start) > 2*time.Second {
+		t.Fatalf("sequence %d bytes in %s", len(got), time.Since(start))
+	}
+	if title := decodedField(t, got, "title"); !utf8.ValidString(title) || len(title) >= maxTitleBytes {
+		t.Fatalf("title %d bytes", len(title))
 	}
 }

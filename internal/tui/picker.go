@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"sort"
 	"strings"
@@ -12,11 +13,12 @@ import (
 	"dashy/internal/control"
 )
 
-// Picker kinds. "settings" lists the settings rows and every model; "login" lists
-// providers, the provider part of /settings.
+// Picker kinds. "settings" lists the display settings rows (/settings), "models" every
+// model with the reasoning effort (/models), "connect" the providers (/connect).
 const (
 	pickerSettings = "settings"
-	pickerLogin    = "login"
+	pickerModels   = "models"
+	pickerConnect  = "connect"
 	pickerSetup    = "setup" // provider prompts after "Add provider"
 )
 
@@ -24,7 +26,7 @@ const (
 // provider and model rows have none, so their names can be anything.
 const actionAdd = "add"
 
-// modelChoices carries the result of listing models for the settings picker.
+// modelChoices carries the result of listing models for the models picker.
 type modelChoices struct {
 	generation int
 	models     []agent.ModelChoice
@@ -43,7 +45,7 @@ func (m *model) openPicker(kind string) tea.Cmd {
 	m.menu = nil
 	m.input.Reset()
 	m.menuGeneration++
-	if kind == pickerLogin {
+	if kind == pickerConnect {
 		for name := range m.ctl.Settings().Providers {
 			m.menu = append(m.menu, command{name: name, description: "Provider"})
 		}
@@ -51,9 +53,13 @@ func (m *model) openPicker(kind string) tea.Cmd {
 		m.menu = append(m.menu, command{name: "Add", icon: "+", description: "Create provider", label: "Add provider", action: actionAdd})
 		return nil
 	}
+	if kind == pickerSettings {
+		m.rebuildSettingsMenu()
+		return nil
+	}
 	m.effort = slices.Index(agent.Efforts, m.ctl.Settings().Effort)
 	m.pickerModels = nil
-	m.rebuildSettingsMenu()
+	m.rebuildModelsMenu()
 	ctx, cancel := context.WithCancel(context.Background())
 	m.menuCancel = cancel
 	generation, ctl := m.menuGeneration, m.ctl
@@ -63,15 +69,28 @@ func (m *model) openPicker(kind string) tea.Cmd {
 	}
 }
 
-// rebuildSettingsMenu lists the settings rows followed by the models known so far.
+// rebuildSettingsMenu lists the display settings rows.
 func (m *model) rebuildSettingsMenu() {
 	s := m.ctl.Settings()
 	m.menu = nil
-	for _, row := range []struct{ name, setting string }{{"Reasoning summary", control.SettingReasoning},
-		{"Auto compact", control.SettingAutoCompact}, {"Compact threshold", control.SettingThreshold}, {"Show lines", control.SettingLines}} {
-		m.menu = append(m.menu, command{name: row.name, icon: "*", label: control.SettingLabel(row.setting, s), action: row.setting})
+	for _, setting := range []string{control.SettingReasoning, control.SettingAutoCompact, control.SettingThreshold, control.SettingLines, control.SettingShellOutput} {
+		options, current := control.SettingOptions(setting, s)
+		parts := make([]string, len(options))
+		for i, option := range options {
+			parts[i] = " " + option + " "
+			if i == current {
+				parts[i] = "[" + option + "]"
+			}
+		}
+		name := control.SettingName(setting)
+		m.menu = append(m.menu, command{name: name, icon: "*", label: fmt.Sprintf("%-18s%s", name, strings.Join(parts, "")), action: setting})
 	}
-	m.menu = append(m.menu, command{name: "Add provider", icon: "+", description: "Create provider", label: "+ Add provider", action: actionAdd})
+}
+
+// rebuildModelsMenu lists the models known so far and selects the current one.
+func (m *model) rebuildModelsMenu() {
+	s := m.ctl.Settings()
+	m.menu = nil
 	for _, c := range m.pickerModels {
 		m.menu = append(m.menu, command{name: c.Model, description: c.Provider, label: c.Model + "  " + c.Provider})
 		if c.Provider == s.Provider && c.Model == s.Model {
@@ -104,10 +123,25 @@ func (m model) pickerKey(key tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	case "esc", "ctrl+c":
 		m.closePicker()
 	case "left", "right":
-		if m.menuKind != pickerSettings {
+		delta := map[string]int{"left": -1, "right": 1}[key.String()]
+		switch m.menuKind {
+		case pickerSettings:
+			matches := m.completions()
+			if len(matches) == 0 {
+				return m, nil, true
+			}
+			err := m.ctl.ChangeSetting(matches[m.selected%len(matches)].action, delta)
+			m.rebuildSettingsMenu()
+			m.refresh(true)
+			if err != nil {
+				next, cmd := m.reject(err)
+				return next, cmd, true
+			}
+			return m, nil, true
+		case pickerModels:
+		default:
 			return m, nil, false
 		}
-		delta := map[string]int{"left": -1, "right": 1}[key.String()]
 		effort := (m.effort + delta + len(agent.Efforts)) % len(agent.Efforts)
 		if s := m.ctl.Settings(); s.Provider != "" && s.Model != "" {
 			// A configured model's effort is applied and saved at once; a rejected change keeps the saved value.
@@ -157,18 +191,11 @@ func (m model) pickerEnter() (tea.Model, tea.Cmd, bool) {
 		m.refresh(true)
 		return m, nil, true
 	}
-	if chosen.action != "" {
-		toggle := m.ctl.ChangeSetting(chosen.action)
-		m.rebuildSettingsMenu()
-		m.refresh(true)
-		if toggle != nil {
-			next, cmd := m.reject(toggle)
-			return next, cmd, true
-		}
-		return m, nil, true
+	if m.menuKind == pickerSettings {
+		return m, nil, true // settings rows change with Left/Right
 	}
 	var err error
-	if m.menuKind == pickerLogin {
+	if m.menuKind == pickerConnect {
 		err = m.ctl.SelectProvider(chosen.name)
 	} else {
 		err = m.ctl.SelectModel(chosen.description, chosen.name, agent.Efforts[m.effort])

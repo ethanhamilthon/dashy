@@ -37,22 +37,24 @@ func fail(code, format string, args ...any) error {
 	return &Error{Code: code, Message: fmt.Sprintf(format, args...)}
 }
 
-// CommandInfo describes one slash command.
+// CommandInfo describes one slash command; Icon is the glyph a completion list shows.
 type CommandInfo struct {
 	Name        string
+	Icon        string
 	Description string
 }
 
 var commandList = []CommandInfo{
-	{"/new", "Start a new chat; re-read settings and AGENTS.md"},
-	{"/help", "Show commands and keyboard shortcuts"},
-	{"/quit", "Save the chat and exit"},
-	{"/resume", "Resume a saved session in this project"},
-	{"/reload", "Re-read settings and AGENTS.md for the next request"},
-	{"/rename", "Rename this session; empty name restores the default"},
-	{"/compact", "Summarize older turns; add a prompt to guide it"},
-	{"/settings", "Configure provider, model and display options"},
-	{"/login", "Select or create a provider"},
+	{"/new", "+", "Start a new chat; re-read settings and DASHY.md"},
+	{"/help", "?", "Show commands and keyboard shortcuts"},
+	{"/quit", "->", "Save the chat and exit"},
+	{"/resume", "<", "Resume a saved session in this project"},
+	{"/reload", "~", "Re-read settings and DASHY.md for the next request"},
+	{"/rename", "#", "Rename this session; empty name restores the default"},
+	{"/compact", "=", "Summarize older turns; add a prompt to guide it"},
+	{"/settings", "*", "Configure display, compaction and bash output options"},
+	{"/models", "*", "Select the model and reasoning effort"},
+	{"/connect", "+", "Select or create a provider"},
 }
 
 // Commands returns the slash commands in completion order.

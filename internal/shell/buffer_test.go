@@ -12,7 +12,7 @@ func TestOutputBufferKeepsHeadAndTail(t *testing.T) {
 	}
 	text := b.Text()
 	if !strings.HasPrefix(text, "01234") || !strings.HasSuffix(text, "pqrst") ||
-		!strings.Contains(text, "20 of 30 bytes omitted (max_output=10, first 5 + last 5 kept)") {
+		!strings.Contains(text, "20 of 30 bytes omitted (shell_output=10, first 5 + last 5 kept)") {
 		t.Fatalf("text = %q", text)
 	}
 }

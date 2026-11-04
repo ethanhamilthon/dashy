@@ -355,7 +355,7 @@ func TestSignalDuringDashyBlockExits130(t *testing.T) {
 	for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM} {
 		project := t.TempDir()
 		marker := filepath.Join(project, "started")
-		if err := os.WriteFile(filepath.Join(project, "AGENTS.md"), []byte("```dashy\ntouch started; sleep 60\n```\n"), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(project, "DASHY.md"), []byte("```dashy\ntouch started; sleep 60\n```\n"), 0600); err != nil {
 			t.Fatal(err)
 		}
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -460,5 +460,36 @@ func TestModelsListsExactIDs(t *testing.T) {
 	setup(t, "http://127.0.0.1:1")
 	if _, stderr, err := runCLI(t, "", "models"); ExitCode(err) != 1 || !strings.HasPrefix(stderr, "p: ") {
 		t.Fatalf("stderr %q, err %v", stderr, err)
+	}
+}
+
+// -p skips the global DASHY.md unless --global is given; --no-global stays valid and is
+// refused together with --global.
+func TestPrintGlobalInstructionsNeedGlobalFlag(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want bool
+	}{
+		{[]string{"-p", "x"}, false},
+		{[]string{"-p", "x", "--no-global"}, false},
+		{[]string{"-p", "x", "--global"}, true},
+	} {
+		s := &stub{reply: func(int) string { return streamOf("ok") }}
+		srv := httptest.NewServer(s)
+		home := setup(t, srv.URL)
+		if err := os.WriteFile(filepath.Join(home, "DASHY.md"), []byte("GLOBAL-MARKER"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		t.Chdir(t.TempDir())
+		if _, _, err := runCLI(t, "", tc.args...); err != nil {
+			t.Fatalf("%v: %v", tc.args, err)
+		}
+		srv.Close()
+		if got := strings.Contains(s.bodies[0], "GLOBAL-MARKER"); got != tc.want {
+			t.Errorf("%v: global instructions sent = %v, want %v", tc.args, got, tc.want)
+		}
+	}
+	if _, _, err := runCLI(t, "", "-p", "x", "--global", "--no-global"); err == nil {
+		t.Error("--global with --no-global was accepted")
 	}
 }

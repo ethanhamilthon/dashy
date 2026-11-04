@@ -52,7 +52,7 @@ func Run(ctx context.Context, a *agent.Agent, cwd string) error {
 }
 
 // forwardControl delivers controller events to the program in the order emitted.
-func forwardControl(ctx context.Context, events *control.Queue[control.Event], program *tea.Program) {
+func forwardControl(ctx context.Context, events *eventQueue, program *tea.Program) {
 	for {
 		event, ok := events.Pop(ctx)
 		if !ok {

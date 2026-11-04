@@ -22,7 +22,7 @@ func main() {
 	defer cancel()
 	if err := cli.Run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
 		code := cli.ExitCode(err)
-		if !cli.IsReported(err) && code != 130 {
+		if !cli.IsReported(err) {
 			fmt.Fprintln(os.Stderr, err)
 		}
 		os.Exit(code)

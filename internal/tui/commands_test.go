@@ -17,34 +17,39 @@ func menuNames(m model) []string {
 	return names
 }
 
-// /settings opens the settings picker with its rows; /login opens the provider part of it.
-func TestSettingsAndLoginCommandsOpenTheirPickers(t *testing.T) {
+// /settings opens the display settings rows, /models the model list and /connect the providers.
+func TestSettingsModelsAndConnectCommandsOpenTheirPickers(t *testing.T) {
 	f := newFixture(t, true)
 	f.command(t, "/settings")
 	if f.m.menuKind != pickerSettings {
 		t.Fatalf("/settings opened %q", f.m.menuKind)
 	}
 	names := strings.Join(menuNames(f.m), "|")
-	for _, row := range []string{"Reasoning summary", "Auto compact", "Show lines", "Add provider"} {
+	for _, row := range []string{"Reasoning summary", "Auto compact", "Show lines"} {
 		if !strings.Contains(names, row) {
 			t.Fatalf("settings rows %q lack %q", names, row)
 		}
 	}
 	f.key(tea.KeyMsg{Type: tea.KeyEsc})
-	f.command(t, "/login")
-	if f.m.menuKind != pickerLogin || !strings.Contains(strings.Join(menuNames(f.m), "|"), "p|Add") {
-		t.Fatalf("/login opened %q with %v", f.m.menuKind, menuNames(f.m))
+	f.command(t, "/models")
+	if f.m.menuKind != pickerModels {
+		t.Fatalf("/models opened %q", f.m.menuKind)
+	}
+	f.key(tea.KeyMsg{Type: tea.KeyEsc})
+	f.command(t, "/connect")
+	if f.m.menuKind != pickerConnect || !strings.Contains(strings.Join(menuNames(f.m), "|"), "p|Add") {
+		t.Fatalf("/connect opened %q with %v", f.m.menuKind, menuNames(f.m))
 	}
 }
 
-// First run: no provider yet. /settings offers "Add provider", whose three prompts
+// First run: no provider yet. /connect offers "Add provider", whose three prompts
 // create the provider in the settings file.
-func TestFirstRunSetupThroughSettings(t *testing.T) {
+func TestFirstRunSetupThroughConnect(t *testing.T) {
 	f := newFixture(t, false)
-	f.command(t, "/settings")
+	f.command(t, "/connect")
 	idx := -1
 	for i, c := range f.m.menu {
-		if c.name == "Add provider" {
+		if c.name == "Add" {
 			idx = i
 		}
 	}
@@ -68,19 +73,17 @@ func TestFirstRunSetupThroughSettings(t *testing.T) {
 	}
 }
 
-// A toggle refused by the controller (a turn is running) stays visible in the timeline,
-// and the setting does not change.
-func TestRejectedToggleIsShownAndChangesNothing(t *testing.T) {
+// A toggle made while a turn runs is applied; the turn is not interrupted.
+func TestToggleWhileBusyChangesSetting(t *testing.T) {
 	m, _, release := heldModel(t)
 	defer release()
 	m = openPickerCmd(t, m, "/settings")
 	m = selectRow(t, m, "Auto compact")
 	before := m.ctl.Settings().AutoCompact
 	m = startBusy(t, m)
-	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
-	last := m.entries[len(m.entries)-1]
-	if m.ctl.Settings().AutoCompact != before || !strings.Contains(last.Text, "Wait for the active turn") {
-		t.Fatalf("setting changed or rejection missing: last entry %+v", last)
+	m = key(m, tea.KeyMsg{Type: tea.KeyRight})
+	if m.ctl.Settings().AutoCompact == before || !m.ctl.Status().Busy {
+		t.Fatalf("setting unchanged (%v) or turn stopped", before)
 	}
 }
 
@@ -131,9 +134,8 @@ func TestTerminalTitleFollowsFirstLineAndRename(t *testing.T) {
 	awaitTitle(t, f, "first line")
 }
 
-// An open settings picker survives a notification that starts a turn: the toggle is
-// refused with a notice and the setting does not change.
-func TestPickerToggleRefusedWhenNotificationStartsTurn(t *testing.T) {
+// An open settings picker survives a notification that starts a turn: the toggle still applies.
+func TestPickerToggleAppliesWhenNotificationStartsTurn(t *testing.T) {
 	f := newFixture(t, true)
 	hold := make(chan struct{})
 	f.hold.Store(&hold)
@@ -146,10 +148,9 @@ func TestPickerToggleRefusedWhenNotificationStartsTurn(t *testing.T) {
 	f.m = settle(f.m)
 	f.m = selectRow(t, f.m, "Auto compact")
 	before := f.m.ctl.Settings().AutoCompact
-	f.m = key(f.m, tea.KeyMsg{Type: tea.KeyEnter})
-	last := f.m.entries[len(f.m.entries)-1]
-	if f.m.ctl.Settings().AutoCompact != before || f.m.menuKind != pickerSettings || !strings.Contains(last.Text, "Wait for the active turn") {
-		t.Fatalf("picker %q, setting %v, last entry %+v", f.m.menuKind, f.m.ctl.Settings().AutoCompact, last)
+	f.m = key(f.m, tea.KeyMsg{Type: tea.KeyRight})
+	if f.m.ctl.Settings().AutoCompact == before || f.m.menuKind != pickerSettings {
+		t.Fatalf("picker %q, setting %v", f.m.menuKind, f.m.ctl.Settings().AutoCompact)
 	}
 }
 

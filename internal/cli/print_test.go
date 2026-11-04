@@ -17,37 +17,6 @@ import (
 	"dashy/internal/agent"
 )
 
-type mockTerminalReader struct {
-	io.Reader
-}
-
-func (m *mockTerminalReader) IsTerminal() bool {
-	return true
-}
-
-func setupTestHome(t *testing.T, serverURL string) string {
-	t.Helper()
-	home := t.TempDir()
-	t.Setenv("DASHY_HOME", home)
-	settings := map[string]any{
-		"provider": "test-prov",
-		"model":    "test-model",
-		"providers": map[string]any{
-			"test-prov": map[string]any{
-				"base_url": serverURL,
-			},
-		},
-	}
-	data, err := json.Marshal(settings)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, "settings.json"), data, 0600); err != nil {
-		t.Fatal(err)
-	}
-	return home
-}
-
 func TestPrintModeEndToEndFakeProvider(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -59,7 +28,7 @@ func TestPrintModeEndToEndFakeProvider(t *testing.T) {
 		}
 		if requests == 1 {
 			// First response: call bash tool "echo hello from tool"
-			args, _ := json.Marshal(map[string]any{"command": "echo hello from tool", "timeout": nil, "max_output": nil})
+			args, _ := json.Marshal(map[string]any{"command": "echo hello from tool", "timeout": nil})
 			item := map[string]any{
 				"type":      "function_call",
 				"id":        "call_1",
@@ -126,7 +95,7 @@ func TestPrintModeEndToEndFakeProvider(t *testing.T) {
 	}))
 	defer server.Close()
 
-	home := setupTestHome(t, server.URL)
+	home := setup(t, server.URL)
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -215,7 +184,7 @@ func TestPrintModeResume(t *testing.T) {
 	}))
 	defer server.Close()
 
-	setupTestHome(t, server.URL)
+	setup(t, server.URL)
 
 	// Turn 1: create new session
 	var out1, diag1 bytes.Buffer
@@ -279,7 +248,7 @@ func TestPrintModeSignalsAndExitCodes(t *testing.T) {
 	}))
 	defer server.Close()
 
-	setupTestHome(t, server.URL)
+	setup(t, server.URL)
 
 	var out, diag bytes.Buffer
 	err := Run(context.Background(), []string{"-p", "failing turn"}, strings.NewReader(""), &out, &diag)
@@ -327,15 +296,10 @@ func TestBinaryPrintMode(t *testing.T) {
 	}))
 	defer server.Close()
 
-	home := setupTestHome(t, server.URL)
-	bin := filepath.Join(t.TempDir(), "dashy")
+	home := setup(t, server.URL)
+	bin := build(t)
 
-	buildCmd := execCommand("go", "build", "-o", bin, "dashy")
-	if out, err := buildCmd.CombinedOutput(); err != nil {
-		t.Fatalf("go build failed: %v\n%s", err, out)
-	}
-
-	runCmd := execCommand(bin, "-p", "binary test")
+	runCmd := exec.Command(bin, "-p", "binary test")
 	runCmd.Env = append(os.Environ(), "DASHY_HOME="+home)
 	var stdout, stderr bytes.Buffer
 	runCmd.Stdout = &stdout
@@ -351,8 +315,6 @@ func TestBinaryPrintMode(t *testing.T) {
 		t.Fatalf("stderr missing session: %s", stderr.String())
 	}
 }
-
-var execCommand = exec.Command
 
 func TestPrintModeRetryOnStderr(t *testing.T) {
 	requests := 0
@@ -380,7 +342,7 @@ func TestPrintModeRetryOnStderr(t *testing.T) {
 	}))
 	defer server.Close()
 
-	setupTestHome(t, server.URL)
+	setup(t, server.URL)
 
 	var out, diag bytes.Buffer
 	err := Run(context.Background(), []string{"-p", "retry task"}, strings.NewReader(""), &out, &diag)
@@ -412,7 +374,7 @@ func TestPrintModeHasItsOwnNotifySocket(t *testing.T) {
 		item := map[string]any{"type": "message", "role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": "done"}}}
 		switch len(bodies) {
 		case 1:
-			args, _ := json.Marshal(map[string]any{"command": `echo "endpoint=$DASHY_ENDPOINT"`, "timeout": nil, "max_output": nil})
+			args, _ := json.Marshal(map[string]any{"command": `echo "endpoint=$DASHY_ENDPOINT"`, "timeout": nil})
 			item = map[string]any{"type": "function_call", "id": "c1", "call_id": "c1", "name": "bash", "arguments": string(args)}
 		case 2:
 			// The model's next request carries the endpoint its shell saw; notify it there.
@@ -428,7 +390,7 @@ func TestPrintModeHasItsOwnNotifySocket(t *testing.T) {
 		fmt.Fprintf(w, "data: %s\n\n", data)
 	}))
 	defer server.Close()
-	setupTestHome(t, server.URL)
+	setup(t, server.URL)
 	var stdout, stderr bytes.Buffer
 	if err := Run(context.Background(), []string{"-p", "work"}, strings.NewReader(""), &stdout, &stderr); err != nil {
 		t.Fatalf("run: %v\n%s", err, stderr.String())

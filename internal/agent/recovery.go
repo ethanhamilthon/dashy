@@ -11,11 +11,8 @@ func interruptedOutputs(history []json.RawMessage) []json.RawMessage {
 	var calls []string
 	outputs := map[string]bool{}
 	for _, item := range history {
-		var v struct {
-			Type   string `json:"type"`
-			CallID string `json:"call_id"`
-		}
-		if json.Unmarshal(item, &v) != nil || v.CallID == "" {
+		v, err := parseCall(item)
+		if err != nil || v.CallID == "" {
 			continue
 		}
 		if v.Type == "function_call" {
@@ -31,8 +28,7 @@ func interruptedOutputs(history []json.RawMessage) []json.RawMessage {
 			continue
 		}
 		outputs[id] = true
-		value := shell.Result{Output: "Tool execution was interrupted; its effects and result are unknown. It was not rerun.", Error: true}
-		result = append(result, raw(map[string]any{"type": "function_call_output", "call_id": id, "output": string(raw(value))}))
+		result = append(result, callOutput(id, shell.Result{Output: "Tool execution was interrupted; its effects and result are unknown. It was not rerun.", Error: true}))
 	}
 	return result
 }

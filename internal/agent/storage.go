@@ -188,12 +188,7 @@ func (a *Agent) DefaultTitle() string {
 	if a.defaultTitle != "" {
 		return a.defaultTitle
 	}
-	for _, r := range a.Records() {
-		if line := FirstLine(r.Text); r.Kind == "user" && line != "" {
-			return line
-		}
-	}
-	return ""
+	return firstUserLine(a.History)
 }
 
 func (a *Agent) sessionData() ([]byte, error) {

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,7 +11,7 @@ import (
 // A missing settings file means defaults; invalid files are rejected with the reason in the error.
 func TestLoadSettingsDefaultsAndValidation(t *testing.T) {
 	s, err := LoadSettings(filepath.Join(t.TempDir(), "missing.json"))
-	if err != nil || !s.ReasoningSummary || !s.AutoCompact || s.ShowLines != "short" {
+	if err != nil || !s.ReasoningSummary || !s.AutoCompact || s.ShowLines != "normal" {
 		t.Fatalf("defaults: %+v %v", s, err)
 	}
 	t.Setenv("DASHY_TEST_UNSET_KEY", "")
@@ -92,5 +93,43 @@ func TestCompactThresholdDefaultsForOlderSettings(t *testing.T) {
 	s, err := LoadSettings(path)
 	if err != nil || s.CompactThreshold != DefaultCompactThreshold {
 		t.Fatalf("threshold %d, %v", s.CompactThreshold, err)
+	}
+}
+
+// show_lines used to be short, medium or full; saved files keep working.
+func TestOldShowLinesValuesAreMigrated(t *testing.T) {
+	for old, want := range map[string]string{"short": "normal", "medium": "full", "full": "full", "minimal": "minimal"} {
+		path := filepath.Join(t.TempDir(), "settings.json")
+		if err := os.WriteFile(path, []byte(`{"show_lines":"`+old+`","providers":{}}`), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if s, err := LoadSettings(path); err != nil || s.ShowLines != want {
+			t.Fatalf("%s: got %q (%v), want %q", old, s.ShowLines, err, want)
+		}
+	}
+}
+
+// The bash output limit comes from settings only: default 8192, validated, and applied to calls.
+func TestShellOutputSetting(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if s, err := LoadSettings(path); err != nil || s.ShellOutput != ShellOutput {
+		t.Fatalf("default: %+v, %v", s, err)
+	}
+	if err := os.WriteFile(path, []byte(`{"shell_output":-1,"providers":{}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadSettings(path); err == nil {
+		t.Fatal("negative shell_output accepted")
+	}
+	if strings.Contains(string(raw(bashParameters())), "max_output") {
+		t.Fatal("bash schema still has max_output")
+	}
+	a := newTestAgent(t, &fakeProvider{}, Options{})
+	if err := a.ChangeSettings(func(s *Settings) { s.ShellOutput = 100 }); err != nil {
+		t.Fatal(err)
+	}
+	res := a.runTool(context.Background(), "bash", `{"command":"head -c 1000 /dev/zero | tr '\\0' x","timeout":null,"max_output":null}`)
+	if !strings.Contains(res.Output, "output truncated") || len(res.Output) > 400 {
+		t.Fatalf("limit not applied: %q", res.Output)
 	}
 }

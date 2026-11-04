@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"net"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -147,27 +146,21 @@ func TestConnectionAcceptedBeforeNewSessionIsRetired(t *testing.T) {
 	}
 }
 
-// Sockets that no listener answers (left by a crashed session) are removed; a live one stays.
-func TestDeadSocketsAreRemoved(t *testing.T) {
-	dir := t.TempDir()
-	dead := filepath.Join(dir, "dead.sock")
-	l, err := net.Listen("unix", dead)
+// A socket file left by a crashed session (also in the /tmp fallback) does not block listening.
+func TestStaleSocketIsReplaced(t *testing.T) {
+	a := newTestAgent(t, &fakeProvider{}, Options{})
+	path := a.sock.path
+	a.sock.retire()
+	l, err := net.Listen("unix", path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	l.(*net.UnixListener).SetUnlinkOnClose(false)
 	l.Close()
-	live := filepath.Join(dir, "live.sock")
-	ll, err := net.Listen("unix", live)
-	if err != nil {
+	if _, err := os.Stat(path); err != nil {
 		t.Fatal(err)
 	}
-	defer ll.Close()
-	removeDeadSockets(dir)
-	if _, err := os.Stat(dead); !os.IsNotExist(err) {
-		t.Fatalf("dead socket kept: %v", err)
-	}
-	if _, err := os.Stat(live); err != nil {
-		t.Fatalf("live socket removed: %v", err)
+	if err := a.listenNotifications(); err != nil {
+		t.Fatalf("stale socket blocked listening: %v", err)
 	}
 }

@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	blockOutput     = 64 * 1024 // stdout and stderr together: the start of the output is kept
+	blockOutput     = 64 * 1024 // stdout: the start of the output is kept
 	blockStderrTail = 4 * 1024  // the last stderr bytes, kept for a failure report only
 	blockTailLines  = 5         // lines of that tail shown in a failure
 )
@@ -86,11 +86,10 @@ func isClosingFence(line []byte, fence byte, length int) bool {
 	return count >= length && len(bytes.Trim(trimmed[count:], " \t\r")) == 0
 }
 
-// blockOutputs captures one block run. Stdout and stderr share the blockOutput budget
-// and keep the start of the output; the end of stderr is kept apart for failure text.
+// blockOutputs captures one block run. Stdout keeps its first blockOutput bytes; stderr only
+// keeps its end, for failure text, so it cannot crowd out stdout.
 type blockOutputs struct {
 	mu      sync.Mutex
-	used    int // bytes of the budget taken by stdout and stderr
 	stdout  []byte
 	errTail []byte // last blockStderrTail bytes of stderr
 }
@@ -109,12 +108,8 @@ func (w blockWriter) Write(p []byte) (int, error) {
 			w.o.errTail = w.o.errTail[len(w.o.errTail)-blockStderrTail:]
 		}
 	}
-	n := min(len(p), blockOutput-w.o.used)
-	if n > 0 {
-		w.o.used += n
-		if !w.stderr {
-			w.o.stdout = append(w.o.stdout, p[:n]...)
-		}
+	if !w.stderr {
+		w.o.stdout = append(w.o.stdout, p[:min(len(p), blockOutput-len(w.o.stdout))]...)
 	}
 	return len(p), nil
 }
@@ -178,7 +173,7 @@ func (a *Agent) instructions(ctx context.Context) (string, error) {
 	return prompt, nil
 }
 
-// assemblePrompt builds the system prompt from the selected AGENTS.md files.
+// assemblePrompt builds the system prompt from the selected DASHY.md files.
 // Each file is a "# <path>" header and its bytes verbatim, with dashy blocks
 // replaced by their output; files are separated by one blank line. A selected
 // file that cannot be read is an error, never a silently shorter prompt.
@@ -226,12 +221,12 @@ func (a *Agent) expandBlocks(ctx context.Context, data []byte) (string, error) {
 	return out.String(), nil
 }
 
-// instructionFiles selects the AGENTS.md files: the global one (unless NoGlobal),
-// then --config FILE or ./AGENTS.md. Missing optional files are skipped.
+// instructionFiles selects the DASHY.md files: the global one (unless NoGlobal),
+// then --config FILE or ./DASHY.md. Missing optional files are skipped.
 func instructionFiles(home, dir string, files Options) ([]string, error) {
 	var paths []string
 	if !files.NoGlobal && home != "" {
-		if p := filepath.Join(home, "AGENTS.md"); isFile(p) {
+		if p := filepath.Join(home, "DASHY.md"); isFile(p) {
 			paths = append(paths, p)
 		}
 	}
@@ -248,7 +243,7 @@ func instructionFiles(home, dir string, files Options) ([]string, error) {
 		}
 		return append(paths, p), nil
 	}
-	if p := filepath.Join(dir, "AGENTS.md"); isFile(p) {
+	if p := filepath.Join(dir, "DASHY.md"); isFile(p) {
 		paths = append(paths, p)
 	}
 	return paths, nil

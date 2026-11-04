@@ -46,7 +46,7 @@ func TestClipboardReaderImageTextAndFailures(t *testing.T) {
 				}
 				return []byte("image\n"), nil
 			}
-			result, text, err := readClipboardWith(context.Background(), directory, "darwin", run)
+			result, text, err := readClipboard(context.Background(), directory, "darwin", run)
 			files, e := os.ReadDir(directory)
 			if e != nil {
 				t.Fatal(e)
@@ -95,9 +95,6 @@ func TestAttachmentQueueRecallAndCancellationRecovery(t *testing.T) {
 	}
 }
 
-type csiTestMessage string
-
-func (m csiTestMessage) String() string { return string(m) }
 func TestClipboardShortcutDecodesFromTerminalBytes(t *testing.T) {
 	for _, sequence := range []string{"\x16", "\x1b[118;9u", "\x1b[1084;5u", "\x1b[1084::118;9u"} {
 		m := bareModel(t, "/project")

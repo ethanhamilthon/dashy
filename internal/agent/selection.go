@@ -10,9 +10,10 @@ import (
 
 // Select sets the provider, model and reasoning effort, and saves them.
 func (a *Agent) Select(provider, model, effort string) error {
-	next := a.Settings()
-	next.Provider, next.Model, next.Effort = provider, model, effort
-	return a.applyAndSave(next)
+	return a.update(func(s *Settings) error {
+		s.Provider, s.Model, s.Effort = provider, model, effort
+		return nil
+	})
 }
 
 // ModelChoice is a model offered by one configured provider.
@@ -67,17 +68,16 @@ func (a *Agent) AddProvider(name string, provider Provider) error {
 	if name == "" {
 		return fmt.Errorf("provider name is required")
 	}
-	if _, exists := a.settings.Providers[name]; exists {
-		return fmt.Errorf("provider %q already exists", name)
-	}
-	next := a.Settings()
-	next.Providers[name] = provider
-	return a.applyAndSave(next)
+	return a.update(func(s *Settings) error {
+		if _, exists := s.Providers[name]; exists {
+			return fmt.Errorf("provider %q already exists", name)
+		}
+		s.Providers[name] = provider
+		return nil
+	})
 }
 
 // ChangeSettings applies change to a copy of the settings, then validates, applies and saves it.
 func (a *Agent) ChangeSettings(change func(*Settings)) error {
-	next := a.Settings()
-	change(&next)
-	return a.applyAndSave(next)
+	return a.update(func(s *Settings) error { change(s); return nil })
 }

@@ -60,8 +60,11 @@ func paint(text string, width int, bg, fg lipgloss.TerminalColor) string {
 	return strings.Join(rows, "\n")
 }
 
-// renderEntry renders one timeline entry; a positive limit caps the wrapped body rows.
+// renderEntry renders one timeline entry; a positive limit caps the wrapped body rows and 0 hides the entry.
 func renderEntry(e entry, width, limit int) string {
+	if limit == 0 {
+		return "" // hidden by show_lines
+	}
 	fg, label := eventColors(e.Kind)
 
 	text := ansi.Strip(e.Text)
@@ -152,7 +155,7 @@ func (m *model) timeline() string {
 		out.WriteString(lipgloss.NewStyle().Foreground(warnColor).Render(hint) + "\n")
 	}
 	for _, path := range m.ctl.Instructions() {
-		row := "AGENTS.md " + shortPath(path)
+		row := "DASHY.md " + shortPath(path)
 		out.WriteString(lipgloss.NewStyle().Foreground(muted).Render(ansi.Truncate(row, max(1, m.width), "…")) + "\n")
 	}
 	out.WriteString("\n")
@@ -202,7 +205,7 @@ func (m *model) timeline() string {
 	if count > 0 {
 		start = max(0, selected%count-rows+1)
 	}
-	if !fileMode && m.menuKind == pickerSettings {
+	if !fileMode && m.menuKind == pickerModels {
 		parts := make([]string, len(agent.Efforts))
 		for i, e := range agent.Efforts {
 			parts[i] = " " + e + " "
@@ -224,7 +227,7 @@ func (m *model) timeline() string {
 		} else {
 			cmd := matches[i]
 			row = fmt.Sprintf("%s%-2s %-9s %s", marker, cmd.icon, cmd.name, cmd.description)
-			if m.menuKind == pickerSettings {
+			if m.menuKind == pickerSettings || m.menuKind == pickerModels {
 				if cmd.label != "" {
 					row = marker + cmd.label
 				} else if cmd.description != "" {
