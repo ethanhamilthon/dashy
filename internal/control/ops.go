@@ -16,16 +16,13 @@ func (c *Controller) Input(input agent.Input) error {
 		switch {
 		case c.shut:
 			err = fail("closed", "the session is closed")
-		case strings.TrimSpace(input.Text) == "" && len(input.Images) == 0:
+		case strings.TrimSpace(input.Text) == "":
 			err = fail("invalid", "input requires text or images")
 		case c.active != nil:
 			err = c.queueLocked(input)
 		default:
 			if err = c.setupError(); err == nil {
-				if err = c.admit(input); err == nil {
-					c.noteImages(input)
-					c.beginTurnLocked(input)
-				}
+				c.beginTurnLocked(input)
 			}
 		}
 	})
@@ -39,29 +36,10 @@ func (c *Controller) queueLocked(input agent.Input) error {
 	if c.closing || c.deferred != nil {
 		return fail("cancelling", "Session is changing; wait for the change to complete.")
 	}
-	if err := c.admit(input); err != nil {
-		return err
-	}
 	if !c.a.Queue().Push(input) {
-		c.a.ReleaseImages(len(input.Images))
 		return fail("queue_full", "Steering queue is full; your message remains in the input.")
 	}
-	c.noteImages(input)
 	return nil
-}
-
-// admit reserves the images of input in the allowance of one model request.
-func (c *Controller) admit(input agent.Input) error {
-	if len(input.Images) > 0 && !c.a.ReserveImages(len(input.Images)) {
-		return fail("attachment_limit", "At most %d new images per request. Remove or submit images first.", agent.MaxPendingImages)
-	}
-	return nil
-}
-
-func (c *Controller) noteImages(input agent.Input) {
-	if n := len(input.Images); n > 0 {
-		c.publish(Event{Kind: "notice", Text: map[bool]string{true: "Image", false: "Images"}[n == 1] + " added to next model request."})
-	}
 }
 
 // Recall returns the newest instruction the agent has not accepted yet.
@@ -70,9 +48,7 @@ func (c *Controller) Recall() (*agent.Input, error) {
 	var ok bool
 	c.view(func() {
 		if c.active != nil {
-			if input, ok = c.a.Queue().Recall(); ok {
-				c.a.ReleaseImages(len(input.Images))
-			}
+			input, ok = c.a.Queue().Recall()
 		}
 	})
 	if !ok {
@@ -128,12 +104,6 @@ func (c *Controller) switchRequest(kind, id string) error {
 			}
 		}
 		if c.active != nil {
-			for _, in := range c.a.Queue().Pending() {
-				if len(in.Images) > 0 {
-					err = fail("pending_images", "Submit or remove pending images before switching sessions.")
-					return
-				}
-			}
 			c.deferred = &deferredAction{kind: kind, session: id}
 			c.active.cancelled = true
 			c.active.cancel()

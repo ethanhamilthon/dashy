@@ -132,7 +132,7 @@ func (m *model) complete() bool {
 
 // keyboardHelp lists the interface key bindings shown by /help.
 const keyboardHelp = "Enter: execute selected completion or send / steer while working · Shift+Enter / Alt+Enter / Ctrl+J: newline\n" +
-	"Clipboard: Ctrl+V (Cmd+V when forwarded) · Ctrl+X: remove last image\n" +
+	"Clipboard: Ctrl+V (Cmd+V when forwarded)\n" +
 	"Tab: complete · Up/Down: select completion · unmatched slash text: send normally · Up on empty input: recall queued steering\n" +
 	"PgUp/PgDn or mouse wheel: scroll timeline\n" +
 	"Esc / Ctrl+C: cancel current turn · Ctrl+C when idle or Ctrl+D on empty input: quit"
@@ -143,9 +143,6 @@ func (m model) runCommand(name string) (tea.Model, tea.Cmd) {
 	verb := strings.Fields(name)
 	if len(verb) == 0 {
 		return m, nil
-	}
-	if (verb[0] == "/new" || verb[0] == "/resume") && len(m.images) > 0 {
-		return m.stop("notice", "Submit or remove pending images before switching sessions.")
 	}
 	if verb[0] != "/resume" && verb[0] != "/compact" && verb[0] != "/rename" && len(verb) != 1 {
 		return m.stop("error", "Unexpected command arguments.")
@@ -230,7 +227,7 @@ func (m model) submit(err error) (tea.Model, tea.Cmd) {
 // reject shows a controller error. State rejections are notices; everything else is an error.
 func (m model) reject(err error) (tea.Model, tea.Cmd) {
 	kind := "error"
-	if e := (*control.Error)(nil); errors.As(err, &e) && slices.Contains([]string{"busy", "cancelling", "queue_full", "setup_required", "pending_images", "not_recallable", "attachment_limit", "compacting"}, e.Code) {
+	if e := (*control.Error)(nil); errors.As(err, &e) && slices.Contains([]string{"busy", "cancelling", "queue_full", "setup_required", "not_recallable", "compacting"}, e.Code) {
 		kind = "notice"
 	}
 	return m.stop(kind, err.Error())

@@ -3,7 +3,6 @@ package tui
 import (
 	"bytes"
 	"context"
-	"dashy/internal/shell"
 	"errors"
 	tea "github.com/charmbracelet/bubbletea"
 	"image"
@@ -24,7 +23,7 @@ func pngBytes(t *testing.T) []byte {
 	return data.Bytes()
 }
 func TestClipboardReaderImageTextAndFailures(t *testing.T) {
-	for _, kind := range []string{"image", "text", "invalid", "failure"} {
+	for _, kind := range []string{"image", "text", "failure"} {
 		t.Run(kind, func(t *testing.T) {
 			directory := filepath.Join(t.TempDir(), "images")
 			data := pngBytes(t)
@@ -38,9 +37,6 @@ func TestClipboardReaderImageTextAndFailures(t *testing.T) {
 				if kind == "text" {
 					return []byte("text\n"), nil
 				}
-				if kind == "invalid" {
-					data = []byte("not an image")
-				}
 				if err := os.WriteFile(args[len(args)-1], data, 0600); err != nil {
 					t.Fatal(err)
 				}
@@ -52,10 +48,10 @@ func TestClipboardReaderImageTextAndFailures(t *testing.T) {
 				t.Fatal(e)
 			}
 			if kind == "image" {
-				if err != nil || text != "" || !strings.HasPrefix(result.URL, "data:image/png;base64,") || len(files) != 1 {
-					t.Fatalf("%+v %q %v", result, text, err)
+				if err != nil || text != "" || filepath.Dir(result) != directory || len(files) != 1 {
+					t.Fatalf("%q %q %v", result, text, err)
 				}
-				info, e := os.Stat(result.Path)
+				info, e := os.Stat(result)
 				if e != nil || info.Mode().Perm() != 0600 {
 					t.Fatalf("image permissions: %v %v", info, e)
 				}
@@ -73,28 +69,6 @@ func TestClipboardReaderImageTextAndFailures(t *testing.T) {
 		})
 	}
 }
-func TestAttachmentQueueRecallAndCancellationRecovery(t *testing.T) {
-	m, release := busyModel(t)
-	defer release()
-	m.images = []shell.Image{{URL: "data:image/png;base64,one", Path: "one.png"}}
-	m.input.SetValue("look")
-	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if len(m.images) != 0 || len(m.ctl.Status().Queued) != 1 || len(m.ctl.Status().Queued[0].Images) != 1 {
-		t.Fatal("image not queued with text")
-	}
-	m = key(m, tea.KeyMsg{Type: tea.KeyUp})
-	if len(m.images) != 1 || m.input.Value() != "look" || len(m.ctl.Status().Queued) != 0 {
-		t.Fatalf("recall lost/duplicated image: %q %v", m.input.Value(), m.images)
-	}
-	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m.input.SetValue("draft")
-	m.requestCancel()
-	m = awaitIdle(t, m)
-	if len(m.images) != 1 || m.input.Value() != "look\n\ndraft" {
-		t.Fatalf("cancellation recovery: %q %v", m.input.Value(), m.images)
-	}
-}
-
 func TestClipboardShortcutDecodesFromTerminalBytes(t *testing.T) {
 	for _, sequence := range []string{"\x16", "\x1b[118;9u", "\x1b[1084;5u", "\x1b[1084::118;9u"} {
 		m := bareModel(t, "/project")
@@ -115,13 +89,14 @@ func TestClipboardShortcutDecodesFromTerminalBytes(t *testing.T) {
 	}
 }
 
-func TestPendingImagesPreventDestructiveSessionSwitch(t *testing.T) {
+// A pasted image goes into the draft as its path; the agent opens it with dashy view.
+func TestPastedImageInsertsPath(t *testing.T) {
 	m := bareModel(t, "/project")
-	m.input.SetValue("caption")
-	m.images = []shell.Image{{URL: "data", Path: "draft.png"}}
-	next, cmd := m.runCommand("/new")
-	m = next.(model)
-	if cmd != nil || m.input.Value() != "caption" || len(m.images) != 1 {
-		t.Fatal("session switch discarded unsent attachment")
+	m.input.SetValue("look at ")
+	m.input.CursorEnd()
+	m.pasting = true
+	next, _ := m.Update(clipboardResult{generation: m.pasteGeneration, image: "/tmp/paste-1.png"})
+	if m = next.(model); m.input.Value() != "look at /tmp/paste-1.png " || m.pasting {
+		t.Fatalf("draft %q", m.input.Value())
 	}
 }

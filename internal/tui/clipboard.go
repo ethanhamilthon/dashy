@@ -9,14 +9,13 @@ import (
 	"strings"
 	"time"
 
-	"dashy/internal/agent"
 	"dashy/internal/shell"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
 type clipboardResult struct {
 	generation int
-	image      shell.Image
+	image      string // path of a pasted image
 	text       string
 	err        error
 }
@@ -57,20 +56,20 @@ function run(argv) {
  return "image";
 }`
 
-// readClipboard saves a clipboard image into directory, or returns the clipboard text. The
+// readClipboard saves a clipboard image into directory and returns its path, or returns the clipboard text. The
 // platform and the command runner are parameters so that tests can fake them.
-func readClipboard(ctx context.Context, directory, platform string, run func(context.Context, int, string, ...string) ([]byte, error)) (shell.Image, string, error) {
+func readClipboard(ctx context.Context, directory, platform string, run func(context.Context, int, string, ...string) ([]byte, error)) (string, string, error) {
 	if err := os.MkdirAll(directory, 0700); err != nil {
-		return shell.Image{}, "", err
+		return "", "", err
 	}
 	file, err := os.CreateTemp(directory, "paste-*.png")
 	if err != nil {
-		return shell.Image{}, "", err
+		return "", "", err
 	}
 	path := file.Name()
 	if err = file.Close(); err != nil {
 		os.Remove(path)
-		return shell.Image{}, "", err
+		return "", "", err
 	}
 	keep := false
 	defer func() {
@@ -84,21 +83,17 @@ func readClipboard(ctx context.Context, directory, platform string, run func(con
 	if platform == "darwin" {
 		result, e := run(ctx, 4096, "/usr/bin/osascript", "-l", "JavaScript", "-e", clipboardPNG, path)
 		if e != nil {
-			return shell.Image{}, "", e
+			return "", "", e
 		}
 		if strings.TrimSpace(string(result)) == "image" {
-			image, e := shell.CaptureImage(path)
-			if e != nil {
-				return shell.Image{}, "", e
-			}
-			image.Path, keep = path, true
-			return image, "", nil
+			keep = true
+			return path, "", nil
 		}
 		textCommand = "/usr/bin/pbpaste"
 	} else if _, e := exec.LookPath("wl-paste"); e == nil && os.Getenv("WAYLAND_DISPLAY") != "" {
 		types, e := run(ctx, 16384, "wl-paste", "--list-types")
 		if e != nil {
-			return shell.Image{}, "", e
+			return "", "", e
 		}
 		if strings.Contains(string(types), "image/png") {
 			data, err = run(ctx, shell.MaxImageInputBytes, "wl-paste", "--type", "image/png")
@@ -107,7 +102,7 @@ func readClipboard(ctx context.Context, directory, platform string, run func(con
 	} else {
 		types, e := run(ctx, 16384, "xclip", "-selection", "clipboard", "-t", "TARGETS", "-o")
 		if e != nil {
-			return shell.Image{}, "", e
+			return "", "", e
 		}
 		if strings.Contains(string(types), "image/png") {
 			data, err = run(ctx, shell.MaxImageInputBytes, "xclip", "-selection", "clipboard", "-t", "image/png", "-o")
@@ -115,21 +110,17 @@ func readClipboard(ctx context.Context, directory, platform string, run func(con
 		textCommand, textArgs = "xclip", []string{"-selection", "clipboard", "-o"}
 	}
 	if err != nil {
-		return shell.Image{}, "", err
+		return "", "", err
 	}
 	if len(data) > 0 {
 		if err = os.WriteFile(path, data, 0600); err != nil {
-			return shell.Image{}, "", err
+			return "", "", err
 		}
-		image, e := shell.CaptureImage(path)
-		if e != nil {
-			return shell.Image{}, "", e
-		}
-		image.Path, keep = path, true
-		return image, "", nil
+		keep = true
+		return path, "", nil
 	}
 	text, err := run(ctx, 256*1024, textCommand, textArgs...)
-	return shell.Image{}, string(text), err
+	return "", string(text), err
 }
 func (m model) pasteClipboard() (tea.Model, tea.Cmd) {
 	if m.pasting {
@@ -147,8 +138,8 @@ func (m model) pasteClipboard() (tea.Model, tea.Cmd) {
 }
 func (m *model) acceptClipboard(result clipboardResult) tea.Cmd {
 	if result.generation != m.pasteGeneration {
-		if result.image.Path != "" {
-			_ = os.Remove(result.image.Path)
+		if result.image != "" {
+			_ = os.Remove(result.image)
 		}
 		return nil
 	}
@@ -157,19 +148,8 @@ func (m *model) acceptClipboard(result clipboardResult) tea.Cmd {
 		m.add("error", result.err.Error())
 		return nil
 	}
-	if result.image.URL != "" {
-		if m.menuKind != "" {
-			_ = os.Remove(result.image.Path)
-			m.add("notice", "Images can only be pasted into a message draft.")
-			return nil
-		}
-		if len(m.images)+m.ctl.Status().Images >= agent.MaxPendingImages {
-			_ = os.Remove(result.image.Path)
-			m.add("error", fmt.Sprintf("At most %d new images per request. Remove or submit images first.", agent.MaxPendingImages))
-		} else {
-			m.images = append(m.images, result.image)
-		}
-		return nil
+	if result.image != "" { // the agent looks at a pasted image with dashy view
+		result.text = result.image + " "
 	}
 	// Clipboard text replaces an active composer selection.
 	if _, _, ok := m.activeComposerSelection(); ok {

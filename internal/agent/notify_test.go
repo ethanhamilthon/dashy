@@ -37,10 +37,10 @@ func TestSocketValidatesAndQueues(t *testing.T) {
 	}
 }
 
-// Composer images and dashy view images share one allowance of four per request.
+// Images reserved for a request and dashy view images share one allowance of four per request.
 func TestImageAllowanceIsSharedWithView(t *testing.T) {
 	a := newTestAgent(t, &fakeProvider{reply: func(int, string) string { return "" }}, Options{})
-	if !a.ReserveImages(2) {
+	if !a.slots.reserve(2) {
 		t.Fatal("composer images refused")
 	}
 	for i := 0; i < 2; i++ {
@@ -51,7 +51,7 @@ func TestImageAllowanceIsSharedWithView(t *testing.T) {
 	if err := Send(a.sock.path, Message{Image: &shell.Image{URL: pngURL()}}); err == nil || !strings.Contains(err.Error(), "at most 4") {
 		t.Fatalf("fifth image admitted: %v", err)
 	}
-	if got := a.PendingImages(); got != 4 {
+	if got := pendingImages(a); got != 4 {
 		t.Fatalf("pending images = %d", got)
 	}
 }
@@ -72,8 +72,8 @@ func TestViewedImageReachesNextRequestOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	reqs := fp.requests()
-	if strings.Count(reqs[0], "input_image") != 1 || strings.Count(reqs[1], "input_image") != 1 || a.PendingImages() != 0 {
-		t.Fatalf("image counts: %d, %d, pending %d", strings.Count(reqs[0], "input_image"), strings.Count(reqs[1], "input_image"), a.PendingImages())
+	if strings.Count(reqs[0], "input_image") != 1 || strings.Count(reqs[1], "input_image") != 1 || pendingImages(a) != 0 {
+		t.Fatalf("image counts: %d, %d, pending %d", strings.Count(reqs[0], "input_image"), strings.Count(reqs[1], "input_image"), pendingImages(a))
 	}
 }
 
@@ -84,14 +84,14 @@ func TestImagesInHistoryCountUntilSent(t *testing.T) {
 	fp := &fakeProvider{reply: func(int, string) string { return textReply("ok") }}
 	a := newTestAgent(t, fp, Options{})
 	images := []shell.Image{{URL: pngURL()}, {URL: pngURL()}, {URL: pngURL()}}
-	if !a.ReserveImages(3) {
+	if !a.slots.reserve(3) {
 		t.Fatal("three images refused")
 	}
 	a.commitInput(Input{Text: "look", Images: images})
-	if a.ReserveImages(2) {
+	if a.slots.reserve(2) {
 		t.Fatal("five images admitted for one request before it was sent")
 	}
-	if !a.ReserveImages(1) {
+	if !a.slots.reserve(1) {
 		t.Fatal("fourth image refused")
 	}
 	if _, err := a.request(context.Background(), func(Event) {}); err != nil {
@@ -101,8 +101,8 @@ func TestImagesInHistoryCountUntilSent(t *testing.T) {
 		t.Fatalf("request carried %d images", got)
 	}
 	// The fourth image is still queued for the following request: one more slot is free.
-	if a.PendingImages() != 1 || a.ReserveImages(4) || !a.ReserveImages(3) {
-		t.Fatalf("after sending: pending %d", a.PendingImages())
+	if pendingImages(a) != 1 || a.slots.reserve(4) || !a.slots.reserve(3) {
+		t.Fatalf("after sending: pending %d", pendingImages(a))
 	}
 }
 
@@ -141,7 +141,7 @@ func TestConnectionAcceptedBeforeNewSessionIsRetired(t *testing.T) {
 	if err := json.NewDecoder(conn).Decode(&status); err == nil && status == "" {
 		t.Fatal("retired connection was acknowledged")
 	}
-	if a.PendingImages() != 0 || len(a.Queue().Take()) != 0 {
+	if pendingImages(a) != 0 || len(a.Queue().Take()) != 0 {
 		t.Fatal("image from the retired connection reached the new session")
 	}
 }
@@ -163,4 +163,10 @@ func TestStaleSocketIsReplaced(t *testing.T) {
 	if err := a.listenNotifications(); err != nil {
 		t.Fatalf("stale socket blocked listening: %v", err)
 	}
+}
+
+func pendingImages(a *Agent) int {
+	a.slots.mu.Lock()
+	defer a.slots.mu.Unlock()
+	return a.slots.reserved + a.slots.committed
 }

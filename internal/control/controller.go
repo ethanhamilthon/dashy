@@ -72,7 +72,7 @@ func (c *Controller) Closed() <-chan struct{} { return c.closed }
 // Status reports the active operation.
 func (c *Controller) Status() (s Status) {
 	c.view(func() {
-		s = Status{Images: c.a.PendingImages()}
+		s = Status{}
 		if c.active != nil {
 			s.Busy, s.Cancelling = true, c.active.cancelled
 			s.Compacting, s.Started = c.active.kind == "compact", c.active.started
@@ -242,9 +242,6 @@ func (c *Controller) finishTurn(op *operation, err error) {
 		var unsent []agent.Input
 		if status != "ok" || c.deferred != nil || c.closing {
 			unsent = c.a.Queue().RemoveComposer()
-			for _, in := range unsent {
-				c.a.ReleaseImages(len(in.Images))
-			}
 		}
 		c.endLocked(op)
 		final := ""
@@ -252,7 +249,7 @@ func (c *Controller) finishTurn(op *operation, err error) {
 			final = c.a.FinalText() // committed history: the answer after the last tool output
 		}
 		c.publish(Event{Kind: "done", Operation: "turn", Status: status, Error: text, Unsent: unsent, Text: final})
-		c.settleLocked(unsent)
+		c.settleLocked()
 	})
 }
 
@@ -276,13 +273,13 @@ func (c *Controller) finishCompact(op *operation, text string, err error) {
 			c.publish(Event{Kind: "notice", Text: message})
 		}
 		c.publish(Event{Kind: "done", Operation: "compact", Status: status, Error: failure})
-		c.settleLocked(nil)
+		c.settleLocked()
 	})
 }
 
 // settleLocked runs after an operation ends: it performs a deferred session change
 // or quit, and otherwise delivers queued notifications.
-func (c *Controller) settleLocked(unsent []agent.Input) {
+func (c *Controller) settleLocked() {
 	if c.reload {
 		c.reload = false
 		c.reloadLocked()
@@ -293,11 +290,6 @@ func (c *Controller) settleLocked(unsent []agent.Input) {
 		return
 	}
 	c.deferred = nil
-	if d.kind != "quit" && slices.ContainsFunc(unsent, func(in agent.Input) bool { return len(in.Images) > 0 }) {
-		c.publish(Event{Kind: "error", Text: "Submit or remove pending images before switching sessions."})
-		c.deliverLocked()
-		return
-	}
 	if d.kind == "quit" {
 		if err := c.closeLocked(); err != nil {
 			c.publish(Event{Kind: "error", Text: err.Error()})

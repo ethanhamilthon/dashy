@@ -3,7 +3,6 @@ package tui
 import (
 	"cmp"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"dashy/internal/agent"
@@ -177,10 +176,6 @@ func (m *model) timeline() string {
 		}
 	}
 	out.WriteString(m.workingBlock())
-	for i, image := range m.images {
-		label := fmt.Sprintf("  [Image %d: %s] Ctrl+X removes last", i+1, filepath.Base(image.Path))
-		out.WriteString(paint(ansi.Truncate(ansi.Strip(label), m.width, "…"), m.width, lipgloss.NoColor{}, muted) + "\n")
-	}
 	m.inputTop = strings.Count(out.String(), "\n") // every row above the composer ends with a newline
 	out.WriteString(m.inputBlock())
 	fileMode := m.hasFileCompletions()

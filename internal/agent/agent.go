@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,8 +21,11 @@ import (
 	"dashy/internal/shell"
 )
 
-const BashToolDescription = "You are Dashy, a coding agent. Use the bash tool to help the user reach their goals. " +
-	"Run `dashy --help` to work with Dashy itself."
+// BashToolDescription is the bash tool description sent to the model, edited in bash.md.
+var BashToolDescription = strings.TrimSpace(bashMD)
+
+//go:embed bash.md
+var bashMD string
 
 var codeField = regexp.MustCompile(`"command"\s*:\s*"`)
 

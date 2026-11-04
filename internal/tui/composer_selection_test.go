@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"dashy/internal/shell"
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"strings"
@@ -132,9 +131,8 @@ func TestComposerTypingReplacesSelection(t *testing.T) {
 	}
 }
 
-func TestComposerCtrlXCutsSelectionKeepsImages(t *testing.T) {
+func TestComposerCtrlXCutsSelection(t *testing.T) {
 	m := selectBrave(t)
-	m.images = []shell.Image{{URL: "data:image/png;base64,one"}}
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlX})
 	m = next.(model)
 	if cmd == nil {
@@ -142,15 +140,5 @@ func TestComposerCtrlXCutsSelectionKeepsImages(t *testing.T) {
 	}
 	if got := m.input.Value(); got != "hello  world" {
 		t.Fatalf("cut value = %q", got)
-	}
-	if len(m.images) != 1 {
-		t.Fatal("cut with a selection removed an image")
-	}
-
-	m = composerModel(t, "hello world", 40, 20)
-	m.images = []shell.Image{{URL: "data:image/png;base64,one"}}
-	m = update(m, tea.KeyMsg{Type: tea.KeyCtrlX})
-	if len(m.images) != 0 {
-		t.Fatal("ctrl+x without a selection did not remove the image")
 	}
 }

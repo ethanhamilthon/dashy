@@ -122,7 +122,7 @@ func TestImagePreviewsBoundNoisyFiles(t *testing.T) {
 			if len(original) <= 2*1024*1024 {
 				t.Fatal("fixture must exceed old 2 MiB input limit")
 			}
-			captured, err := CaptureImage(path)
+			captured, err := CaptureImageCopy(path, "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -152,17 +152,17 @@ func TestViewRejectsInvalidAndOversizedImages(t *testing.T) {
 		if err := os.WriteFile(path, data, 0600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := CaptureImage(path); err == nil {
+		if _, err := CaptureImageCopy(path, ""); err == nil {
 			t.Fatal("accepted invalid/truncated/oversized image")
 		}
 	}
 	if err := os.Truncate(path, MaxImageInputBytes+1); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := CaptureImage(path); err == nil || !strings.Contains(err.Error(), "32 MiB") {
+	if _, err := CaptureImageCopy(path, ""); err == nil || !strings.Contains(err.Error(), "32 MiB") {
 		t.Fatal("accepted oversized input", err)
 	}
-	if _, err := CaptureImage(dir); err == nil {
+	if _, err := CaptureImageCopy(dir, ""); err == nil {
 		t.Fatal("accepted directory")
 	}
 	entries, _ := os.ReadDir(dir)

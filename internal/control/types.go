@@ -79,5 +79,4 @@ type Status struct {
 	Compacting bool
 	Started    time.Time
 	Queued     []agent.Input
-	Images     int // new images the next model request will carry, including steering and dashy view
 }

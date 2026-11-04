@@ -27,13 +27,9 @@ type Image struct {
 	URL  string `json:"url"`
 }
 
-// CaptureImage embeds a bounded preview, leaving the original file untouched.
-func CaptureImage(path string) (Image, error) { return captureImage(path, "") }
-
-// CaptureImageCopy also saves an immutable original in directory for later crops.
-func CaptureImageCopy(path, directory string) (Image, error) { return captureImage(path, directory) }
-
-func captureImage(path, directory string) (Image, error) {
+// CaptureImageCopy embeds a bounded preview and saves an immutable original in directory
+// for later crops (none when directory is empty), leaving the file at path untouched.
+func CaptureImageCopy(path, directory string) (Image, error) {
 	// Check the file type before os.Open, which blocks on a FIFO until a writer
 	// appears. Nonblocking open also handles a replacement between stat and open.
 	if info, err := os.Stat(path); err != nil {

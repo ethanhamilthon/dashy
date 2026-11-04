@@ -333,27 +333,6 @@ func TestAutomaticCompactionKeepsDisplay(t *testing.T) {
 	}
 }
 
-// Images queued by dashy view and images in the composer share one allowance of four.
-func TestImageAllowanceIsSharedAcrossSources(t *testing.T) {
-	h := newHarness(t, &fakeModel{})
-	png := shell.Image{URL: "data:image/png;base64," + base64.StdEncoding.EncodeToString(tinyPNG(t))}
-	endpoint, err := agent.Endpoint(h.dir, h.a.SessionID())
-	if err != nil {
-		t.Fatal(err)
-	}
-	for i := 0; i < 2; i++ {
-		if err := agent.Send(endpoint, agent.Message{Image: &png}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := h.ctl.Input(agent.Input{Text: "look", Images: []shell.Image{png, png, png}}); codeOf(err) != "attachment_limit" {
-		t.Fatalf("three composer images on top of two views: %v", err)
-	}
-	if err := h.ctl.Input(agent.Input{Text: "look", Images: []shell.Image{png, png}}); err != nil {
-		t.Fatalf("four images in total must be allowed: %v", err)
-	}
-}
-
 // Settings changed while a turn runs are accepted and saved; the turn keeps running.
 // The turn is started by an external notification, as it can be while the picker is open.
 func TestSettingsChangeWhileNotificationTurnRuns(t *testing.T) {

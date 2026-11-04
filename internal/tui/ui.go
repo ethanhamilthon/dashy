@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 	"time"
@@ -16,7 +15,6 @@ import (
 	"dashy/internal/agent"
 	"dashy/internal/control"
 	"dashy/internal/osc7501"
-	"dashy/internal/shell"
 )
 
 type entry = agent.Record
@@ -32,7 +30,6 @@ type model struct {
 	input                    textarea.Model
 	viewport                 viewport.Model
 	entries                  []entry // copy of the controller's timeline, refreshed by refresh
-	images                   []shell.Image
 	pasteGeneration          int
 	pasting                  bool
 	width, height            int
@@ -265,16 +262,6 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch v.String() {
 		case "ctrl+v":
 			return m.pasteClipboard()
-		case "ctrl+x":
-			if len(m.images) > 0 {
-				image := m.images[len(m.images)-1]
-				if image.Path != "" {
-					_ = os.Remove(image.Path)
-				}
-				m.images = m.images[:len(m.images)-1]
-				m.refresh(true)
-				return m, nil
-			}
 		case "ctrl+c":
 			if m.ctl.Status().Busy {
 				m.requestCancel()
@@ -337,14 +324,13 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.refresh(true)
 				return m, nil
 			}
-			if v.String() == "up" && m.input.Value() == "" && len(m.images) == 0 && len(m.ctl.Status().Queued) > 0 {
+			if v.String() == "up" && m.input.Value() == "" && len(m.ctl.Status().Queued) > 0 {
 				in, err := m.ctl.Recall()
 				if err != nil {
 					return m.reject(err)
 				}
 				if in != nil {
 					m.input.SetValue(in.Text)
-					m.images = in.Images
 					m.input.CursorEnd()
 					m.refresh(true)
 					return m, nil
@@ -360,13 +346,13 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 			text := strings.TrimSpace(m.input.Value())
-			if text == "" && len(m.images) == 0 {
+			if text == "" {
 				return m, nil
 			}
-			if matches := m.completions(); len(matches) > 0 && len(m.images) == 0 {
+			if matches := m.completions(); len(matches) > 0 {
 				return m.runCommand(matches[m.selected%len(matches)].name)
 			}
-			return m.sendInput(agent.Input{Text: text, Images: m.images})
+			return m.sendInput(agent.Input{Text: text})
 		}
 		return m, m.edit(follow, func() tea.Cmd { return m.updateInput(msg) })
 	}
@@ -406,7 +392,6 @@ func (m model) sendInput(input agent.Input) (tea.Model, tea.Cmd) {
 		return m.reject(err)
 	}
 	m.input.Reset()
-	m.images = nil
 	m.hideCompletion = false
 	m.dismissFileCompletion()
 	m.refresh(true)

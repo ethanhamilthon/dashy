@@ -13,7 +13,6 @@ import (
 	"dashy/internal/agent"
 	"dashy/internal/control"
 	"dashy/internal/osc7501"
-	"dashy/internal/shell"
 )
 
 // Version is shown on the start screen; main sets it from the VERSION file.
@@ -133,17 +132,13 @@ func (m model) handleControl(e control.Event) (tea.Model, tea.Cmd) {
 // ahead of the text already typed there.
 func (m *model) restoreUnsent(unsent []agent.Input) {
 	var texts []string
-	var images []shell.Image
 	for _, in := range unsent {
 		if in.Text != "" {
 			texts = append(texts, in.Text)
 		}
-		images = append(images, in.Images...)
 	}
 	if draft := m.input.Value(); draft != "" {
 		texts = append(texts, draft)
 	}
-	images = append(images, m.images...)
-	m.images = images
 	m.input.SetValue(strings.Join(texts, "\n\n"))
 }

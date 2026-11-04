@@ -158,9 +158,6 @@ type imageSlots struct {
 // MaxPendingImages is how many new images one model request may carry.
 const MaxPendingImages = 4
 
-// ReserveImages admits n images, or reports false when they would exceed MaxPendingImages.
-func (a *Agent) ReserveImages(n int) bool { return a.slots.reserve(n) }
-
 func (s *imageSlots) reserve(n int) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -170,9 +167,6 @@ func (s *imageSlots) reserve(n int) bool {
 	s.reserved += n
 	return true
 }
-
-// ReleaseImages drops n admitted images that will not reach the history (returned unsent or recalled).
-func (a *Agent) ReleaseImages(n int) { a.slots.release(n) }
 
 func (s *imageSlots) release(n int) {
 	s.mu.Lock()
@@ -193,13 +187,6 @@ func (s *imageSlots) sent() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.committed = 0
-}
-
-// PendingImages counts the images that the next model request will carry.
-func (a *Agent) PendingImages() int {
-	a.slots.mu.Lock()
-	defer a.slots.mu.Unlock()
-	return a.slots.reserved + a.slots.committed
 }
 
 // validImage accepts only a PNG or JPEG data URL whose payload decodes as that format.
