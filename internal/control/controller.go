@@ -22,6 +22,7 @@ type Controller struct {
 	active   *operation
 	idle     chan struct{} // closed when active ends; nil while idle
 	deferred *deferredAction
+	reload   bool           // /reload waiting for the active operation
 	journal  []agent.Record // the display timeline: the one copy every view reads
 	custom   string         // /rename title
 	first    string         // first line of the first user message
@@ -268,6 +269,10 @@ func (c *Controller) finishCompact(op *operation, text string, err error) {
 // settleLocked runs after an operation ends: it performs a deferred session change
 // or quit, and otherwise delivers queued notifications.
 func (c *Controller) settleLocked(unsent []agent.Input) {
+	if c.reload {
+		c.reload = false
+		c.reloadLocked()
+	}
 	d := c.deferred
 	if d == nil || c.closing {
 		c.deliverLocked()

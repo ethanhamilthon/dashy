@@ -37,7 +37,7 @@ SYSTEM PROMPT (AGENTS.md)
   2. Local file: --config FILE if given, otherwise ./AGENTS.md (missing is fine)
   Each file is added under a '# <absolute path>' header, separated by a blank line.
   The prompt is assembled lazily before the first model request of a session and
-  then kept. /new and /resume read settings and AGENTS.md again and reassemble it.
+  then kept. /new, /resume and /reload read settings and AGENTS.md again and reassemble it.
 
 BASH TOOL
   The model's only tool runs /bin/bash --noprofile --norc in the project directory.
@@ -69,7 +69,7 @@ ENVIRONMENT VARIABLES
                     Every session has its own, a dashy -p sub-agent too; it is never
                     inherited from a parent dashy.
   DASHY_MODE        Execution mode in dashy blocks: 'tui' or 'print'.
-  DASHY_SOURCE      Assembly source in dashy blocks: 'startup', 'new', or 'resume'.
+  DASHY_SOURCE      Assembly source in dashy blocks: 'startup', 'new', 'resume' or 'reload'.
 
 SUB-AGENT RECIPES
   Sub-agents run via 'dashy -p' from the bash tool or terminal. A sub-agent has its own

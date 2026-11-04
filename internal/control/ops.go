@@ -146,6 +146,26 @@ func (c *Controller) switchRequest(kind, id string) error {
 	return err
 }
 
+// Reload re-reads settings and AGENTS.md; a running turn is not interrupted, it applies once it ends.
+func (c *Controller) Reload() {
+	c.view(func() {
+		if c.active != nil {
+			c.reload = true
+			c.publish(Event{Kind: "notice", Text: "Instructions will reload after the current turn."})
+			return
+		}
+		c.reloadLocked()
+	})
+}
+
+func (c *Controller) reloadLocked() {
+	if err := c.a.Reload(); err != nil {
+		c.publish(Event{Kind: "error", Text: err.Error()})
+		return
+	}
+	c.publish(Event{Kind: "notice", Text: "Settings and AGENTS.md reloaded; the prompt is rebuilt before the next request."})
+}
+
 // Rename sets the title of the current session; an empty name restores the first user message.
 func (c *Controller) Rename(title string) error {
 	var err error

@@ -48,6 +48,7 @@ var commandList = []CommandInfo{
 	{"/help", "Show commands and keyboard shortcuts"},
 	{"/quit", "Save the chat and exit"},
 	{"/resume", "Resume a saved session in this project"},
+	{"/reload", "Re-read settings and AGENTS.md for the next request"},
 	{"/rename", "Rename this session; empty name restores the default"},
 	{"/compact", "Summarize older turns; add a prompt to guide it"},
 	{"/settings", "Configure provider, model and display options"},

@@ -27,7 +27,7 @@ Run `dashy` in a project directory. Open `/settings` to choose a provider and mo
 
 ## AGENTS.md and dashy blocks
 
-The system prompt is built from two AGENTS.md files before the first request of a session (`/new` and `/resume` build it again):
+The system prompt is built from two AGENTS.md files before the first request of a session (`/new`, `/resume` and `/reload` build it again):
 
 1. `$DASHY_HOME/AGENTS.md` (default `~/.dashy/AGENTS.md`), skipped with `--no-global`.
 2. `./AGENTS.md`, or the file given with `--config FILE` (which replaces `./AGENTS.md`).

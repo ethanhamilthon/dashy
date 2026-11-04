@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -496,5 +497,50 @@ func TestBusyRejectionsAndQuitDuringTurn(t *testing.T) {
 	}
 	if codeOf(h.ctl.Input(agent.Input{Text: "late"})) != "closed" {
 		t.Fatal("input accepted after quit")
+	}
+}
+
+// /reload re-reads AGENTS.md (even one created after startup). While a turn runs it
+// does not interrupt it and applies once the turn ends; idle it applies at once.
+func TestReloadRebuildsPromptAfterTurn(t *testing.T) {
+	h := newHarness(t, &fakeModel{})
+	local := filepath.Join(h.dir, "AGENTS.md")
+	write := func(text string) {
+		if err := os.WriteFile(local, []byte(text), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	turns := func(n int) {
+		h.await(fmt.Sprintf("%d turns", n), func(events []Event) bool {
+			return !h.ctl.Status().Busy && len(doneEvents(events)) == n
+		})
+	}
+	write("v1")
+	h.send("a")
+	turns(1)
+	if r := h.model.requests()[0]; strings.Contains(r, "v1") {
+		t.Fatalf("a AGENTS.md created after startup was used without /reload: %s", r)
+	}
+	h.ctl.Reload()
+	h.model.mu.Lock()
+	h.model.gate = make(chan struct{})
+	h.model.mu.Unlock()
+	h.send("b")
+	h.await("request b", func([]Event) bool { return len(h.model.requests()) == 2 })
+	write("v2")
+	h.ctl.Reload()
+	if !h.ctl.Status().Busy {
+		t.Fatal("reload interrupted the running turn")
+	}
+	close(h.model.gate)
+	turns(2)
+	h.send("c")
+	turns(3)
+	reqs := h.model.requests()
+	if !strings.Contains(reqs[1], "v1") || !strings.Contains(reqs[2], "v2") {
+		t.Fatalf("prompt not rebuilt after reload:\nb: %s\nc: %s", reqs[1], reqs[2])
+	}
+	if events := h.log(); !slices.ContainsFunc(events, func(e Event) bool { return strings.Contains(e.Text, "after the current turn") }) {
+		t.Fatalf("no deferred reload notice: %s", describe(events))
 	}
 }

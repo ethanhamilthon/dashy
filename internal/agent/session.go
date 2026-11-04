@@ -71,6 +71,15 @@ func (a *Agent) Close() { a.release() }
 func (a *Agent) NewSession() error      { return a.changeSession("") }
 func (a *Agent) Resume(id string) error { return a.changeSession(id) }
 
+// Reload re-reads settings and AGENTS.md files; the prompt is assembled again before the next request.
+func (a *Agent) Reload() error {
+	if err := a.loadConfig(a.Shell.Dir); err != nil {
+		return err
+	}
+	a.promptFrozen, a.promptSource = false, "reload"
+	return nil
+}
+
 // changeSession switches to a new or saved session and re-reads settings and
 // AGENTS.md files. Resuming the current session keeps its lock and history but
 // selects settings and AGENTS.md files again, and assembles the prompt again.

@@ -203,6 +203,10 @@ func (m model) runCommand(name string) (tea.Model, tea.Cmd) {
 		return m.submit(m.ctl.Compact(strings.TrimSpace(strings.TrimPrefix(name, "/compact"))))
 	case "/help":
 		return m.stop("info", control.Help(keyboardHelp))
+	case "/reload":
+		m.ctl.Reload()
+		m.refresh(true)
+		return m, nil
 	case "/new":
 		m.resetCompletions()
 		return m.submit(m.ctl.NewSession())
