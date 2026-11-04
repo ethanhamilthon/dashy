@@ -2,8 +2,8 @@ package tui
 
 import (
 	"strings"
+	"unicode"
 
-	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -29,36 +29,72 @@ type composerShortcut struct{ cut bool }
 type composerNoop struct{}
 
 // composerLayout returns the visual rows that the composer textarea renders for value.
-// A probe textarea applies the same wrapping rules without touching the live viewport.
 func composerLayout(value string, width int) []composerRow {
 	if value == "" {
 		return nil
 	}
-	probe := textarea.New()
-	probe.CharLimit = 0
-	probe.MaxWidth = 10000
-	probe.Prompt = ""
-	probe.ShowLineNumbers = false
-	probe.SetWidth(width)
 	var rows []composerRow
 	base := 0
 	for _, line := range strings.Split(value, "\n") {
 		runes := []rune(line)
-		probe.SetValue(line)
-		col := 0
-		for {
-			probe.SetCursor(col)
-			info := probe.LineInfo()
-			end := min(info.StartColumn+info.Width, len(runes))
-			rows = append(rows, composerRow{base + info.StartColumn, base + end})
-			if info.RowOffset+1 >= info.Height || info.Width <= 0 {
-				break
-			}
-			col = info.StartColumn + info.Width
+		start := 0
+		for _, n := range wrapRows(runes, width) {
+			rows = append(rows, composerRow{base + start, base + min(start+n, len(runes))})
+			start += n
 		}
 		base += len(runes) + 1
 	}
 	return rows
+}
+
+// wrapRows returns the rune count of each row the textarea wraps one line into,
+// including the padding spaces it adds. It follows the textarea's word wrap but
+// keeps running widths, so it is linear in the line length.
+func wrapRows(runes []rune, width int) []int {
+	rows := []int{0}
+	row, rowWidth := 0, 0
+	wordLen, wordWidth, lastWidth, spaces := 0, 0, 0, 0
+	for _, r := range runes {
+		if unicode.IsSpace(r) {
+			spaces++
+		} else {
+			lastWidth = runeWidth(r)
+			wordLen, wordWidth = wordLen+1, wordWidth+lastWidth
+		}
+		switch {
+		case spaces > 0:
+			if rowWidth+wordWidth+spaces > width {
+				row++
+				rows = append(rows, 0)
+				rowWidth = 0
+			}
+			rows[row] += wordLen + spaces
+			rowWidth += wordWidth + spaces
+			wordLen, wordWidth, spaces = 0, 0, 0
+		case wordWidth+lastWidth > width: // the word fills a whole row
+			if rows[row] > 0 {
+				row++
+				rows = append(rows, 0)
+				rowWidth = 0
+			}
+			rows[row] += wordLen
+			rowWidth += wordWidth
+			wordLen, wordWidth = 0, 0
+		}
+	}
+	if rowWidth+wordWidth+spaces >= width {
+		rows = append(rows, wordLen+spaces+1)
+	} else {
+		rows[row] += wordLen + spaces + 1
+	}
+	return rows
+}
+
+func runeWidth(r rune) int {
+	if r < 0x80 {
+		return 1
+	}
+	return ansi.StringWidth(string(r))
 }
 
 // composerRows returns the cached layout of the current composer value.

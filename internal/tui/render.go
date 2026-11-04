@@ -4,9 +4,9 @@ import (
 	"cmp"
 	"fmt"
 	"strings"
+	"time"
 
 	"dashy/internal/agent"
-	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -25,8 +25,6 @@ var (
 	// The Markdown style uses the same fixed colors as the timeline.
 	markdownStyle = fmt.Sprintf(markdownTemplate, assistantColor, cyan, warnColor, muted,
 		infoColor, errorColor, inputBlue, inputBlue)
-	mdKey      any
-	mdRenderer *glamour.TermRenderer
 )
 
 func eventColors(kind string) (fg lipgloss.TerminalColor, label string) {
@@ -50,18 +48,40 @@ func eventColors(kind string) (fg lipgloss.TerminalColor, label string) {
 	}
 }
 
+type paintKey struct {
+	row    string
+	width  int
+	bg, fg lipgloss.TerminalColor
+	color  any // the color profile
+}
+
+// painted memoizes paint per row: a streamed message repaints mostly unchanged rows.
+var painted = map[paintKey]string{}
+
 // paint fills every physical row, including trailing cells, rather than just text.
 func paint(text string, width int, bg, fg lipgloss.TerminalColor) string {
 	rows := strings.Split(text, "\n")
 	style := lipgloss.NewStyle().Width(width).Background(bg).Foreground(fg)
 	for i, row := range rows {
+		key := paintKey{row, width, bg, fg, lipgloss.ColorProfile()}
+		if out, ok := painted[key]; ok {
+			rows[i] = out
+			continue
+		}
+		if len(painted) >= 8192 {
+			clear(painted)
+		}
 		rows[i] = style.Render(ansi.Truncate(row, max(1, width), ""))
+		painted[key] = rows[i]
 	}
 	return strings.Join(rows, "\n")
 }
 
 // renderEntry renders one timeline entry; a positive limit caps the wrapped body rows and 0 hides the entry.
-func renderEntry(e entry, width, limit int) string {
+func renderEntry(e entry, width, limit int) string { return renderEntryMode(e, width, limit, true) }
+
+// renderEntryMode is renderEntry; without markdown an assistant entry shows as wrapped plain text.
+func renderEntryMode(e entry, width, limit int, markdown bool) string {
 	if limit == 0 {
 		return "" // hidden by show_lines
 	}
@@ -77,17 +97,12 @@ func renderEntry(e entry, width, limit int) string {
 	if e.Kind == "user" {
 		return renderRail(ansi.Wrap(text, max(1, width-2), ""), width)
 	}
-	body := ansi.Wrap(text, max(1, width-4), "")
-	if e.Kind == "assistant" {
-		if key := [2]any{width, lipgloss.ColorProfile()}; mdKey != key {
-			mdKey = key
-			mdRenderer, _ = glamour.NewTermRenderer(glamour.WithStylesFromJSONBytes([]byte(markdownStyle)), glamour.WithWordWrap(max(1, width-4)), glamour.WithColorProfile(lipgloss.ColorProfile()), glamour.WithInlineTableLinks(true))
-		}
-		if mdRenderer != nil {
-			if rendered, err := mdRenderer.Render(strings.NewReplacer("\u2063", "", "\u2064", "").Replace(text)); err == nil {
-				body = markdownLinks(strings.TrimSpace(rendered))
-			}
-		}
+	body, ok := "", false
+	if e.Kind == "assistant" && markdown {
+		body, ok = renderMarkdown(text, width-4, e.Preview)
+	}
+	if !ok {
+		body = ansi.Wrap(text, max(1, width-4), "")
 	}
 	if e.Preview && e.Kind == "code" {
 		label += " · preview"
@@ -135,7 +150,28 @@ func (m model) inputBlock() string {
 	return renderRail(m.input.View(), m.width)
 }
 
-func (m *model) timeline() string {
+// timeline renders the whole timeline at once; the interface uses timelineRows.
+func (m *model) timeline() string { return strings.Join(m.timelineRows(0), "\n") }
+
+// screenRows collects text chunks as screen rows. A chunk continues the last row,
+// so cached entries are appended without joining and splitting them again.
+type screenRows []string
+
+func (r *screenRows) add(chunk string) { r.addLines(strings.Split(chunk, "\n")) }
+
+func (r *screenRows) addLines(lines []string) {
+	if len(*r) == 0 {
+		*r = append(*r, lines...)
+		return
+	}
+	(*r)[len(*r)-1] += lines[0]
+	*r = append(*r, lines[1:]...)
+}
+
+// timelineRows renders the timeline as screen rows. With a positive budget,
+// Markdown of stale assistant entries is rendered newest first until the budget is
+// spent; older ones show as plain text and renderPending asks for another pass.
+func (m *model) timelineRows(budget time.Duration) []string {
 	var out strings.Builder
 	out.WriteString(lipgloss.NewStyle().Foreground(cyan).Bold(true).Render("dashy. minimal coding agent."))
 	out.WriteString(lipgloss.NewStyle().Foreground(muted).Render(" v" + strings.TrimPrefix(Version, "v")))
@@ -148,11 +184,19 @@ func (m *model) timeline() string {
 		out.WriteString(lipgloss.NewStyle().Foreground(muted).Render(ansi.Truncate(row, max(1, m.width), "…")) + "\n")
 	}
 	out.WriteString("\n")
+	var screen screenRows
+	screen.add(out.String())
 	if len(m.cache) > len(m.entries) {
 		m.cache = m.cache[:len(m.entries)]
 	}
+	for len(m.cache) < len(m.entries) {
+		m.cache = append(m.cache, renderedEntry{})
+	}
 	settings := m.ctl.Settings()
-	for i, e := range m.entries {
+	started, rendered := time.Now(), 0
+	m.renderPending = false
+	for i := len(m.entries) - 1; i >= 0; i-- {
+		e := m.entries[i]
 		limit := -1
 		switch e.Kind {
 		case "code", "output", "reasoning":
@@ -160,24 +204,34 @@ func (m *model) timeline() string {
 		case "error": // a failed tool call is output in red
 			limit = settings.MaxLines("output")
 		}
-		if i >= len(m.cache) {
-			m.cache = append(m.cache, renderedEntry{})
-		}
 		cached := &m.cache[i]
-		if cached.width != m.width || cached.source != e || cached.maxLines != limit {
-			cached.source = e
-			cached.width = m.width
-			cached.maxLines = limit
-			cached.Text = renderEntry(e, m.width, limit)
+		if cached.width == m.width && cached.source == e && cached.maxLines == limit && !cached.draft {
+			continue
 		}
-		if cached.Text != "" {
-			out.WriteString(cached.Text)
-			out.WriteString("\n\n")
+		// The newest Markdown always renders, so every pass makes progress.
+		draft := budget > 0 && e.Kind == "assistant" && rendered > 0 && time.Since(started) >= budget
+		if draft {
+			m.renderPending = true
+			if cached.draft && cached.width == m.width && cached.source == e && cached.maxLines == limit {
+				continue
+			}
+		}
+		cached.source, cached.width, cached.maxLines, cached.draft = e, m.width, limit, draft
+		cached.Text = renderEntryMode(e, m.width, limit, !draft)
+		cached.rows = strings.Split(cached.Text, "\n")
+		if e.Kind == "assistant" && !draft {
+			rendered++
 		}
 	}
-	out.WriteString(m.workingBlock())
-	m.inputTop = strings.Count(out.String(), "\n") // every row above the composer ends with a newline
-	out.WriteString(m.inputBlock())
+	for _, cached := range m.cache {
+		if cached.Text != "" {
+			screen.addLines(cached.rows)
+			screen.add("\n\n")
+		}
+	}
+	screen.add(m.workingBlock())
+	m.inputTop = len(screen) - 1 // every row above the composer ends with a newline
+	screen.add(m.inputBlock())
 	fileMode := m.hasFileCompletions()
 	matches := m.completions()
 	count, selected := len(matches), m.selected
@@ -196,7 +250,7 @@ func (m *model) timeline() string {
 				parts[i] = "[" + e + "]"
 			}
 		}
-		out.WriteString("\n" + paint(ansi.Truncate("  Effort: "+strings.Join(parts, " ")+"  (Left/Right)", m.width, "…"), m.width, lipgloss.NoColor{}, foreground))
+		screen.add("\n" + paint(ansi.Truncate("  Effort: "+strings.Join(parts, " ")+"  (Left/Right)", m.width, "…"), m.width, lipgloss.NoColor{}, foreground))
 	}
 	for i := start; i < min(count, start+rows); i++ {
 		var bg lipgloss.TerminalColor = lipgloss.NoColor{}
@@ -222,9 +276,8 @@ func (m *model) timeline() string {
 				row = marker + cmd.icon + " " + cmd.label
 			}
 		}
-		out.WriteByte('\n')
-		out.WriteString(paint(ansi.Truncate(row, m.width, "…"), m.width, bg, fg))
+		screen.add("\n" + paint(ansi.Truncate(row, m.width, "…"), m.width, bg, fg))
 	}
-	out.WriteString("\n\n" + m.bottomBar())
-	return out.String()
+	screen.add("\n\n" + m.bottomBar())
+	return screen
 }

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/textarea"
-	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -22,13 +21,15 @@ type renderedEntry struct {
 	source   entry
 	width    int
 	maxLines int
+	draft    bool // plain text standing in for Markdown not rendered yet
 	Text     string
+	rows     []string
 }
 type model struct {
 	ctl                      *control.Controller
 	events                   *eventQueue
 	input                    textarea.Model
-	viewport                 viewport.Model
+	viewport                 pager
 	entries                  []entry // copy of the controller's timeline, refreshed by refresh
 	pasteGeneration          int
 	pasting                  bool
@@ -69,7 +70,20 @@ type model struct {
 	reporter                 *osc7501.Reporter
 	flash                    entry // the latest notice or error, shown in the status bar
 	flashAt                  time.Time
+	frameAt                  time.Time // the last refresh
+	dirty                    bool      // agent events arrived since frameAt
+	renderPending            bool      // some Markdown is still shown as plain text
+	redrawScheduled          bool
 }
+
+// Streaming events refresh at most once per frameInterval; renderBudget bounds the
+// Markdown rendered by one refresh so a resize or a resumed session never freezes.
+const (
+	frameInterval = 33 * time.Millisecond
+	renderBudget  = 25 * time.Millisecond
+)
+
+type redraw struct{}
 
 func newModel(a *agent.Agent, cwd string, reporter *osc7501.Reporter) model {
 	input := textarea.New()
@@ -87,7 +101,7 @@ func newModel(a *agent.Agent, cwd string, reporter *osc7501.Reporter) model {
 	input.FocusedStyle, input.BlurredStyle = style, style
 	events := newEventQueue()
 	ctl := control.New(a, func(e control.Event) { events.Push(e) })
-	m := model{ctl: ctl, events: events, input: input, viewport: viewport.New(80, 24), width: 80, height: 24, cwd: cwd, reporter: reporter}
+	m := model{ctl: ctl, events: events, input: input, viewport: pager{Width: 80, Height: 24}, width: 80, height: 24, cwd: cwd, reporter: reporter}
 	reporter.HandleEvent(control.Event{Kind: "session", Title: ctl.Title()})
 	m.refresh(true)
 	return m
@@ -102,16 +116,8 @@ func (m *model) resizeInput() {
 	m.inputWidth, m.inputHeight, m.inputValue = width, height, value
 	m.input.SetWidth(width)
 	lines := 0
-	// A textarea copy shares its viewport pointer; probing it resets live scroll.
-	probe := textarea.New()
-	probe.CharLimit = 0
-	probe.MaxWidth = m.input.MaxWidth
-	probe.Prompt = ""
-	probe.ShowLineNumbers = false
-	probe.SetWidth(m.input.Width())
 	for _, line := range strings.Split(value, "\n") {
-		probe.SetValue(line)
-		lines += probe.LineInfo().Height
+		lines += len(wrapRows([]rune(line), m.input.Width()))
 	}
 	m.input.SetHeight(min(height, max(1, lines)))
 }
@@ -141,7 +147,8 @@ func (m *model) refresh(follow bool) {
 	m.resizeInput()             // Constant-time unless input text or dimensions changed.
 	m.viewport.Width = max(1, m.width)
 	m.viewport.Height = max(1, m.height)
-	m.viewport.SetContent(m.timeline())
+	m.viewport.SetLines(m.timelineRows(renderBudget))
+	m.frameAt, m.dirty = time.Now(), false
 	if follow {
 		m.viewport.GotoBottom()
 	}
@@ -161,13 +168,23 @@ func (m *model) setFlash(kind, text string) {
 
 type flashExpired struct{ at time.Time }
 
-// Update hides the status bar event 10 seconds after the latest one.
+// Update hides the status bar event 10 seconds after the latest one and schedules
+// the next frame while streamed events or Markdown rendering are pending.
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	next, cmd := m.update(msg)
-	if n, ok := next.(model); ok && !n.flashAt.Equal(m.flashAt) {
+	n, ok := next.(model)
+	if !ok {
+		return next, cmd
+	}
+	if !n.flashAt.Equal(m.flashAt) {
 		cmd = tea.Batch(cmd, tea.Tick(10*time.Second, func(time.Time) tea.Msg { return flashExpired{n.flashAt} }))
 	}
-	return next, cmd
+	if (n.dirty || n.renderPending) && !n.redrawScheduled {
+		n.redrawScheduled = true
+		wait := max(time.Millisecond, frameInterval-time.Since(n.frameAt))
+		cmd = tea.Batch(cmd, tea.Tick(wait, func(time.Time) tea.Msg { return redraw{} }))
+	}
+	return n, cmd
 }
 
 // stop adds a diagnostic, refreshes the view and ends the update cycle.
@@ -218,6 +235,12 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.add("notice", "Some providers failed to list models:\n"+strings.Join(failed, "\n"))
 		}
 		m.refresh(true)
+		return m, nil
+	case redraw:
+		m.redrawScheduled = false
+		if m.dirty || m.renderPending {
+			m.refresh(follow)
+		}
 		return m, nil
 	case workingTick:
 		status := m.ctl.Status()

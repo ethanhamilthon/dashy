@@ -1,10 +1,13 @@
 package tui
 
 import (
-	"github.com/charmbracelet/bubbles/textarea"
-	tea "github.com/charmbracelet/bubbletea"
+	"math/rand"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/bubbles/textarea"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // composerModel returns a model whose composer holds value, sized to width x height.
@@ -140,5 +143,52 @@ func TestComposerCtrlXCutsSelection(t *testing.T) {
 	}
 	if got := m.input.Value(); got != "hello  world" {
 		t.Fatalf("cut value = %q", got)
+	}
+}
+
+// probeLayout is the textarea based layout that composerLayout replaced; it is the reference.
+func probeLayout(value string, width int) []composerRow {
+	if value == "" {
+		return nil
+	}
+	probe := textarea.New()
+	probe.CharLimit = 0
+	probe.MaxWidth = 10000
+	probe.Prompt = ""
+	probe.ShowLineNumbers = false
+	probe.SetWidth(width)
+	var rows []composerRow
+	base := 0
+	for _, line := range strings.Split(value, "\n") {
+		runes := []rune(line)
+		probe.SetValue(line)
+		col := 0
+		for {
+			probe.SetCursor(col)
+			info := probe.LineInfo()
+			end := min(info.StartColumn+info.Width, len(runes))
+			rows = append(rows, composerRow{base + info.StartColumn, base + end})
+			if info.RowOffset+1 >= info.Height || info.Width <= 0 {
+				break
+			}
+			col = info.StartColumn + info.Width
+		}
+		base += len(runes) + 1
+	}
+	return rows
+}
+
+func TestComposerLayoutMatchesTextareaProbe(t *testing.T) {
+	r := rand.New(rand.NewSource(1))
+	pieces := []string{"a", "word", "longerword", " ", "  ", "界", "é", "-", "\n", "supercalifragilistic"}
+	for i := 0; i < 400; i++ {
+		var b strings.Builder
+		for n := r.Intn(30); n > 0; n-- {
+			b.WriteString(pieces[r.Intn(len(pieces))])
+		}
+		value, width := b.String(), 1+r.Intn(20)
+		if got, want := composerLayout(value, width), probeLayout(value, width); !slices.Equal(got, want) {
+			t.Fatalf("%q width %d: %v, textarea %v", value, width, got, want)
+		}
 	}
 }

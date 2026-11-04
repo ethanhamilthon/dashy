@@ -23,6 +23,9 @@ func TestTimelineCacheAndResize(t *testing.T) {
 		m.add("assistant", fmt.Sprintf("**Answer %d**\n\n- bullet", i))
 	}
 	m.refresh(true)
+	for m.renderPending { // a slow run may spend the render budget before the oldest entry
+		m.refresh(true)
+	}
 	cached := m.cache[0].Text
 	m.ctl.Note(agent.Event{Kind: "delta", ID: "stream", Text: "First"})
 	m.refresh(true)
@@ -33,7 +36,7 @@ func TestTimelineCacheAndResize(t *testing.T) {
 	second := agent.Event{Kind: "delta", ID: "stream", Text: " second"}
 	m.ctl.Note(second) // the controller applies an agent event before emitting it
 	next, _ := m.Update(agentEvent(second))
-	m = next.(model)
+	m = flushFrame(next.(model)) // the delta came within one frame of the refresh
 	if m.inputWidth != inputWidth || m.inputHeight != inputHeight || unsafe.StringData(cached) != unsafe.StringData(m.cache[0].Text) {
 		t.Fatal("delta invalidated input layout or completed cache")
 	}
@@ -280,5 +283,55 @@ func TestSingleLineNotifications(t *testing.T) {
 	live.refresh(true)
 	if m.cache[0].Text != live.cache[0].Text {
 		t.Fatal("live and restored notifications differ")
+	}
+}
+
+func TestStreamedEventsAreCoalescedIntoFrames(t *testing.T) {
+	m := bareModel(t, "/project")
+	delta := agent.Event{Kind: "delta", ID: "s", Text: "one"}
+	m.ctl.Note(delta)
+	next, cmd := m.Update(agentEvent(delta)) // right after the initial refresh
+	m = next.(model)
+	if !m.dirty || !m.redrawScheduled || cmd == nil {
+		t.Fatal("a delta within a frame must wait for the scheduled redraw")
+	}
+	if strings.Contains(ansi.Strip(m.View()), "one") {
+		t.Fatal("deferred delta already rendered")
+	}
+	next, _ = m.Update(redraw{})
+	m = next.(model)
+	if m.dirty || m.redrawScheduled || !strings.Contains(ansi.Strip(m.View()), "one") {
+		t.Fatal("redraw did not apply the delta")
+	}
+	m.frameAt = time.Now().Add(-time.Second)
+	delta = agent.Event{Kind: "delta", ID: "s", Text: " two"}
+	m.ctl.Note(delta)
+	next, _ = m.Update(agentEvent(delta))
+	if m = next.(model); m.dirty || !strings.Contains(ansi.Strip(m.View()), "one two") {
+		t.Fatal("a delta after a frame must render at once")
+	}
+}
+
+func TestRenderBudgetDefersOldMarkdown(t *testing.T) {
+	m := bareModel(t, "/project")
+	for i := 0; i < 20; i++ {
+		m.add("assistant", fmt.Sprintf("**Answer %d**", i))
+	}
+	m.entries = m.ctl.History()
+	m.cache = nil
+	m.timelineRows(time.Nanosecond)
+	last := m.cache[len(m.cache)-1]
+	if !m.renderPending || last.draft || !m.cache[0].draft || !strings.Contains(m.cache[0].Text, "**Answer 0**") {
+		t.Fatal("the newest entry must render first and older Markdown wait as plain text")
+	}
+	for i := 0; m.renderPending; i++ {
+		if i > 100 {
+			t.Fatal("rendering never completed")
+		}
+		next, _ := m.Update(redraw{})
+		m = next.(model)
+	}
+	if m.cache[0].draft || strings.Contains(m.cache[0].Text, "**") {
+		t.Fatal("deferred Markdown was not rendered")
 	}
 }

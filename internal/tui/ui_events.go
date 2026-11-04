@@ -102,8 +102,12 @@ func (m model) handleControl(e control.Event) (tea.Model, tea.Cmd) {
 	case "started":
 		m.refresh(true)
 		cmd = workingPulse(m.ctl.Status().Started)
-	case "agent":
-		m.refresh(follow)
+	case "agent": // streamed deltas are coalesced into frames
+		if time.Since(m.frameAt) >= frameInterval {
+			m.refresh(follow)
+		} else {
+			m.dirty = true
+		}
 	case "notice", "error":
 		m.setFlash(e.Kind, e.Text)
 	case "session":

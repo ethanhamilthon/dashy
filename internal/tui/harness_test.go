@@ -122,6 +122,7 @@ func (f *fixture) pump() {
 	for {
 		e, ok := f.m.events.TryPop()
 		if !ok {
+			f.m = flushFrame(f.m)
 			return
 		}
 		next, _ := f.m.Update(e)
@@ -160,6 +161,15 @@ func (f *fixture) command(t *testing.T, name string) {
 	next, _ := f.m.runCommand(name)
 	f.m = next.(model)
 	f.pump()
+}
+
+// flushFrame applies a refresh that the frame throttle deferred.
+func flushFrame(m model) model {
+	if m.dirty {
+		next, _ := m.Update(redraw{})
+		m = next.(model)
+	}
+	return m
 }
 
 // key sends one key press to the model, as the program would.
@@ -297,7 +307,7 @@ func settle(m model) model {
 	for {
 		event, ok := m.events.TryPop()
 		if !ok {
-			return m
+			return flushFrame(m)
 		}
 		next, _ := m.Update(event)
 		m = next.(model)
