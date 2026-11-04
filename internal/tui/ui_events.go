@@ -106,7 +106,7 @@ func (m model) handleControl(e control.Event) (tea.Model, tea.Cmd) {
 	case "agent":
 		m.refresh(follow)
 	case "notice", "error":
-		m.refresh(true)
+		m.setFlash(e.Kind, e.Text)
 	case "session":
 		// A session change starts a fresh composer context, as /new and /resume always have.
 		m.cache = nil

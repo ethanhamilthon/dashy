@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"cmp"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -68,23 +69,10 @@ func renderEntry(e entry, width, limit int) string {
 	fg, label := eventColors(e.Kind)
 
 	text := ansi.Strip(e.Text)
-	if e.Kind == "notice" || e.Kind == "error" {
-		text = strings.TrimSpace(text)
+	if e.Kind == "notice" { // <notify> messages; other notices and errors go to the status bar
 		text = strings.NewReplacer("<notify>", "", "</notify>", "").Replace(text)
-		text = strings.Join(strings.Fields(text), " ")
-		if text == "" {
-			text = "Notification received."
-			if e.Kind == "error" {
-				text = "An error occurred."
-			}
-		}
-		if e.Kind == "error" {
-			icon := lipgloss.NewStyle().Foreground(errorColor).Render("!")
-			message := lipgloss.NewStyle().Foreground(darkGray).Render(" · " + text)
-			return paint(ansi.Truncate("  "+icon+message, max(1, width), "…"), max(1, width), lipgloss.NoColor{}, lipgloss.NoColor{})
-		}
+		text = cmp.Or(strings.Join(strings.Fields(text), " "), "Notification received.")
 		return paint(ansi.Truncate("  "+label+" · "+text, max(1, width), "…"), max(1, width), lipgloss.NoColor{}, fg)
-
 	}
 
 	if e.Kind == "user" {
@@ -242,6 +230,6 @@ func (m *model) timeline() string {
 		out.WriteByte('\n')
 		out.WriteString(paint(ansi.Truncate(row, m.width, "…"), m.width, bg, fg))
 	}
-	out.WriteString("\n\n" + lipgloss.NewStyle().Foreground(muted).Render(m.bottomBar()))
+	out.WriteString("\n\n" + m.bottomBar())
 	return out.String()
 }

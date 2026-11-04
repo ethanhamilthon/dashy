@@ -101,8 +101,8 @@ func (r *Reporter) HandleEvent(e control.Event) {
 		} else {
 			r.msg = agent.FirstLine(e.Text)
 		}
-	case "agent":
-		if e.Agent != nil && e.Agent.Kind == "notice" && strings.HasPrefix(e.Agent.Text, "Retrying") {
+	case "notice":
+		if strings.HasPrefix(e.Text, "Retrying") {
 			r.state = "working"
 		}
 	case "error":

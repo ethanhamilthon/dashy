@@ -41,14 +41,15 @@ func TestWorkingIndicatorLifecycleAndScrolling(t *testing.T) {
 	if m.workingBlock() != "" {
 		t.Fatal("indicator persisted after completion")
 	}
-	if !hasEntry(m, "notice", "Turn cancelled.") {
+	if !hasEvent(m, "Turn cancelled.") {
 		t.Fatalf("cancellation not reported: %+v", m.entries)
 	}
 }
 
-func hasEntry(m model, kind, text string) bool {
-	for _, e := range m.entries {
-		if e.Kind == kind && e.Text == text {
+// hasEvent reports whether the session events end a line with text.
+func hasEvent(m model, text string) bool {
+	for _, e := range m.ctl.Events() {
+		if strings.HasSuffix(e, " "+text) {
 			return true
 		}
 	}
@@ -103,7 +104,7 @@ func TestSteeringQueueFullKeepsInput(t *testing.T) {
 	if m.input.Value() != "second" || len(m.ctl.Status().Queued) != 64 {
 		t.Fatal("queue-full submission lost")
 	}
-	if !hasEntry(m, "notice", "Steering queue is full; your message remains in the input.") {
+	if !hasEvent(m, "Steering queue is full; your message remains in the input.") {
 		t.Fatalf("queue-full notice missing: %+v", m.entries)
 	}
 }

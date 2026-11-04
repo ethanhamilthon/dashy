@@ -220,7 +220,7 @@ func TestMinimalCommandCompletions(t *testing.T) {
 	for _, width := range []int{1, 2, 5, 20, 80} {
 		m.width = width
 		rows := strings.Split(m.timeline(), "\n")
-		for _, row := range rows[len(rows)-2-len(commands) : len(rows)-2] {
+		for _, row := range rows[len(rows)-2-min(8, len(commands)) : len(rows)-2] {
 			if ansi.StringWidth(row) > width {
 				t.Fatalf("completion exceeds width %d: %q", width, row)
 			}

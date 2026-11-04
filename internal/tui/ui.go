@@ -70,6 +70,8 @@ type model struct {
 	fileDismissedValue       string
 	fileDismissedCursor      int
 	reporter                 *osc7501.Reporter
+	flash                    entry // the latest notice or error, shown in the status bar
+	flashAt                  time.Time
 }
 
 func newModel(a *agent.Agent, cwd string, reporter *osc7501.Reporter) model {
@@ -148,8 +150,28 @@ func (m *model) refresh(follow bool) {
 	}
 }
 
-// add puts a message of the interface into the controller's timeline.
-func (m *model) add(kind, text string) { m.ctl.Note(agent.Event{Kind: kind, Text: text}) }
+// add records a message of the interface: info goes to the timeline, notices and errors to the status bar.
+func (m *model) add(kind, text string) {
+	m.ctl.Note(agent.Event{Kind: kind, Text: text})
+	if kind != "info" {
+		m.setFlash(kind, text)
+	}
+}
+
+func (m *model) setFlash(kind, text string) {
+	m.flash, m.flashAt = entry{Kind: kind, Text: strings.Join(strings.Fields(text), " ")}, time.Now()
+}
+
+type flashExpired struct{ at time.Time }
+
+// Update hides the status bar event 10 seconds after the latest one.
+func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := m.update(msg)
+	if n, ok := next.(model); ok && !n.flashAt.Equal(m.flashAt) {
+		cmd = tea.Batch(cmd, tea.Tick(10*time.Second, func(time.Time) tea.Msg { return flashExpired{n.flashAt} }))
+	}
+	return next, cmd
+}
 
 // stop adds a diagnostic, refreshes the view and ends the update cycle.
 func (m *model) stop(kind, text string) (tea.Model, tea.Cmd) {
@@ -158,10 +180,15 @@ func (m *model) stop(kind, text string) (tea.Model, tea.Cmd) {
 	return *m, nil
 }
 
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	msg = normalizeTerminalKey(msg)
 	follow := m.viewport.AtBottom()
 	switch v := msg.(type) {
+	case flashExpired:
+		if v.at.Equal(m.flashAt) {
+			m.flash = entry{}
+		}
+		return m, nil
 	case fileDebounceMsg:
 		return m.handleFileDebounce(v)
 	case fileScanMsg:

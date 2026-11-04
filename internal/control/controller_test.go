@@ -303,7 +303,7 @@ func TestCompactKeepsDisplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.settle()
-	joined := fmt.Sprint(h.ctl.History())
+	joined := fmt.Sprint(h.ctl.History(), h.ctl.Events())
 	if !strings.Contains(joined, "turn 0") || !strings.Contains(joined, "interface note") || !strings.Contains(joined, "Compacted") {
 		t.Fatalf("display after compaction: %s", joined)
 	}
@@ -324,7 +324,7 @@ func TestAutomaticCompactionKeepsDisplay(t *testing.T) {
 			t.Fatalf("compaction replaced the display: %s", describe(events))
 		}
 	}
-	joined := fmt.Sprint(h.ctl.History())
+	joined := fmt.Sprint(h.ctl.History(), h.ctl.Events())
 	if !strings.Contains(joined, "turn 0") || !strings.Contains(joined, "Compacted") {
 		t.Fatalf("display after automatic compaction: %s", joined)
 	}

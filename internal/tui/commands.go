@@ -1,8 +1,10 @@
 package tui
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -185,6 +187,8 @@ func (m model) runCommand(name string) (tea.Model, tea.Cmd) {
 		return m.submit(m.ctl.Compact(strings.TrimSpace(strings.TrimPrefix(name, "/compact"))))
 	case "/help":
 		return m.stop("info", control.Help(keyboardHelp))
+	case "/events":
+		return m.stop("info", cmp.Or(strings.Join(m.ctl.Events(), "\n"), "No events in this session."))
 	case "/reload":
 		m.ctl.Reload()
 		m.refresh(true)
@@ -226,12 +230,8 @@ func (m model) submit(err error) (tea.Model, tea.Cmd) {
 // reject shows a controller error. State rejections are notices; everything else is an error.
 func (m model) reject(err error) (tea.Model, tea.Cmd) {
 	kind := "error"
-	var e *control.Error
-	if errors.As(err, &e) {
-		switch e.Code {
-		case "busy", "cancelling", "queue_full", "setup_required", "pending_images", "not_recallable", "attachment_limit", "compacting":
-			kind = "notice"
-		}
+	if e := (*control.Error)(nil); errors.As(err, &e) && slices.Contains([]string{"busy", "cancelling", "queue_full", "setup_required", "pending_images", "not_recallable", "attachment_limit", "compacting"}, e.Code) {
+		kind = "notice"
 	}
 	return m.stop(kind, err.Error())
 }

@@ -157,7 +157,7 @@ func TestEscClosesActiveCompletionBeforeTurnCancellation(t *testing.T) {
 	// Second Esc cancels the busy turn; the turn ends with a cancellation notice.
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = awaitIdle(t, next.(model))
-	if !hasEntry(m, "notice", "Turn cancelled.") {
+	if !hasEvent(m, "Turn cancelled.") {
 		t.Fatal("second Esc did not cancel the turn")
 	}
 }

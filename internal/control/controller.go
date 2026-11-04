@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,6 +25,7 @@ type Controller struct {
 	deferred *deferredAction
 	reload   bool           // /reload waiting for the active operation
 	journal  []agent.Record // the display timeline: the one copy every view reads
+	events   []string       // notices and errors of this session, shown by /events
 	custom   string         // /rename title
 	first    string         // first line of the first user message
 	ctx      int64          // context size shown in the status line
@@ -99,9 +101,21 @@ func (c *Controller) Context() (tokens int64) {
 	return tokens
 }
 
-// Note applies a display event of the interface (a notice, error or info) to the timeline without emitting it.
+// Note records a display event of the interface without emitting it: notices and errors go to Events, the rest to the timeline.
 func (c *Controller) Note(e agent.Event) {
-	c.view(func() { c.journal = agent.ApplyEvent(c.journal, e) })
+	c.view(func() {
+		if isStatus(e) {
+			c.events = append(c.events, time.Now().Format("15:04:05 ")+e.Text)
+		} else {
+			c.journal = agent.ApplyEvent(c.journal, e)
+		}
+	})
+}
+
+// Events returns the notices and errors of the session, oldest first.
+func (c *Controller) Events() (events []string) {
+	c.view(func() { events = slices.Clone(c.events) })
+	return events
 }
 
 // History returns the display journal of the session.
@@ -325,6 +339,9 @@ func (c *Controller) deliverLocked() {
 
 // publish records an event in the display journal, stamps the title and emits it.
 func (c *Controller) publish(e Event) {
+	if e.Kind == "agent" && isStatus(*e.Agent) {
+		e = Event{Kind: e.Agent.Kind, Text: e.Agent.Text}
+	}
 	switch e.Kind {
 	case "agent":
 		c.journal = agent.ApplyEvent(c.journal, *e.Agent)
@@ -332,13 +349,19 @@ func (c *Controller) publish(e Event) {
 			c.first = agent.FirstLine(e.Agent.Text)
 		}
 	case "notice", "error":
-		c.journal = agent.ApplyEvent(c.journal, agent.Event{Kind: e.Kind, Text: e.Text})
+		c.events = append(c.events, time.Now().Format("15:04:05 ")+e.Text)
 	case "session":
 		c.journal = slices.Clone(e.Records)
+		c.events = nil
 		c.first = c.a.DefaultTitle()
 	}
 	e.Title = c.titleLocked()
 	c.emit(e)
+}
+
+// isStatus tells notices and errors outside the conversation (retries, failures) from <notify> messages and tool output.
+func isStatus(e agent.Event) bool {
+	return (e.Kind == "notice" || e.Kind == "error") && !e.Final && !strings.HasPrefix(e.Text, "<notify>")
 }
 
 // setupError explains what is missing before a message can start a turn.

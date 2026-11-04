@@ -51,6 +51,7 @@ var commandList = []CommandInfo{
 	{"/resume", "<", "Resume a saved session in this project"},
 	{"/reload", "~", "Re-read settings and DASHY.md for the next request"},
 	{"/rename", "#", "Rename this session; empty name restores the default"},
+	{"/events", "i", "Show notices and errors of this session"},
 	{"/compact", "=", "Summarize older turns; add a prompt to guide it"},
 	{"/settings", "*", "Configure display, compaction and bash output options"},
 	{"/models", "*", "Select the model and reasoning effort"},

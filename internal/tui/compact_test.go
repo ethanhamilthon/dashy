@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -20,9 +21,8 @@ func TestCompactRunsInTheBackground(t *testing.T) {
 	}
 	release()
 	m = awaitIdle(t, m)
-	last := m.entries[len(m.entries)-1]
-	if last.Kind != "notice" || last.Text == "" {
-		t.Fatalf("compaction result was not reported: %+v", last)
+	if !strings.HasPrefix(m.flash.Text, "Compacted") {
+		t.Fatalf("compaction result was not reported: %q", m.flash.Text)
 	}
 	if m.ctl.Status().Busy {
 		t.Fatal("compaction state was not cleared")
@@ -40,8 +40,8 @@ func TestSendDuringCompactionIsRefused(t *testing.T) {
 	if len(m.ctl.Status().Queued) != 0 {
 		t.Fatal("a message was queued while the compaction request held the history")
 	}
-	if got := m.entries[len(m.entries)-1]; got.Kind != "notice" || got.Text != "Compaction is running; wait before sending." {
-		t.Fatalf("expected a refusal notice, got %+v", got)
+	if !hasEvent(m, "Compaction is running; wait before sending.") {
+		t.Fatalf("expected a refusal notice: %v", m.ctl.Events())
 	}
 	if m.input.Value() != "while compacting" {
 		t.Fatalf("refused message must stay in the composer: %q", m.input.Value())
@@ -58,7 +58,7 @@ func TestCompactWithGuidanceRunsFromEnter(t *testing.T) {
 	if len(m.ctl.Status().Queued) != 0 || m.input.Value() != "" {
 		t.Fatalf("/compact with guidance was treated as chat: queued=%v input=%q", m.ctl.Status().Queued, m.input.Value())
 	}
-	if !hasEntry(m, "notice", "Nothing to compact.") {
+	if !hasEvent(m, "Nothing to compact.") {
 		t.Fatalf("compaction did not run: %+v", m.entries)
 	}
 }

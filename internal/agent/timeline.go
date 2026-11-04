@@ -110,9 +110,9 @@ func RecordsForItem(item json.RawMessage) []Record {
 		} else if strings.HasPrefix(text, "<compact_summary>") {
 			summary := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(text, "<compact_summary>"), "</compact_summary>"))
 			if summary != "" {
-				return []Record{{Kind: "notice", Text: "Compacted conversation: " + summary}}
+				return []Record{{Kind: "info", Text: "Compacted conversation: " + summary}}
 			}
-			return []Record{{Kind: "notice", Text: "Compacted earlier conversation."}}
+			return []Record{{Kind: "info", Text: "Compacted earlier conversation."}}
 		}
 		if text != "" {
 			return []Record{{Kind: kind, Text: text}}
@@ -163,7 +163,7 @@ func RecordsForItem(item json.RawMessage) []Record {
 	default:
 		// Provider-managed tool events remain visible even without a specialized UI.
 		if v.Type != "" {
-			return []Record{{Kind: "notice", Text: string(item)}}
+			return []Record{{Kind: "output", Text: string(item)}}
 		}
 	}
 	return nil
