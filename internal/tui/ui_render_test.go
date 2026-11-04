@@ -166,10 +166,15 @@ func TestTimelineLimitsAndHiddenSpacing(t *testing.T) {
 			t.Fatal("UI limit changed source text")
 		}
 	}
-	m.entries = append(m.entries, entry{Kind: "error", Text: "API failure"})
-	setLines("minimal")
-	if !strings.Contains(ansi.Strip(m.timeline()), "API failure") {
-		t.Fatal("standalone errors must remain visible")
+	m.entries = append(m.entries, entry{Kind: "error", Text: "tool failure"})
+	if !strings.Contains(ansi.Strip(m.timeline()), "tool failure") {
+		t.Fatal("full shows failed tool output")
+	}
+	for _, mode := range []string{"normal", "minimal"} {
+		setLines(mode)
+		if strings.Contains(ansi.Strip(m.timeline()), "tool failure") {
+			t.Fatalf("%s must hide failed tool output like output", mode)
+		}
 	}
 }
 

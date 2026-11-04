@@ -43,7 +43,7 @@ func eventColors(kind string) (fg lipgloss.TerminalColor, label string) {
 	case "output":
 		return darkGray, "<"
 	case "error":
-		return errorColor, "error"
+		return errorColor, "<"
 	case "notice":
 		return muted, "!"
 	default:
@@ -113,6 +113,8 @@ func bodyColor(kind string) lipgloss.TerminalColor {
 	switch kind {
 	case "code":
 		return codeGray
+	case "error":
+		return errorColor
 	case "output", "reasoning":
 		return darkGray
 	}
@@ -154,12 +156,10 @@ func (m *model) timeline() string {
 	for i, e := range m.entries {
 		limit := -1
 		switch e.Kind {
-		case "code":
-			limit = settings.MaxLines("code")
-		case "output":
+		case "code", "output", "reasoning":
+			limit = settings.MaxLines(e.Kind)
+		case "error": // a failed tool call is output in red
 			limit = settings.MaxLines("output")
-		case "reasoning":
-			limit = settings.MaxLines("reasoning")
 		}
 		if i >= len(m.cache) {
 			m.cache = append(m.cache, renderedEntry{})
