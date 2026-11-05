@@ -8,11 +8,16 @@ import (
 	"syscall"
 )
 
+// lockPath is the flock file that marks a session as open in some dashy process.
+func (a *Agent) lockPath() string { return filepath.Join(a.home, "locks", a.id+".lock") }
+
 // acquire takes the exclusive per-session lock and opens the session socket. Every session has
 // its own socket, a dashy -p sub-agent too, so notify and view from its shell reach it.
 func (a *Agent) acquire() error {
-	lockPath := filepath.Join(a.sessionsDir, a.SessionID()+".lock")
-	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
+	if err := os.MkdirAll(filepath.Dir(a.lockPath()), 0700); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(a.lockPath(), os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return err
 	}
@@ -34,14 +39,15 @@ func (a *Agent) acquire() error {
 }
 
 // release closes the socket, drops the lock and removes the lock file of an unsaved session.
+// The database stays open: a session change hands it to the next session.
 func (a *Agent) release() {
 	a.StopNotifications()
 	if a.owner != nil {
 		_ = syscall.Flock(int(a.owner.Fd()), syscall.LOCK_UN)
 		_ = a.owner.Close()
 		a.owner = nil
-		if _, err := os.Stat(a.HistoryPath); os.IsNotExist(err) {
-			_ = os.Remove(filepath.Join(a.sessionsDir, a.SessionID()+".lock"))
+		if !a.stored {
+			_ = os.Remove(a.lockPath())
 		}
 	}
 }
@@ -58,14 +64,17 @@ func (a *Agent) StopNotifications() bool {
 	return true
 }
 
-// HasSavedSession reports whether the session has history or a file on disk.
-func (a *Agent) HasSavedSession() bool {
-	_, err := os.Stat(a.HistoryPath)
-	return len(a.History) > 0 || err == nil
-}
+// HasSavedSession reports whether the session has history or is stored.
+func (a *Agent) HasSavedSession() bool { return len(a.History) > 0 || a.stored }
 
-// Close releases the session: its socket and its lock.
-func (a *Agent) Close() { a.release() }
+// Close releases the session (its socket and its lock) and closes the database.
+func (a *Agent) Close() {
+	a.release()
+	if a.db != nil {
+		a.db.Close()
+		a.db = nil
+	}
+}
 
 // NewSession and Resume are called only when no turn is running.
 func (a *Agent) NewSession() error      { return a.changeSession("") }
@@ -91,7 +100,7 @@ func (a *Agent) changeSession(id string) error {
 		a.promptFrozen, a.promptSource = false, "resume"
 		return nil
 	}
-	next := &Agent{opts: a.opts, home: a.home, sessionsDir: a.sessionsDir, Shell: a.Shell,
+	next := &Agent{opts: a.opts, home: a.home, db: a.db, project: a.project, Shell: a.Shell,
 		promptSource: "new", slots: &imageSlots{}, queue: &Steering{wake: a.queue.wake}}
 	if err := next.loadConfig(a.Shell.Dir); err != nil {
 		return err

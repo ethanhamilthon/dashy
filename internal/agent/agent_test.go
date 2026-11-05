@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -82,7 +81,7 @@ func newTestAgentWith(t *testing.T, fp *fakeProvider, opts Options, pre func(hom
 	s := DefaultSettings()
 	s.Provider, s.Model = "p", "m"
 	s.Providers["p"] = Provider{BaseURL: server.URL}
-	if err := writeSettings(filepath.Join(home, "settings.json"), s); err != nil {
+	if err := SaveSettings(home, s); err != nil {
 		t.Fatal(err)
 	}
 	if pre != nil {

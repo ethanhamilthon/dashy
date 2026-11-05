@@ -2,7 +2,6 @@ package agent
 
 import (
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -19,7 +18,7 @@ func TestProviderFailuresNeverShowTheKey(t *testing.T) {
 	s := DefaultSettings()
 	s.Provider, s.Model = "p", "m"
 	s.Providers["p"] = Provider{BaseURL: server.URL, APIKey: "sk-secret-123"}
-	if err := writeSettings(filepath.Join(home, "settings.json"), s); err != nil {
+	if err := SaveSettings(home, s); err != nil {
 		t.Fatal(err)
 	}
 	a, err := New(t.TempDir(), Options{})

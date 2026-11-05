@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,14 +38,8 @@ func TestFailedResponseLeavesNoPartialItem(t *testing.T) {
 	if _, err := turn(t, a, "hi"); err == nil {
 		t.Fatal("failed response reported as success")
 	}
-	data, err := os.ReadFile(a.HistoryPath)
-	if err != nil || strings.Contains(string(data), "partial answer") || !strings.Contains(string(data), "hi") {
-		t.Fatalf("saved session %q, %v", data, err)
-	}
-	var line map[string]any
-	for _, l := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-		if json.Unmarshal([]byte(l), &line) != nil || line["type"] == nil && line["role"] == nil {
-			t.Fatalf("session line is not a history item: %s", l)
-		}
+	items := strings.Join(storedItems(t, a), "\n")
+	if strings.Contains(items, "partial answer") || !strings.Contains(items, "hi") {
+		t.Fatalf("saved session %q", items)
 	}
 }

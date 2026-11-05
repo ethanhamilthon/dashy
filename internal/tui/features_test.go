@@ -3,8 +3,6 @@ package tui
 import (
 	"dashy/internal/osc7501"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -49,7 +47,7 @@ func TestResumeAutocompleteIsScopedAndExecutesSelectedSession(t *testing.T) {
 	if err = a.Save(); err != nil {
 		t.Fatal(err)
 	}
-	oldID := strings.TrimSuffix(filepath.Base(a.HistoryPath), ".jsonl")
+	oldID := a.SessionID()
 	if err = a.NewSession(); err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +56,7 @@ func TestResumeAutocompleteIsScopedAndExecutesSelectedSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer b.Close()
-	foreign := strings.TrimSuffix(filepath.Base(b.HistoryPath), ".jsonl")
+	foreign := b.SessionID()
 	m := newModel(a, cwd, osc7501.New(io.Discard, false))
 	m.input.SetValue("/resume")
 	matches := m.completions()
@@ -86,8 +84,5 @@ func TestResumeAutocompleteIsScopedAndExecutesSelectedSession(t *testing.T) {
 	m.input.SetValue("/resume " + oldID[:12])
 	if len(m.completions()) == 0 {
 		t.Fatal("session prefix filtering failed")
-	}
-	if _, err = os.Stat(a.HistoryPath); err != nil {
-		t.Fatal(err)
 	}
 }

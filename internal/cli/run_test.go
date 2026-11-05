@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -15,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -22,6 +22,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"dashy/internal/agent"
 )
 
 // stub is a provider that answers with a full Responses stream; each request is recorded.
@@ -62,9 +64,9 @@ func setup(t *testing.T, url string) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("DASHY_HOME", home)
-	settings := map[string]any{"provider": "p", "model": "m", "providers": map[string]any{"p": map[string]any{"base_url": url}}}
-	data, _ := json.Marshal(settings)
-	if err := os.WriteFile(filepath.Join(home, "settings.json"), data, 0600); err != nil {
+	s := agent.DefaultSettings()
+	s.Provider, s.Model, s.Providers["p"] = "p", "m", agent.Provider{BaseURL: url}
+	if err := agent.SaveSettings(home, s); err != nil {
 		t.Fatal(err)
 	}
 	return home
@@ -416,15 +418,15 @@ func TestPrintSelectionFlagsOverrideSettingsForOneRun(t *testing.T) {
 	srv := httptest.NewServer(s)
 	defer srv.Close()
 	home := setup(t, srv.URL)
-	before, _ := os.ReadFile(filepath.Join(home, "settings.json"))
+	before, _ := agent.LoadSettings(home)
 	if _, _, err := runCLI(t, "", "-p", "x", "--provider", "p", "--model", "other-model", "--effort", "low"); err != nil {
 		t.Fatal(err)
 	}
 	if body := s.bodies[0]; !strings.Contains(body, `"model":"other-model"`) || !strings.Contains(body, `"effort":"low"`) {
 		t.Fatalf("request body: %s", body)
 	}
-	if after, _ := os.ReadFile(filepath.Join(home, "settings.json")); !bytes.Equal(before, after) {
-		t.Fatalf("settings changed:\n%s", after)
+	if after, _ := agent.LoadSettings(home); !reflect.DeepEqual(before, after) {
+		t.Fatalf("settings changed: %+v", after)
 	}
 	for _, args := range [][]string{
 		{"-p", "x", "--effort", "huge"},

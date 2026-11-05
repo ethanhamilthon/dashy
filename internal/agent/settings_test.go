@@ -8,50 +8,58 @@ import (
 	"testing"
 )
 
-// A missing settings file means defaults; invalid files are rejected with the reason in the error.
+// rawSettingsHome is a DASHY_HOME whose database stores data as settings, unvalidated.
+func rawSettingsHome(t *testing.T, data string) string {
+	t.Helper()
+	home := t.TempDir()
+	db, err := openDB(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO settings (id, data, version) VALUES (1, ?, 1)`, data); err != nil {
+		t.Fatal(err)
+	}
+	return home
+}
+
+// A fresh database means defaults; invalid stored settings are rejected with the reason in the error.
 func TestLoadSettingsDefaultsAndValidation(t *testing.T) {
-	s, err := LoadSettings(filepath.Join(t.TempDir(), "missing.json"))
+	s, err := LoadSettings(t.TempDir())
 	if err != nil || !s.ReasoningSummary || s.ShowLines != "normal" {
 		t.Fatalf("defaults: %+v %v", s, err)
 	}
 	t.Setenv("DASHY_TEST_UNSET_KEY", "")
 	bad := map[string]string{
 		"show_lines":       `{"show_lines":"huge","reasoning_summary":true}`,
-		"base_url":         `{"provider":"p","model":"m","show_lines":"short","providers":{"p":{"base_url":"ftp://x"}}}`,
-		"key and env":      `{"provider":"p","model":"m","show_lines":"short","providers":{"p":{"base_url":"https://x","api_key":"a","api_key_env":"B"}}}`,
-		"effort":           `{"provider":"p","model":"m","show_lines":"short","effort":"ultra","providers":{"p":{"base_url":"https://x"}}}`,
-		"unset key env":    `{"provider":"p","model":"m","show_lines":"short","providers":{"p":{"base_url":"https://x","api_key_env":"DASHY_TEST_UNSET_KEY"}}}`,
+		"base_url":         `{"provider":"p","model":"m","show_lines":"normal","providers":{"p":{"base_url":"ftp://x"}}}`,
+		"key and env":      `{"provider":"p","model":"m","show_lines":"normal","providers":{"p":{"base_url":"https://x","api_key":"a","api_key_env":"B"}}}`,
+		"effort":           `{"provider":"p","model":"m","show_lines":"normal","effort":"ultra","providers":{"p":{"base_url":"https://x"}}}`,
+		"unset key env":    `{"provider":"p","model":"m","show_lines":"normal","providers":{"p":{"base_url":"https://x","api_key_env":"DASHY_TEST_UNSET_KEY"}}}`,
 		"unknown provider": `{"provider":"nope","model":"m","show_lines":"short"}`,
 	}
 	for name, body := range bad {
-		path := filepath.Join(t.TempDir(), "settings.json")
-		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := LoadSettings(path); err == nil || !strings.Contains(err.Error(), "settings") {
+		if _, err := LoadSettings(rawSettingsHome(t, body)); err == nil || !strings.Contains(err.Error(), "settings") {
 			t.Errorf("%s: accepted (%v)", name, err)
 		}
 	}
 }
 
-// Settings are written atomically with private permissions and read back unchanged.
+// The database is private to the user, and saved settings read back unchanged.
 func TestSaveSettingsIsPrivateAndRoundTrips(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "home", "settings.json")
+	home := filepath.Join(t.TempDir(), "home")
 	s := DefaultSettings()
 	s.Provider, s.Model, s.Effort = "p", "m", "high"
 	s.Providers["p"] = Provider{BaseURL: "https://api.example.com/v1"}
-	if err := writeSettings(path, s); err != nil {
+	if err := SaveSettings(home, s); err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Stat(path)
-	if err != nil || info.Mode().Perm() != 0600 {
-		t.Fatalf("file mode %v %v", info, err)
+	for path, want := range map[string]os.FileMode{home: 0700, DBPath(home): 0600} {
+		if info, err := os.Stat(path); err != nil || info.Mode().Perm() != want {
+			t.Fatalf("%s: mode %v %v", path, info, err)
+		}
 	}
-	dir, _ := os.Stat(filepath.Dir(path))
-	if dir.Mode().Perm() != 0700 {
-		t.Fatalf("directory mode %v", dir.Mode().Perm())
-	}
-	back, err := LoadSettings(path)
+	back, err := LoadSettings(home)
 	if err != nil || back.Model != "m" || back.Effort != "high" || back.Providers["p"].BaseURL != "https://api.example.com/v1" {
 		t.Fatalf("round trip: %+v %v", back, err)
 	}
@@ -78,35 +86,18 @@ func TestSelectionsAreAppliedAndSaved(t *testing.T) {
 	if a.ChangeSettings(func(s *Settings) { s.ShowLines = "huge" }) == nil || a.Settings().ShowLines != "full" {
 		t.Fatal("invalid settings accepted")
 	}
-	back, err := LoadSettings(a.SettingsPath())
+	back, err := LoadSettings(a.home)
 	if err != nil || back.Model != "m2" || back.Effort != "high" || back.ReasoningSummary || back.Providers["q"].BaseURL == "" {
 		t.Fatalf("saved settings: %+v %v", back, err)
 	}
 }
 
-// show_lines used to be short, medium or full; saved files keep working.
-func TestOldShowLinesValuesAreMigrated(t *testing.T) {
-	for old, want := range map[string]string{"short": "normal", "medium": "full", "full": "full", "minimal": "minimal"} {
-		path := filepath.Join(t.TempDir(), "settings.json")
-		if err := os.WriteFile(path, []byte(`{"show_lines":"`+old+`","providers":{}}`), 0600); err != nil {
-			t.Fatal(err)
-		}
-		if s, err := LoadSettings(path); err != nil || s.ShowLines != want {
-			t.Fatalf("%s: got %q (%v), want %q", old, s.ShowLines, err, want)
-		}
-	}
-}
-
 // The bash output limit comes from settings only: default 8192, validated, and applied to calls.
 func TestShellOutputSetting(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "settings.json")
-	if s, err := LoadSettings(path); err != nil || s.ShellOutput != ShellOutput {
+	if s, err := LoadSettings(t.TempDir()); err != nil || s.ShellOutput != ShellOutput {
 		t.Fatalf("default: %+v, %v", s, err)
 	}
-	if err := os.WriteFile(path, []byte(`{"shell_output":-1,"providers":{}}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := LoadSettings(path); err == nil {
+	if _, err := LoadSettings(rawSettingsHome(t, `{"shell_output":-1,"providers":{}}`)); err == nil {
 		t.Fatal("negative shell_output accepted")
 	}
 	if strings.Contains(string(raw(bashParameters())), "max_output") {

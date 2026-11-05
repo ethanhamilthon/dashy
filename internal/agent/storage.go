@@ -1,41 +1,24 @@
 package agent
 
 import (
-	"bufio"
-	"bytes"
 	"crypto/rand"
-	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
-	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 )
 
-// Session files hold one history item per line plus at most one {"meta":{...}}
-// line: the custom title.
-type sessionMeta struct {
-	Meta *struct {
-		Title string `json:"title"`
-	} `json:"meta"`
-}
-
-// openProject selects the sessions directory of dir and opens or creates the session.
+// openProject selects the project of dir and opens or creates the session.
 func (a *Agent) openProject(dir string) error {
 	absolute, err := filepath.Abs(dir)
 	if err != nil {
 		return err
 	}
-	a.Shell.Dir = absolute
-	hash := sha256.Sum256([]byte(absolute))
-	a.sessionsDir = filepath.Join(a.home, "projects", hex.EncodeToString(hash[:]))
-	if err := os.MkdirAll(a.sessionsDir, 0700); err != nil {
-		return err
-	}
+	a.Shell.Dir, a.project = absolute, absolute
 	if a.opts.Resume == "" {
 		return a.createSession()
 	}
@@ -47,15 +30,14 @@ func (a *Agent) openSession(id string) error {
 	if id == "" || filepath.Base(id) != id || strings.ContainsAny(id, `/\`) {
 		return fmt.Errorf("invalid session ID: %s", id)
 	}
-	path := filepath.Join(a.sessionsDir, id+".jsonl")
-	info, err := os.Lstat(path)
-	if os.IsNotExist(err) || (err == nil && !info.Mode().IsRegular()) {
+	err := a.db.QueryRow(`SELECT title FROM sessions WHERE id = ? AND project = ?`, id, a.project).Scan(&a.title)
+	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("session not found in this project: %s", id)
 	}
 	if err != nil {
 		return err
 	}
-	a.HistoryPath = path
+	a.id, a.stored = id, true
 	if err := a.acquire(); err != nil {
 		return err
 	}
@@ -71,9 +53,55 @@ func (a *Agent) createSession() error {
 	if _, err := rand.Read(id[:]); err != nil {
 		return err
 	}
-	name := time.Now().UTC().Format("20060102T150405.000000000Z") + "-" + hex.EncodeToString(id[:]) + ".jsonl"
-	a.HistoryPath = filepath.Join(a.sessionsDir, name)
+	a.id = time.Now().UTC().Format("20060102T150405.000000000Z") + "-" + hex.EncodeToString(id[:])
 	return a.acquire()
+}
+
+// readSession loads the history items of the session.
+func (a *Agent) readSession() error {
+	rows, err := a.db.Query(`SELECT data FROM items WHERE session = ? ORDER BY seq`, a.id)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	a.History = nil
+	for rows.Next() {
+		var item []byte
+		if err := rows.Scan(&item); err != nil {
+			return err
+		}
+		a.History = append(a.History, json.RawMessage(item))
+	}
+	a.saved = len(a.History)
+	return rows.Err()
+}
+
+// Save stores the session row and the history items added since the last save.
+func (a *Agent) Save() error {
+	tx, err := a.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`INSERT INTO sessions (id, project, title, first, updated) VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT (id) DO UPDATE SET title = excluded.title, first = excluded.first, updated = excluded.updated`,
+		a.id, a.project, a.title, a.DefaultTitle(), time.Now().UnixNano()); err != nil {
+		return err
+	}
+	start := min(a.saved, len(a.History))
+	if _, err := tx.Exec(`DELETE FROM items WHERE session = ? AND seq >= ?`, a.id, start); err != nil {
+		return err
+	}
+	for i := start; i < len(a.History); i++ {
+		if _, err := tx.Exec(`INSERT INTO items (session, seq, data) VALUES (?, ?, ?)`, a.id, i, string(a.History[i])); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	a.saved, a.stored = len(a.History), true
+	return nil
 }
 
 // SessionSummary is the /resume view of a saved session.
@@ -84,66 +112,25 @@ type SessionSummary struct {
 }
 
 // Sessions returns saved sessions of this project, most recently updated first.
+// The title is the custom one, else the first line of the first user message.
 func (a *Agent) Sessions() ([]SessionSummary, error) {
-	entries, err := os.ReadDir(a.sessionsDir)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
+	rows, err := a.db.Query(`SELECT id, CASE title WHEN '' THEN first ELSE title END, updated
+		FROM sessions WHERE project = ? ORDER BY updated DESC, id DESC`, a.project)
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 	var sessions []SessionSummary
-	for _, e := range entries {
-		if !e.Type().IsRegular() || !strings.HasSuffix(e.Name(), ".jsonl") {
-			continue
-		}
-		info, err := e.Info()
-		if err != nil {
+	for rows.Next() {
+		var s SessionSummary
+		var updated int64
+		if err := rows.Scan(&s.ID, &s.Title, &updated); err != nil {
 			return nil, err
 		}
-		summary, err := sessionSummary(filepath.Join(a.sessionsDir, e.Name()))
-		if err != nil {
-			return nil, err
-		}
-		summary.ID, summary.Updated = strings.TrimSuffix(e.Name(), ".jsonl"), info.ModTime()
-		sessions = append(sessions, summary)
+		s.Updated = time.Unix(0, updated)
+		sessions = append(sessions, s)
 	}
-	sort.Slice(sessions, func(i, j int) bool {
-		if sessions[i].Updated.Equal(sessions[j].Updated) {
-			return sessions[i].ID > sessions[j].ID
-		}
-		return sessions[i].Updated.After(sessions[j].Updated)
-	})
-	return sessions, nil
-}
-
-// sessionSummary reads the title of a session file: the custom title if there is
-// one, else the default title, else the first line of the first user message, as
-// resume shows it. The meta line comes first, so reading stops at the first title
-// found instead of parsing the whole file.
-func sessionSummary(path string) (SessionSummary, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return SessionSummary{}, err
-	}
-	defer file.Close()
-	reader := bufio.NewReader(file)
-	for {
-		line, err := reader.ReadBytes('\n')
-		var meta sessionMeta
-		if json.Unmarshal(line, &meta) == nil && meta.Meta != nil {
-			if title := meta.Meta.Title; title != "" {
-				return SessionSummary{Title: title}, nil
-			}
-		} else if title := firstUserLine([]json.RawMessage{line}); title != "" {
-			return SessionSummary{Title: title}, nil
-		}
-		if err == io.EOF {
-			return SessionSummary{}, nil
-		} else if err != nil {
-			return SessionSummary{}, err
-		}
-	}
+	return sessions, rows.Err()
 }
 
 // firstUserLine is the first non-empty line of the first user record of history.
@@ -184,84 +171,4 @@ func FirstLine(text string) string {
 // DefaultTitle is the first line of the first user message.
 func (a *Agent) DefaultTitle() string {
 	return firstUserLine(a.History)
-}
-
-func (a *Agent) sessionData() ([]byte, error) {
-	var buffer bytes.Buffer
-	if a.title != "" {
-		meta, err := json.Marshal(map[string]any{"meta": map[string]string{"title": a.title}})
-		if err != nil {
-			return nil, err
-		}
-		buffer.Write(meta)
-		buffer.WriteByte('\n')
-	}
-	for _, item := range a.History {
-		var compact bytes.Buffer
-		if err := json.Compact(&compact, item); err != nil {
-			return nil, err
-		}
-		buffer.Write(compact.Bytes())
-		buffer.WriteByte('\n')
-	}
-	return buffer.Bytes(), nil
-}
-
-// readSession loads history and the custom title.
-func (a *Agent) readSession() error {
-	var err error
-	a.History, a.title, err = readSessionFile(a.HistoryPath)
-	return err
-}
-
-// readSessionFile parses a session file into history items and the last custom
-// title. A torn last line is dropped. There is no line length limit, so a valid
-// item of any size reads back.
-func readSessionFile(path string) (history []json.RawMessage, title string, err error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, "", err
-	}
-	lines := bytes.Split(data, []byte("\n"))
-	if len(lines) > 0 && len(lines[len(lines)-1]) == 0 {
-		lines = lines[:len(lines)-1]
-	}
-	for i, line := range lines {
-		line = bytes.TrimSpace(line)
-		if len(line) == 0 {
-			continue
-		}
-		var meta sessionMeta
-		if err := json.Unmarshal(line, &meta); err != nil || line[0] != '{' {
-			if i == len(lines)-1 {
-				break // torn last line
-			}
-			return nil, "", fmt.Errorf("%s: line %d is not a JSON object", path, i+1)
-		}
-		if meta.Meta != nil {
-			title = meta.Meta.Title
-			continue
-		}
-		history = append(history, append(json.RawMessage(nil), line...))
-	}
-	return history, title, nil
-}
-
-func writePrivate(path string, data []byte) error {
-	file, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
-	if err != nil {
-		return err
-	}
-	temp := file.Name()
-	defer os.Remove(temp)
-	if _, err = file.Write(data); err == nil {
-		err = file.Sync()
-	}
-	if closeErr := file.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return err
-	}
-	return os.Rename(temp, path)
 }

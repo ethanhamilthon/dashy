@@ -174,7 +174,7 @@ func modelsCommand(ctx context.Context, args []string, out, diagnostics io.Write
 	if err != nil {
 		return err
 	}
-	settings, err := agent.LoadSettings(filepath.Join(home, "settings.json"))
+	settings, err := agent.LoadSettings(home)
 	if err != nil {
 		return err
 	}

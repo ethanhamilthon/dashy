@@ -3,13 +3,10 @@ package tui
 import (
 	"bytes"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -53,7 +50,7 @@ type fixture struct {
 }
 
 // newFixture builds a model whose provider answers "answer" after the hold channel
-// (when set) is closed. home is DASHY_HOME; providers is written to settings.json.
+// (when set) is closed. home is DASHY_HOME; providers are saved as settings.
 func newFixture(t *testing.T, providers bool) *fixture {
 	t.Helper()
 	f := &fixture{out: &syncBuffer{}, project: t.TempDir(), reached: make(chan struct{}, 64)}
@@ -98,8 +95,7 @@ func newFixture(t *testing.T, providers bool) *fixture {
 		s.Provider, s.Model = "p", "m"
 		s.Providers["p"] = agent.Provider{BaseURL: server.URL}
 	}
-	data, _ := json.Marshal(s)
-	if err := os.WriteFile(filepath.Join(home, "settings.json"), data, 0600); err != nil {
+	if err := agent.SaveSettings(home, s); err != nil {
 		t.Fatal(err)
 	}
 	a, err := agent.New(f.project, agent.Options{})

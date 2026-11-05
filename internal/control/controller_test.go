@@ -3,7 +3,6 @@ package control
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -79,8 +78,7 @@ func newHarness(t *testing.T, model *fakeModel) *harness {
 	s := agent.DefaultSettings()
 	s.Provider, s.Model = "p", "m"
 	s.Providers["p"] = agent.Provider{BaseURL: server.URL}
-	data, _ := json.Marshal(s)
-	if err := os.WriteFile(filepath.Join(home, "settings.json"), data, 0600); err != nil {
+	if err := agent.SaveSettings(home, s); err != nil {
 		t.Fatal(err)
 	}
 	a, err := agent.New(dir, agent.Options{})

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -170,7 +171,7 @@ func TestEffortChangeIsSavedBeforeEscape(t *testing.T) {
 	m = openPickerCmd(t, m, "/models")
 	m = key(m, tea.KeyMsg{Type: tea.KeyRight}) // effort: "" -> none
 	m = key(m, tea.KeyMsg{Type: tea.KeyEsc})
-	saved, err := agent.LoadSettings(a.SettingsPath())
+	saved, err := agent.LoadSettings(filepath.Dir(a.DBPath()))
 	if m.menuKind != "" || a.Settings().Effort != "none" || err != nil || saved.Effort != "none" {
 		t.Fatalf("picker %q, effective effort %q, saved effort %q (%v)", m.menuKind, a.Settings().Effort, saved.Effort, err)
 	}

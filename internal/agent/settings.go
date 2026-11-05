@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"net/url"
@@ -27,7 +29,7 @@ const (
 	fullReasonLines   = 6
 )
 
-// The shell_output range /settings steps through; settings.json may hold any value >= 0.
+// The shell_output range /settings steps through; stored settings may hold any value >= 0.
 const (
 	ShellOutputMin = 2048
 	ShellOutputMax = 65536
@@ -68,7 +70,7 @@ func Redact(s Settings, text string, extra ...string) string {
 	return text
 }
 
-// Settings is the content of ~/.dashy/settings.json.
+// Settings are stored as one JSON row in the database.
 type Settings struct {
 	Provider         string              `json:"provider"`
 	Model            string              `json:"model"`
@@ -161,46 +163,71 @@ func validateSettings(s Settings) error {
 	return nil
 }
 
-// LoadSettings reads and validates a settings file; a missing file means defaults.
-func LoadSettings(path string) (Settings, error) {
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return DefaultSettings(), nil
-	}
+// LoadSettings reads the settings stored in home; a fresh database means defaults.
+func LoadSettings(home string) (Settings, error) {
+	db, err := openDB(home)
 	if err != nil {
 		return Settings{}, err
 	}
-	s := DefaultSettings()
-	if err := json.Unmarshal(data, &s); err != nil {
-		return Settings{}, fmt.Errorf("settings %s: %w", path, err)
-	}
-	// show_lines used to be short, medium or full.
-	switch s.ShowLines {
-	case "short":
-		s.ShowLines = "normal"
-	case "medium":
-		s.ShowLines = "full"
-	}
-	if err := validateSettings(s); err != nil {
-		return Settings{}, fmt.Errorf("settings %s: %w", path, err)
-	}
-	return s, nil
+	defer db.Close()
+	s, _, err := loadSettings(db)
+	return s, err
 }
 
-// writeSettings validates and atomically writes settings (directory 0700, file 0600).
-func writeSettings(path string, s Settings) error {
-	if err := validateSettings(s); err != nil {
-		return err
-	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(s, "", "  ")
+// SaveSettings validates and stores settings in home.
+func SaveSettings(home string, s Settings) error {
+	db, err := openDB(home)
 	if err != nil {
 		return err
 	}
-	return writePrivate(path, append(data, '\n'))
+	defer db.Close()
+	_, err = storeSettings(db, s)
+	return err
+}
+
+// loadSettings reads and validates the stored settings and their version (0 when none are stored).
+func loadSettings(db *sql.DB) (Settings, int64, error) {
+	var data []byte
+	var version int64
+	s := DefaultSettings()
+	err := db.QueryRow(`SELECT data, version FROM settings WHERE id = 1`).Scan(&data, &version)
+	if errors.Is(err, sql.ErrNoRows) {
+		return s, 0, nil
+	}
+	if err == nil {
+		err = json.Unmarshal(data, &s)
+	}
+	if err == nil {
+		err = validateSettings(s)
+	}
+	if err != nil {
+		return Settings{}, version, fmt.Errorf("settings: %w", err)
+	}
+	return s, version, nil
+}
+
+// settingsVersion is the version of the stored settings; it grows on every save.
+func settingsVersion(db *sql.DB) (version int64, err error) {
+	err = db.QueryRow(`SELECT version FROM settings WHERE id = 1`).Scan(&version)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return version, err
+}
+
+// storeSettings validates and saves settings, returning their new version.
+func storeSettings(db *sql.DB, s Settings) (version int64, err error) {
+	if err := validateSettings(s); err != nil {
+		return 0, err
+	}
+	data, err := json.Marshal(s)
+	if err != nil {
+		return 0, err
+	}
+	err = db.QueryRow(`INSERT INTO settings (id, data, version) VALUES (1, ?, 1)
+		ON CONFLICT (id) DO UPDATE SET data = excluded.data, version = settings.version + 1
+		RETURNING version`, string(data)).Scan(&version)
+	return version, err
 }
 
 // DashyHome is DASHY_HOME: default ~/.dashy, a relative value resolves against cwd.
@@ -218,84 +245,66 @@ func DashyHome(cwd string) (string, error) {
 	return filepath.Abs(dir)
 }
 
-// SettingsPath is the settings file in DASHY_HOME.
-func (a *Agent) SettingsPath() string { return filepath.Join(a.home, "settings.json") }
+// DBPath is the database holding settings and sessions.
+func (a *Agent) DBPath() string { return DBPath(a.home) }
 
 // AttachmentsDir is where pasted and viewed images are saved.
 func (a *Agent) AttachmentsDir() string { return filepath.Join(a.home, "attachments") }
 
 // settingsState is the live settings of an agent. The turn goroutine, the TUI and
-// file reloads share it, so every access goes through mu.
+// reloads of changes made by other dashy processes share it, so every access goes through mu.
 type settingsState struct {
-	mu     sync.Mutex
-	s      Settings
-	client openai.Client
-	stamp  fileStamp // of settings.json when s was loaded or saved
-	warned fileStamp // last stamp whose reload failed, reported once
-}
-
-// fileStamp identifies a version of settings.json by mtime and size.
-type fileStamp struct {
-	mod, size int64
-	exists    bool
-}
-
-func stampOf(path string) (st fileStamp, ok bool) {
-	info, err := os.Stat(path)
-	if os.IsNotExist(err) {
-		return fileStamp{}, true
-	}
-	if err != nil {
-		return fileStamp{}, false
-	}
-	return fileStamp{info.ModTime().UnixNano(), info.Size(), true}, true
+	mu      sync.Mutex
+	s       Settings
+	client  openai.Client
+	version int64 // of the stored settings when s was loaded or saved
+	warned  int64 // last version whose reload failed, reported once
 }
 
 // set makes s effective and rebuilds the API client for its provider. Callers hold mu or own c.
-func (c *settingsState) set(s Settings, stamp fileStamp) {
+func (c *settingsState) set(s Settings, version int64) {
 	if s.Providers == nil {
 		s.Providers = map[string]Provider{}
 	}
-	c.s, c.stamp = s, stamp
+	c.s, c.version = s, version
 	c.client = newClient(s.Providers[s.Provider])
 }
 
-// readSettings loads settings.json with the per-run -p overrides applied and validated.
-func (a *Agent) readSettings() (Settings, fileStamp, error) {
-	stamp, _ := stampOf(a.SettingsPath())
-	s, err := LoadSettings(a.SettingsPath())
+// readSettings loads the stored settings with the per-run -p overrides applied and validated.
+func (a *Agent) readSettings() (Settings, int64, error) {
+	s, version, err := loadSettings(a.db)
 	if err != nil {
-		return Settings{}, stamp, err
+		return Settings{}, version, err
 	}
 	for field, value := range map[*string]string{&s.Provider: a.opts.Provider, &s.Model: a.opts.Model, &s.Effort: a.opts.Effort} {
 		if value != "" {
 			*field = value
 		}
 	}
-	return s, stamp, validateSettings(s)
+	return s, version, validateSettings(s)
 }
 
-// reloadLocked re-reads settings.json when its mtime or size changed. A broken file keeps
-// the previous settings and returns a warning, once per file version.
+// reloadLocked re-reads the settings when another process saved a new version. Settings
+// that fail to load keep the previous ones and return a warning, once per version.
 func (a *Agent) reloadLocked() (warning string) {
 	c := a.cfg
-	stamp, ok := stampOf(a.SettingsPath())
-	if !ok || stamp == c.stamp {
+	version, err := settingsVersion(a.db)
+	if err != nil || version == c.version {
 		return ""
 	}
-	s, stamp, err := a.readSettings()
+	s, version, err := a.readSettings()
 	if err != nil {
-		if stamp == c.warned {
+		if version == c.warned {
 			return ""
 		}
-		c.warned = stamp
-		return "Settings file changed but could not be loaded; keeping the previous settings: " + Redact(c.s, err.Error())
+		c.warned = version
+		return "Stored settings changed but could not be loaded; keeping the previous settings: " + Redact(c.s, err.Error())
 	}
-	c.set(s, stamp)
+	c.set(s, version)
 	return ""
 }
 
-// refreshSettings picks up edits of settings.json made since the last request. emit may be nil.
+// refreshSettings picks up settings saved by other processes since the last request. emit may be nil.
 func (a *Agent) refreshSettings(emit func(Event)) {
 	a.cfg.mu.Lock()
 	warning := a.reloadLocked()
@@ -325,7 +334,7 @@ func (a *Agent) Settings() Settings {
 	return a.settingsLocked()
 }
 
-// update changes the latest settings (outside edits included), then validates, saves and
+// update changes the latest settings (other processes' changes included), then validates, saves and
 // applies them. A failed change or save leaves the previous settings in place.
 func (a *Agent) update(change func(*Settings) error) error {
 	a.cfg.mu.Lock()
@@ -335,11 +344,11 @@ func (a *Agent) update(change func(*Settings) error) error {
 	if err := change(&next); err != nil {
 		return err
 	}
-	if err := writeSettings(a.SettingsPath(), next); err != nil {
+	version, err := storeSettings(a.db, next)
+	if err != nil {
 		return err
 	}
-	stamp, _ := stampOf(a.SettingsPath())
-	a.cfg.set(next, stamp)
+	a.cfg.set(next, version)
 	return nil
 }
 

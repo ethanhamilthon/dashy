@@ -1,23 +1,30 @@
 package agent
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 )
 
-// editFile simulates the user changing settings.json from outside while the agent works.
+// editFile simulates another dashy process changing the stored settings while the agent works.
 func editFile(t *testing.T, a *Agent, change func(*Settings)) {
 	t.Helper()
-	s, err := LoadSettings(a.SettingsPath())
+	s, err := LoadSettings(a.home)
 	if err != nil {
 		t.Fatal(err)
 	}
 	change(&s)
-	if err := writeSettings(a.SettingsPath(), s); err != nil {
+	if err := SaveSettings(a.home, s); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// storeRaw stores settings data as a new version without validating it.
+func storeRaw(t *testing.T, a *Agent, data string) {
+	t.Helper()
+	if _, err := a.db.Exec(`UPDATE settings SET data = ?, version = version + 1 WHERE id = 1`, data); err != nil {
+		t.Error(err)
 	}
 }
 
@@ -38,7 +45,7 @@ func reloadAgent(t *testing.T, opts Options, hook func(a *Agent)) (*Agent, *fake
 	return a, fp
 }
 
-// Editing settings.json during a turn does not stop it; the next request uses the new values.
+// Settings saved by another process during a turn do not stop it; the next request uses the new values.
 func TestFileEditDuringTurnAppliesToNextRequest(t *testing.T) {
 	a, fp := reloadAgent(t, Options{}, func(a *Agent) {
 		editFile(t, a, func(s *Settings) { s.Model, s.Effort = "new-model", "high" })
@@ -70,12 +77,10 @@ func TestChangeDuringTurnAppliesToNextRequest(t *testing.T) {
 	}
 }
 
-// Broken JSON keeps the old settings, warns once, and a later fix is picked up.
+// Broken stored JSON keeps the old settings, warns once, and a later fix is picked up.
 func TestBrokenSettingsKeepOldAndWarnOnce(t *testing.T) {
 	a, fp := reloadAgent(t, Options{}, func(a *Agent) {
-		if err := os.WriteFile(a.SettingsPath(), []byte(`{"model": `), 0600); err != nil {
-			t.Error(err)
-		}
+		storeRaw(t, a, `{"model": `)
 	})
 	events, err := turn(t, a, "go")
 	if err != nil {
@@ -96,13 +101,10 @@ func TestBrokenSettingsKeepOldAndWarnOnce(t *testing.T) {
 	if a.Settings().Model != "m" {
 		t.Fatalf("settings changed: %+v", a.Settings())
 	}
-	editFile2 := `{"provider":"p","model":"fixed","providers":` + providersJSON(a) + `}`
-	if err := os.WriteFile(a.SettingsPath(), []byte(editFile2), 0600); err != nil {
-		t.Fatal(err)
-	}
+	storeRaw(t, a, `{"provider":"p","model":"fixed","providers":`+providersJSON(a)+`}`)
 	a.refreshSettings(nil)
 	if a.Settings().Model != "fixed" {
-		t.Fatalf("fixed file not picked up: %+v", a.Settings())
+		t.Fatalf("fixed settings not picked up: %+v", a.Settings())
 	}
 }
 
@@ -110,19 +112,17 @@ func providersJSON(a *Agent) string {
 	return `{"p":{"base_url":"` + a.Settings().Providers["p"].BaseURL + `"}}`
 }
 
-// An invalid but well-formed file (unknown show_lines) is treated like broken JSON.
+// Invalid but well-formed settings (unknown show_lines) are treated like broken JSON.
 func TestInvalidSettingsKeepOld(t *testing.T) {
 	a := newTestAgent(t, &fakeProvider{}, Options{})
-	if err := os.WriteFile(a.SettingsPath(), []byte(`{"show_lines":"bogus"}`), 0600); err != nil {
-		t.Fatal(err)
-	}
+	storeRaw(t, a, `{"show_lines":"bogus"}`)
 	a.refreshSettings(nil)
 	if s := a.Settings(); s.Model != "m" || s.ShowLines == "bogus" {
 		t.Fatalf("settings: %+v", s)
 	}
 }
 
-// -p overrides win over settings.json before and after a reload.
+// -p overrides win over the stored settings before and after a reload.
 func TestOverridesSurviveReload(t *testing.T) {
 	a, fp := reloadAgent(t, Options{Model: "cli-model", Effort: "low"}, func(a *Agent) {
 		editFile(t, a, func(s *Settings) { s.Model, s.Effort, s.ReasoningSummary = "file-model", "high", false })

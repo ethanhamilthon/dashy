@@ -2,12 +2,12 @@ package agent
 
 import (
 	"context"
+	"database/sql"
 	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -70,8 +70,11 @@ type Agent struct {
 	cfg          *settingsState // live settings and API client, shared with the turn goroutine
 	Shell        *shell.Runner
 	History      []json.RawMessage
-	HistoryPath  string
-	sessionsDir  string
+	db           *sql.DB // DASHY_HOME/dashy.db, shared by sessions of this agent
+	project      string  // absolute project directory
+	id           string  // session ID
+	saved        int     // history items already stored
+	stored       bool    // the session has a row in the database
 	owner        *os.File
 	promptFiles  []string // DASHY.md files selected at startup, /new or /resume
 	prompt       string   // assembled system prompt, frozen once assembled
@@ -92,12 +95,16 @@ func New(dir string, opts Options) (*Agent, error) {
 	}
 	a := &Agent{opts: opts, home: home, promptSource: "startup", Shell: &shell.Runner{Dir: dir}, slots: &imageSlots{}, queue: &Steering{}}
 	a.Shell.Env = a.shellEnv
+	if a.db, err = openDB(home); err != nil {
+		return nil, err
+	}
 	if err := a.loadConfig(dir); err != nil {
+		a.db.Close()
 		return nil, err
 	}
 	_ = CleanAttachments(a.AttachmentsDir())
 	if err := a.openProject(dir); err != nil {
-		a.release()
+		a.Close()
 		return nil, err
 	}
 	return a, nil
@@ -108,7 +115,7 @@ func (a *Agent) loadConfig(dir string) error {
 	if a.cfg == nil {
 		a.cfg = &settingsState{}
 	}
-	settings, stamp, err := a.readSettings()
+	settings, version, err := a.readSettings()
 	if err != nil {
 		return err
 	}
@@ -116,7 +123,7 @@ func (a *Agent) loadConfig(dir string) error {
 	if err != nil {
 		return err
 	}
-	a.cfg.set(settings, stamp)
+	a.cfg.set(settings, version)
 	a.promptFiles = files
 	return nil
 }
@@ -125,18 +132,6 @@ func raw(v any) json.RawMessage { data, _ := json.Marshal(v); return data }
 
 func (a *Agent) message(role, text string) {
 	a.History = append(a.History, raw(map[string]any{"role": role, "content": text}))
-}
-
-// Save writes the session file atomically.
-func (a *Agent) Save() error {
-	if err := os.MkdirAll(filepath.Dir(a.HistoryPath), 0700); err != nil {
-		return err
-	}
-	data, err := a.sessionData()
-	if err != nil {
-		return err
-	}
-	return writePrivate(a.HistoryPath, data)
 }
 
 // saveHistory is Save with the error worded for a turn.
@@ -492,9 +487,7 @@ func (a *Agent) FinalText() string {
 func (a *Agent) PromptFiles() []string { return append([]string(nil), a.promptFiles...) }
 
 // SessionID is the ID of the active session.
-func (a *Agent) SessionID() string {
-	return strings.TrimSuffix(filepath.Base(a.HistoryPath), ".jsonl")
-}
+func (a *Agent) SessionID() string { return a.id }
 
 // bashParameters is the strict JSON schema of the bash tool.
 func bashParameters() map[string]any {

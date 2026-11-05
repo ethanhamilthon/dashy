@@ -2,9 +2,6 @@ package agent
 
 import (
 	"encoding/base64"
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -12,7 +9,7 @@ import (
 )
 
 // The resume list title is the custom title, else the first line of the first
-// user message; rename and rename-reset both go through the saved meta line.
+// user message; rename and rename-reset are both saved.
 func TestSessionTitlesAndRenameReset(t *testing.T) {
 	fp := &fakeProvider{reply: func(int, string) string { return textReply("ok") }}
 	a := newTestAgent(t, fp, Options{})
@@ -102,24 +99,6 @@ func TestRenameResetRestoresDefaultTitle(t *testing.T) {
 	}
 }
 
-// A torn last line (a crash mid-write) is dropped; earlier lines are kept.
-func TestTornLastLineIsDropped(t *testing.T) {
-	a := newTestAgent(t, &fakeProvider{}, Options{})
-	a.message("user", "kept")
-	if err := a.Save(); err != nil {
-		t.Fatal(err)
-	}
-	f, err := os.OpenFile(a.HistoryPath, os.O_APPEND|os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.WriteString(`{"role":"user","content":"tor`)
-	f.Close()
-	if err := a.readSession(); err != nil || len(a.History) != 1 {
-		t.Fatalf("read after torn line: %d items, %v", len(a.History), err)
-	}
-}
-
 func TestSessionLockIsExclusive(t *testing.T) {
 	a := newTestAgent(t, &fakeProvider{}, Options{})
 	if err := a.Save(); err != nil {
@@ -154,8 +133,27 @@ func tinyPNG() []byte {
 	return data
 }
 
-// A session file holds history items, one per line, plus one meta line for the title.
-func TestSessionFileHoldsHistoryItemsAndTitleOnly(t *testing.T) {
+// storedItems reads the history items stored for the session.
+func storedItems(t *testing.T, a *Agent) []string {
+	t.Helper()
+	rows, err := a.db.Query(`SELECT data FROM items WHERE session = ? ORDER BY seq`, a.SessionID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var item string
+		if err := rows.Scan(&item); err != nil {
+			t.Fatal(err)
+		}
+		items = append(items, item)
+	}
+	return items
+}
+
+// The database holds every history item once, in order, and the title in the session row.
+func TestSessionRowsHoldHistoryItemsAndTitle(t *testing.T) {
 	fp := &fakeProvider{reply: func(int, string) string { return textReply("ok") }}
 	a := newTestAgent(t, fp, Options{})
 	if _, err := turn(t, a, "hi"); err != nil {
@@ -164,25 +162,13 @@ func TestSessionFileHoldsHistoryItemsAndTitleOnly(t *testing.T) {
 	if err := a.Rename("Plan"); err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(a.HistoryPath)
-	if err != nil {
-		t.Fatal(err)
+	items := storedItems(t, a)
+	if len(items) != 2 || len(items) != len(a.History) || items[0] != string(a.History[0]) {
+		t.Fatalf("stored items %v", items)
 	}
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	metas := 0
-	for _, line := range lines {
-		var v map[string]json.RawMessage
-		if err := json.Unmarshal([]byte(line), &v); err != nil {
-			t.Fatalf("line is not an object: %s", line)
-		}
-		if _, ok := v["meta"]; ok {
-			metas++
-		} else if _, ok := v["role"]; !ok {
-			t.Fatalf("history line without a role: %s", line)
-		}
-	}
-	if len(lines) != 3 || metas != 1 {
-		t.Fatalf("lines %d, meta lines %d:\n%s", len(lines), metas, data)
+	var title string
+	if err := a.db.QueryRow(`SELECT title FROM sessions WHERE id = ?`, a.SessionID()).Scan(&title); err != nil || title != "Plan" {
+		t.Fatalf("title %q, %v", title, err)
 	}
 }
 
@@ -210,29 +196,24 @@ func TestLargeFirstMessageKeepsListTitle(t *testing.T) {
 	}
 }
 
-// The session list reads a title from the start of a file and stops there: later
-// lines, even a damaged one, are not parsed.
-func TestSessionListReadsTitleFromTheStart(t *testing.T) {
+// The session list holds only this project's sessions, newest first, titled by the
+// custom title or else the first user line.
+func TestSessionListIsScopedAndOrdered(t *testing.T) {
 	a := newTestAgent(t, &fakeProvider{}, Options{})
-	files := map[string]string{
-		"a.jsonl": `{"meta":{"title":"Custom"}}` + "\n" + `{"role":"user","content":"first"}` + "\n",
-		"b.jsonl": `{"meta":{"title":""}}` + "\n" + `{"role":"user","content":"Saved first line"}` + "\n",
-		"c.jsonl": `{"type":"reasoning","summary":[]}` + "\n" + `{"role":"user","content":"\n  Hello there\nmore"}` + "\nnot json\n{}\n",
-	}
-	for name, data := range files {
-		if err := os.WriteFile(filepath.Join(a.sessionsDir, name), []byte(data), 0600); err != nil {
+	for _, row := range [][]any{
+		{"a", a.project, "Custom", "first", 3},
+		{"b", a.project, "", "Saved first line", 2},
+		{"c", "/elsewhere", "", "Other project", 1},
+	} {
+		if _, err := a.db.Exec(`INSERT INTO sessions (id, project, title, first, updated) VALUES (?, ?, ?, ?, ?)`, row...); err != nil {
 			t.Fatal(err)
 		}
 	}
 	sessions, err := a.Sessions()
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || len(sessions) != 2 || sessions[0].ID != "a" || sessions[0].Title != "Custom" || sessions[1].Title != "Saved first line" {
+		t.Fatalf("sessions %+v, %v", sessions, err)
 	}
-	titles := map[string]string{}
-	for _, s := range sessions {
-		titles[s.ID] = s.Title
-	}
-	if titles["a"] != "Custom" || titles["b"] != "Saved first line" || titles["c"] != "Hello there" {
-		t.Fatalf("titles %v", titles)
+	if err := a.openSession("c"); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("another project's session opened: %v", err)
 	}
 }

@@ -60,10 +60,9 @@ SYSTEM PROMPT (DASHY.md)
   Each file is added under a '# <absolute path>' header, separated by a blank line.
   The prompt is assembled lazily before the first model request of a session and
   then kept. /new, /resume and /reload read settings and DASHY.md again and reassemble it.
-  settings.json is also re-read before every model request when it changed (mtime or
-  size), and changes made in the TUI apply at once, even while a turn runs: the running
-  turn continues and its next request uses the new values. A broken file keeps the
-  previous settings and prints a warning. --provider/--model/--effort keep priority.
+  Settings changed in the TUI apply at once, even while a turn runs: the running turn
+  continues and its next request uses the new values. Changes saved by another dashy
+  process are picked up before the next model request. --provider/--model/--effort keep priority.
 
 BASH TOOL
   The model's only tool runs /bin/bash --noprofile --norc in the project directory.
@@ -72,7 +71,7 @@ BASH TOOL
   - Result: {output, exit_code}; stdout and stderr are merged.
   - timeout: seconds, default 120, maximum 600. A timeout (exit 124) or
     cancellation (exit 130) kills the whole process group.
-  - Output limit: the shell_output setting (settings.json or /settings), default 8192
+  - Output limit: the shell_output setting (/settings), default 8192
     bytes, 0 = no truncation; the model cannot change it. When output is cut, the middle
     is removed and the first and last halves are kept.
   - Background processes do not outlive the call; for long work redirect output
@@ -119,9 +118,10 @@ SUB-AGENT RECIPES
       (make test > test.log 2>&1; dashy notify "Tests completed with status $?") &
 
 FILES
-  $DASHY_HOME/settings.json              Providers, models, reasoning and display settings, and
-                                         shell_output (bash output bytes kept per call, default 8192).
-  $DASHY_HOME/projects/<hash>/<id>.jsonl LLM history items and <id>.lock flock.
+  $DASHY_HOME/dashy.db                   SQLite database: settings (providers, models, reasoning,
+                                         display and shell_output, the bash output bytes kept per
+                                         call, default 8192) and sessions with their history items.
+  $DASHY_HOME/locks/<id>.lock            flock held while a session is open.
   $DASHY_HOME/attachments/               Saved images from clipboard paste or dashy view.
   $DASHY_HOME/run/<id>.sock              Unix socket for notify/view. Paths over the macOS limit (~104 bytes)
                                          use a 16-hex hash name; if DASHY_HOME is too long for that,

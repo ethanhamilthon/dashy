@@ -213,7 +213,7 @@ func (c *Controller) selectLocked(provider, model, effort string) error {
 	if err := c.a.Select(provider, model, effort); err != nil {
 		return fail("failed", "%s", agent.Redact(c.a.Settings(), err.Error()))
 	}
-	c.publish(Event{Kind: "notice", Text: "Selected " + provider + " · " + model + "/" + effort + " (saved to " + c.a.SettingsPath() + ")"})
+	c.publish(Event{Kind: "notice", Text: "Selected " + provider + " · " + model + "/" + effort + " (saved to " + c.a.DBPath() + ")"})
 	return nil
 }
 
@@ -226,7 +226,7 @@ func (c *Controller) AddProvider(name, baseURL, apiKey string) error {
 			err = fail("failed", "%s", agent.Redact(settings, err.Error(), apiKey))
 			return
 		}
-		c.publish(Event{Kind: "notice", Text: "Provider created in " + c.a.SettingsPath() + ". Choose a model with /models."})
+		c.publish(Event{Kind: "notice", Text: "Provider created in " + c.a.DBPath() + ". Choose a model with /models."})
 	})
 	return err
 }
@@ -276,7 +276,7 @@ var settingRows = map[string]settingRow{
 		},
 		func(delta int, s *agent.Settings) {
 			// Doubling steps; from a value off the grid, a step goes to the next grid value in
-			// that direction. 0 (no truncation) is only reachable by editing settings.json.
+			// that direction. 0 (no truncation) is not offered.
 			v := s.ShellOutput
 			switch {
 			case v == 0 && delta > 0:
