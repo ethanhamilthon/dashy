@@ -1,10 +1,8 @@
 package agent
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -67,19 +65,18 @@ func TestResumeKeepsTitleHistoryAndEstimatesContext(t *testing.T) {
 	}
 }
 
-// Compaction drops the first user message ("turn 0"), but the default title stays
-// "turn 0" in the list and after reopening; a rename is separate and its reset
-// restores that default.
-func TestDefaultTitleSurvivesCompaction(t *testing.T) {
-	fp := &fakeProvider{reply: func(int, string) string { return summaryReply("SUMMARY") }}
-	a := newTestAgent(t, fp, Options{})
-	compactTurns(t, a, 6, 1)
-	if _, err := a.Compact(context.Background(), ""); err != nil {
+// A rename is separate from the default title (the first user line), and its
+// reset restores that default in the list and after reopening.
+func TestRenameResetRestoresDefaultTitle(t *testing.T) {
+	a := newTestAgent(t, &fakeProvider{}, Options{})
+	a.message("user", "turn 0 x")
+	a.message("assistant", "answer 0")
+	if err := a.Save(); err != nil {
 		t.Fatal(err)
 	}
 	const want = "turn 0 x"
-	if strings.Contains(fmt.Sprint(a.Records()), want) || a.DefaultTitle() != want {
-		t.Fatalf("after compaction: default %q, records %v", a.DefaultTitle(), a.Records())
+	if a.DefaultTitle() != want {
+		t.Fatalf("default %q", a.DefaultTitle())
 	}
 	if err := a.Rename("Mine"); err != nil {
 		t.Fatal(err)
@@ -218,8 +215,8 @@ func TestLargeFirstMessageKeepsListTitle(t *testing.T) {
 func TestSessionListReadsTitleFromTheStart(t *testing.T) {
 	a := newTestAgent(t, &fakeProvider{}, Options{})
 	files := map[string]string{
-		"a.jsonl": `{"meta":{"title":"Custom","default_title":""}}` + "\n" + `{"role":"user","content":"first"}` + "\n",
-		"b.jsonl": `{"meta":{"title":"","default_title":"Saved first line"}}` + "\n" + `{"role":"user","content":"later"}` + "\n",
+		"a.jsonl": `{"meta":{"title":"Custom"}}` + "\n" + `{"role":"user","content":"first"}` + "\n",
+		"b.jsonl": `{"meta":{"title":""}}` + "\n" + `{"role":"user","content":"Saved first line"}` + "\n",
 		"c.jsonl": `{"type":"reasoning","summary":[]}` + "\n" + `{"role":"user","content":"\n  Hello there\nmore"}` + "\nnot json\n{}\n",
 	}
 	for name, data := range files {

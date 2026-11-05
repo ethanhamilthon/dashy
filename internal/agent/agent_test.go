@@ -152,42 +152,10 @@ func TestMissingModelSendsNoRequest(t *testing.T) {
 	}
 }
 
-// compactTurns makes history with n user turns of size bytes each.
-func compactTurns(t *testing.T, a *Agent, n, size int) {
-	t.Helper()
-	for i := 0; i < n; i++ {
-		a.message("user", fmt.Sprintf("turn %d %s", i, strings.Repeat("x", size)))
-		a.message("assistant", fmt.Sprintf("answer %d", i))
-	}
-}
-
-func TestManualCompactionReplacesOldItemsWithSummary(t *testing.T) {
-	fp := &fakeProvider{reply: func(n int, body string) string {
-		if strings.Contains(body, `"stream":true`) {
-			return textReply("after")
-		}
-		return `{"id":"s","object":"response","status":"completed","output":[{"type":"message","id":"m","role":"assistant","status":"completed","content":[{"type":"output_text","text":"SUMMARY","annotations":[]}]}]}`
-	}}
-	a := newTestAgent(t, fp, Options{})
-	compactTurns(t, a, 6, 10)
-	text, err := a.Compact(context.Background(), "")
-	if err != nil || !strings.Contains(text, "Compacted") {
-		t.Fatalf("compact: %q %v", text, err)
-	}
-	records := a.Records()
-	joined := fmt.Sprint(records)
-	if strings.Contains(joined, "turn 0") || !strings.Contains(joined, "SUMMARY") {
-		t.Fatalf("records after compaction: %v", records)
-	}
-	if got := a.ContextTokens(); got <= 0 {
-		t.Fatalf("context after compaction = %d", got)
-	}
-}
-
-// estimateTokens counts history bytes, so a large history crosses the threshold.
+// estimateTokens counts history bytes and charges images a fixed amount.
 func TestEstimateTokensCountsImagesAndText(t *testing.T) {
-	big := json.RawMessage(`{"role":"user","content":"` + strings.Repeat("a", 4*DefaultCompactThreshold) + `"}`)
-	if got := estimateTokens([]json.RawMessage{big}); got <= DefaultCompactThreshold {
+	big := json.RawMessage(`{"role":"user","content":"` + strings.Repeat("a", 4000) + `"}`)
+	if got := estimateTokens([]json.RawMessage{big}); got < 1000 {
 		t.Fatalf("estimate %d", got)
 	}
 	img := json.RawMessage(`{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,AAAA"}]}`)

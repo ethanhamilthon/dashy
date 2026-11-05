@@ -30,9 +30,6 @@ func (c *Controller) Input(input agent.Input) error {
 }
 
 func (c *Controller) queueLocked(input agent.Input) error {
-	if c.active.kind == "compact" {
-		return fail("compacting", "Compaction is running; wait before sending.")
-	}
 	if c.closing || c.deferred != nil {
 		return fail("cancelling", "Session is changing; wait for the change to complete.")
 	}
@@ -157,24 +154,6 @@ func (c *Controller) Rename(title string) error {
 	return err
 }
 
-// Compact summarizes older turns, guided by optional prompt text.
-func (c *Controller) Compact(prompt string) error {
-	var err error
-	c.view(func() {
-		switch {
-		case c.active != nil && c.active.kind == "compact":
-			err = fail("busy", "Compaction is already running.")
-		case c.active != nil:
-			err = fail("busy", "Wait for the active turn before compacting.")
-		default:
-			if err = c.setupError(); err == nil {
-				c.beginCompactLocked(strings.TrimSpace(prompt))
-			}
-		}
-	})
-	return err
-}
-
 // Instructions lists the DASHY.md files of the session, in prompt order.
 func (c *Controller) Instructions() (paths []string) {
 	c.view(func() { paths = c.a.PromptFiles() })
@@ -255,8 +234,6 @@ func (c *Controller) AddProvider(name, baseURL, apiKey string) error {
 // Settings rows that ChangeSetting toggles or cycles.
 const (
 	SettingReasoning   = "reasoning"
-	SettingAutoCompact = "autocompact"
-	SettingThreshold   = "threshold"
 	SettingLines       = "lines"
 	SettingShellOutput = "shelloutput"
 )
@@ -273,33 +250,6 @@ var settingRows = map[string]settingRow{
 	SettingReasoning: {"Reasoning summary",
 		func(s agent.Settings) ([]string, int) { return onOff(s.ReasoningSummary) },
 		func(delta int, s *agent.Settings) { s.ReasoningSummary = delta < 0 }},
-	SettingAutoCompact: {"Auto compact",
-		func(s agent.Settings) ([]string, int) { return onOff(s.AutoCompact) },
-		func(delta int, s *agent.Settings) { s.AutoCompact = delta < 0 }},
-	SettingThreshold: {"Compact at",
-		func(s agent.Settings) (options []string, current int) {
-			current = -1
-			for v := int64(agent.CompactMin); v <= agent.CompactMax; v += agent.CompactStep {
-				if v == s.CompactThreshold {
-					current = len(options)
-				}
-				options = append(options, tokensLabel(v))
-			}
-			return options, current
-		},
-		func(delta int, s *agent.Settings) {
-			// From a value off the grid, a step goes to the next grid value in that direction.
-			v, grid := s.CompactThreshold, int64(agent.CompactStep)
-			switch {
-			case delta > 0:
-				v = (v/grid + 1) * grid
-			case v%grid == 0:
-				v -= grid
-			default:
-				v = v / grid * grid
-			}
-			s.CompactThreshold = min(max(v, agent.CompactMin), agent.CompactMax)
-		}},
 	SettingLines: {"Show lines",
 		func(s agent.Settings) ([]string, int) {
 			return agent.ShowLinesModes, slices.Index(agent.ShowLinesModes, s.ShowLines)
@@ -356,13 +306,6 @@ func onOff(v bool) ([]string, int) { return []string{"on", "off"}, map[bool]int{
 // (-1 when the stored value is not one of them).
 func SettingOptions(setting string, s agent.Settings) (options []string, current int) {
 	return settingRows[setting].options(s)
-}
-
-func tokensLabel(v int64) string {
-	if v >= 1_000_000 && v%1_000_000 == 0 {
-		return fmt.Sprintf("%dM", v/1_000_000)
-	}
-	return fmt.Sprintf("%dK", v/1000)
 }
 
 // SettingName is the name of a setting row.

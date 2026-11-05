@@ -95,12 +95,7 @@ func (r *Reporter) HandleEvent(e control.Event) {
 	defer r.mu.Unlock()
 	switch e.Kind {
 	case "started":
-		r.state = "working"
-		if e.Operation == "compact" {
-			r.msg = "Compacting"
-		} else {
-			r.msg = agent.FirstLine(e.Text)
-		}
+		r.state, r.msg = "working", agent.FirstLine(e.Text)
 	case "notice":
 		if strings.HasPrefix(e.Text, "Retrying") {
 			r.state = "working"
@@ -111,7 +106,7 @@ func (r *Reporter) HandleEvent(e control.Event) {
 		switch {
 		case e.Status == "error":
 			r.state, r.msg = "error", e.Error
-		case e.Status == "cancelled" || e.Operation == "compact":
+		case e.Status == "cancelled":
 			r.state, r.msg = "idle", ""
 		default:
 			r.state, r.msg = "done", agent.FirstLine(e.Text) // e.Text: final assistant text

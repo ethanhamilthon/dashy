@@ -99,13 +99,6 @@ func (m model) completions() []command {
 			}
 			return []command{{name: text, icon: "#", label: label}}
 		}
-		if prompt, ok := strings.CutPrefix(text, "/compact "); ok {
-			label := "Compact with guidance: " + strings.TrimSpace(prompt)
-			if strings.TrimSpace(prompt) == "" {
-				label = "Type guidance for the summary, or Enter to compact"
-			}
-			return []command{{name: text, icon: "=", label: label}}
-		}
 	}
 	if m.hideCompletion || !strings.HasPrefix(text, "/") || strings.ContainsAny(text, " \n\t") {
 		return nil
@@ -144,7 +137,7 @@ func (m model) runCommand(name string) (tea.Model, tea.Cmd) {
 	if len(verb) == 0 {
 		return m, nil
 	}
-	if verb[0] != "/resume" && verb[0] != "/compact" && verb[0] != "/rename" && len(verb) != 1 {
+	if verb[0] != "/resume" && verb[0] != "/rename" && len(verb) != 1 {
 		return m.stop("error", "Unexpected command arguments.")
 	}
 	m.input.Reset()
@@ -180,8 +173,6 @@ func (m model) runCommand(name string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.submit(m.ctl.Rename(strings.TrimSpace(strings.TrimPrefix(name, "/rename"))))
-	case "/compact":
-		return m.submit(m.ctl.Compact(strings.TrimSpace(strings.TrimPrefix(name, "/compact"))))
 	case "/help":
 		return m.stop("info", control.Help(keyboardHelp))
 	case "/events":
@@ -227,7 +218,7 @@ func (m model) submit(err error) (tea.Model, tea.Cmd) {
 // reject shows a controller error. State rejections are notices; everything else is an error.
 func (m model) reject(err error) (tea.Model, tea.Cmd) {
 	kind := "error"
-	if e := (*control.Error)(nil); errors.As(err, &e) && slices.Contains([]string{"busy", "cancelling", "queue_full", "setup_required", "not_recallable", "compacting"}, e.Code) {
+	if e := (*control.Error)(nil); errors.As(err, &e) && slices.Contains([]string{"busy", "cancelling", "queue_full", "setup_required", "not_recallable"}, e.Code) {
 		kind = "notice"
 	}
 	return m.stop(kind, err.Error())

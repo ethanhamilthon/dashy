@@ -16,9 +16,8 @@ import (
 	"github.com/openai/openai-go/v3/option"
 )
 
-// Fixed limits of compaction, the bash tool and the timeline (show_lines).
+// Fixed limits of the bash tool and the timeline (show_lines).
 const (
-	CompactKeepTurns  = 4
 	ShellTimeout      = 120  // seconds, default for a bash call
 	ShellMaxTimeout   = 600  // seconds
 	ShellOutput       = 8192 // bytes kept per bash call by default (shell_output setting)
@@ -26,13 +25,6 @@ const (
 	normalReasonLines = 3
 	fullOutputLines   = 6 // show_lines=full: whole tool call, first lines of the output
 	fullReasonLines   = 6
-)
-
-// The compact_threshold range /settings steps through; settings.json may hold any positive value.
-const (
-	CompactMin  = 100_000
-	CompactMax  = 1_000_000
-	CompactStep = 100_000
 )
 
 // The shell_output range /settings steps through; settings.json may hold any value >= 0.
@@ -43,9 +35,6 @@ const (
 
 // ShowLinesModes are the show_lines values in /settings order.
 var ShowLinesModes = []string{"minimal", "normal", "full"}
-
-// DefaultCompactThreshold is the estimated history size, in tokens, that triggers automatic compaction.
-const DefaultCompactThreshold = 400_000
 
 // Efforts are the reasoning efforts offered by /models; "" uses the provider default.
 var Efforts = []string{"", "none", "minimal", "low", "medium", "high", "xhigh", "max"}
@@ -85,8 +74,6 @@ type Settings struct {
 	Model            string              `json:"model"`
 	Effort           string              `json:"effort"`
 	ReasoningSummary bool                `json:"reasoning_summary"`
-	AutoCompact      bool                `json:"auto_compact"`
-	CompactThreshold int64               `json:"compact_threshold"`
 	ShowLines        string              `json:"show_lines"`
 	ShellOutput      int                 `json:"shell_output"` // bytes of output kept per bash call, 0 = all
 	Providers        map[string]Provider `json:"providers"`
@@ -94,7 +81,7 @@ type Settings struct {
 
 // DefaultSettings is used when no settings file exists.
 func DefaultSettings() Settings {
-	return Settings{ReasoningSummary: true, AutoCompact: true, CompactThreshold: DefaultCompactThreshold, ShowLines: "normal", ShellOutput: ShellOutput, Providers: map[string]Provider{}}
+	return Settings{ReasoningSummary: true, ShowLines: "normal", ShellOutput: ShellOutput, Providers: map[string]Provider{}}
 }
 
 // SetupHint explains what must be configured before a model request; "" when nothing is missing.
@@ -139,9 +126,6 @@ func (s Settings) MaxLines(kind string) int {
 func validateSettings(s Settings) error {
 	if !slices.Contains(ShowLinesModes, s.ShowLines) {
 		return fmt.Errorf("show_lines must be minimal, normal or full")
-	}
-	if s.CompactThreshold <= 0 {
-		return fmt.Errorf("compact_threshold must be a positive number of tokens")
 	}
 	if s.ShellOutput < 0 {
 		return fmt.Errorf("shell_output must be >= 0 bytes (0 = no truncation)")

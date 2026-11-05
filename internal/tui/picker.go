@@ -73,7 +73,7 @@ func (m *model) openPicker(kind string) tea.Cmd {
 func (m *model) rebuildSettingsMenu() {
 	s := m.ctl.Settings()
 	m.menu = nil
-	for _, setting := range []string{control.SettingReasoning, control.SettingAutoCompact, control.SettingThreshold, control.SettingLines, control.SettingShellOutput} {
+	for _, setting := range []string{control.SettingReasoning, control.SettingLines, control.SettingShellOutput} {
 		options, current := control.SettingOptions(setting, s)
 		parts := make([]string, len(options))
 		for i, option := range options {

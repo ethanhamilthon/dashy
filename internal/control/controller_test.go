@@ -265,74 +265,6 @@ func TestRecallReturnsNewestInstructionOnce(t *testing.T) {
 	}
 }
 
-// Build n finished turns with distinct user text.
-func runTurns(h *harness, n int) {
-	for i := 0; i < n; i++ {
-		h.send(fmt.Sprintf("turn %d", i))
-		h.settle()
-	}
-}
-
-func TestCompactionCanBeCancelledWhileSummarizing(t *testing.T) {
-	gate := make(chan struct{})
-	defer close(gate)
-	h := newHarness(t, &fakeModel{})
-	runTurns(h, 6)
-	h.model.mu.Lock()
-	h.model.gate = gate
-	h.model.mu.Unlock()
-	before := len(h.model.requests())
-	if err := h.ctl.Compact(""); err != nil {
-		t.Fatal(err)
-	}
-	h.await("summary request", func([]Event) bool { return len(h.model.requests()) > before })
-	h.ctl.Stop()
-	done := doneEvents(h.settle())
-	if len(done) != 7 || done[6].Operation != "compact" || done[6].Status != "cancelled" {
-		t.Fatalf("done = %+v", doneEvents(h.log()))
-	}
-}
-
-// Compaction shrinks only the history sent to the model: the display keeps the
-// earlier conversation and the interface's own notes, and reports the compaction.
-func TestCompactKeepsDisplay(t *testing.T) {
-	h := newHarness(t, &fakeModel{})
-	runTurns(h, 6)
-	h.ctl.Note(agent.Event{Kind: "notice", Text: "interface note"})
-	if err := h.ctl.Compact(""); err != nil {
-		t.Fatal(err)
-	}
-	h.settle()
-	joined := fmt.Sprint(h.ctl.History(), h.ctl.Events())
-	if !strings.Contains(joined, "turn 0") || !strings.Contains(joined, "interface note") || !strings.Contains(joined, "Compacted") {
-		t.Fatalf("display after compaction: %s", joined)
-	}
-	if strings.Contains(fmt.Sprint(h.a.Records()), "turn 0") {
-		t.Fatal("history was not compacted")
-	}
-}
-
-// Automatic compaction, triggered inside a turn, keeps the display too and replaces no session.
-func TestAutomaticCompactionKeepsDisplay(t *testing.T) {
-	h := newHarness(t, &fakeModel{})
-	runTurns(h, 5)
-	huge := strings.Repeat("x", 4*agent.DefaultCompactThreshold+100)
-	h.send("big " + huge)
-	events := h.settle()
-	for _, e := range events {
-		if e.Kind == "session" {
-			t.Fatalf("compaction replaced the display: %s", describe(events))
-		}
-	}
-	joined := fmt.Sprint(h.ctl.History(), h.ctl.Events())
-	if !strings.Contains(joined, "turn 0") || !strings.Contains(joined, "Compacted") {
-		t.Fatalf("display after automatic compaction: %s", joined)
-	}
-	if strings.Contains(fmt.Sprint(h.a.Records()), "turn 0") {
-		t.Fatal("history was not compacted")
-	}
-}
-
 // Settings changed while a turn runs are accepted and saved; the turn keeps running.
 // The turn is started by an external notification, as it can be while the picker is open.
 func TestSettingsChangeWhileNotificationTurnRuns(t *testing.T) {
@@ -349,7 +281,6 @@ func TestSettingsChangeWhileNotificationTurnRuns(t *testing.T) {
 	}
 	for name, err := range map[string]error{
 		"reasoning": h.ctl.ChangeSetting(SettingReasoning, 1),
-		"compact":   h.ctl.ChangeSetting(SettingAutoCompact, 1),
 		"lines":     h.ctl.ChangeSetting(SettingLines, 1),
 		"model":     h.ctl.SelectModel("p", "other", "high"),
 	} {
@@ -358,7 +289,7 @@ func TestSettingsChangeWhileNotificationTurnRuns(t *testing.T) {
 		}
 	}
 	after := h.ctl.Settings()
-	if after.ReasoningSummary || after.AutoCompact || after.ShowLines != "full" || after.Model != "other" || after.Effort != "high" {
+	if after.ReasoningSummary || after.ShowLines != "full" || after.Model != "other" || after.Effort != "high" {
 		t.Fatalf("settings not applied while busy: %+v", after)
 	}
 	if !h.ctl.Status().Busy {
@@ -439,18 +370,18 @@ func TestSettingsAndProvidersThroughTheController(t *testing.T) {
 	if codeOf(h.ctl.AddProvider("q", "https://q.example/v1", "")) != "failed" {
 		t.Fatal("duplicate provider accepted")
 	}
-	for _, setting := range []string{SettingReasoning, SettingAutoCompact, SettingLines, SettingThreshold, SettingShellOutput} {
+	for _, setting := range []string{SettingReasoning, SettingLines, SettingShellOutput} {
 		if err := h.ctl.ChangeSetting(setting, 1); err != nil {
 			t.Fatal(err)
 		}
 	}
 	s := h.ctl.Settings()
-	if s.Model != "m2" || s.Effort != "high" || s.ShowLines != "full" || s.AutoCompact || s.ReasoningSummary || s.CompactThreshold != 500_000 || s.ShellOutput != 16384 || s.Providers["q"].APIKey != "sk-x" {
+	if s.Model != "m2" || s.Effort != "high" || s.ShowLines != "full" || s.ReasoningSummary || s.ShellOutput != 16384 || s.Providers["q"].APIKey != "sk-x" {
 		t.Fatalf("settings: %+v", s)
 	}
 }
 
-// Rename and compaction are refused while a turn runs; quitting during a turn waits
+// Rename is refused while a turn runs; quitting during a turn waits
 // for the cancellation and then closes the session.
 func TestBusyRejectionsAndQuitDuringTurn(t *testing.T) {
 	gate := make(chan struct{})
@@ -462,8 +393,8 @@ func TestBusyRejectionsAndQuitDuringTurn(t *testing.T) {
 	model.mu.Unlock()
 	h.send("slow")
 	h.await("request", func([]Event) bool { return len(model.requests()) > 0 })
-	if codeOf(h.ctl.Rename("x")) != "busy" || codeOf(h.ctl.Compact("")) != "busy" {
-		t.Fatal("rename or compaction accepted during a turn")
+	if codeOf(h.ctl.Rename("x")) != "busy" {
+		t.Fatal("rename accepted during a turn")
 	}
 	if closed, err := h.ctl.Quit(); closed || err != nil {
 		t.Fatalf("quit during turn: closed %v, %v", closed, err)

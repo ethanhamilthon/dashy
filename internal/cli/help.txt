@@ -120,9 +120,7 @@ SUB-AGENT RECIPES
 
 FILES
   $DASHY_HOME/settings.json              Providers, models, reasoning and display settings, and
-                                         compaction: auto_compact and compact_threshold (the
-                                         estimated history size in tokens, default 400000), and shell_output
-                                         (bash output bytes kept per call, default 8192).
+                                         shell_output (bash output bytes kept per call, default 8192).
   $DASHY_HOME/projects/<hash>/<id>.jsonl LLM history items and <id>.lock flock.
   $DASHY_HOME/attachments/               Saved images from clipboard paste or dashy view.
   $DASHY_HOME/run/<id>.sock              Unix socket for notify/view. Paths over the macOS limit (~104 bytes)

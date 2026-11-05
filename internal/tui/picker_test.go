@@ -60,30 +60,17 @@ func TestSettingsAndModelsPickers(t *testing.T) {
 		t.Fatal(err)
 	}
 	m = openPickerCmd(t, m, "/settings")
-	m = selectRow(t, m, "Auto compact")
+	m = selectRow(t, m, "Reasoning summary")
 	m = key(m, tea.KeyMsg{Type: tea.KeyRight})
-	if a.Settings().AutoCompact {
-		t.Fatal("auto compact not turned off")
+	if a.Settings().ReasoningSummary {
+		t.Fatal("reasoning summary not turned off")
 	}
 	if view := ansi.Strip(m.View()); !strings.Contains(view, "[off]") || !strings.Contains(view, " on ") {
 		t.Fatalf("both options must be listed: %q", view)
 	}
 	m = key(m, tea.KeyMsg{Type: tea.KeyLeft})
-	if !a.Settings().AutoCompact {
-		t.Fatal("auto compact not turned back on")
-	}
-	m = selectRow(t, m, "Compact at")
-	for i := 0; i < 20; i++ {
-		m = key(m, tea.KeyMsg{Type: tea.KeyRight})
-	}
-	if a.Settings().CompactThreshold != 1_000_000 {
-		t.Fatalf("threshold stops at 1M, got %d", a.Settings().CompactThreshold)
-	}
-	for i := 0; i < 20; i++ {
-		m = key(m, tea.KeyMsg{Type: tea.KeyLeft})
-	}
-	if a.Settings().CompactThreshold != 100_000 {
-		t.Fatalf("threshold stops at 100K, got %d", a.Settings().CompactThreshold)
+	if !a.Settings().ReasoningSummary {
+		t.Fatal("reasoning summary not turned back on")
 	}
 	m = selectRow(t, m, "Show lines")
 	m = key(m, tea.KeyMsg{Type: tea.KeyRight})

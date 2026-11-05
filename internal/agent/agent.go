@@ -78,7 +78,6 @@ type Agent struct {
 	promptFrozen bool
 	promptSource string // startup, new or resume (DASHY_SOURCE)
 	title        string // custom title set by /rename; "" means the default title
-	defaultTitle string // first user line, saved at compaction because that message may be dropped
 	lastRequest  Metadata
 	sock         *sessionSocket // nil in print mode
 	queue        *Steering      // one ordered queue of input for the running turn, shared with the socket
@@ -208,7 +207,6 @@ func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event)) (er
 		}
 		acceptSteering()
 		a.refreshSettings(emit)
-		a.compactIfNeeded(ctx, emit)
 		if e := a.saveHistory(); e != nil {
 			return e
 		}
@@ -435,6 +433,30 @@ func (a *Agent) request(ctx context.Context, emit func(Event)) (items []json.Raw
 		return nil, fmt.Errorf("provider stream ended without a completed response")
 	}
 	return completed, nil
+}
+
+const (
+	tokenBytes  = 4    // rough bytes per token for mixed prose, code and JSON
+	imageTokens = 1200 // charged per image so base64 payloads cannot dominate
+)
+
+var dataURLPayload = regexp.MustCompile(`data:image/[^"]*`)
+
+// estimateTokens approximates the prompt size of the whole history.
+func estimateTokens(history []json.RawMessage) int64 {
+	var total int64
+	for _, item := range history {
+		var v struct{ Content []struct{ Type string } }
+		if json.Unmarshal(item, &v) == nil {
+			for _, part := range v.Content {
+				if part.Type == "input_image" {
+					total += imageTokens
+				}
+			}
+		}
+		total += int64(len(dataURLPayload.ReplaceAllString(string(item), "data:image"))) / tokenBytes
+	}
+	return total
 }
 
 // ContextTokens is the size of the next prompt: the provider's count for the latest

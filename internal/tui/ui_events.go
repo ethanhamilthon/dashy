@@ -79,9 +79,6 @@ func (m model) workingBlock() string {
 		frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 		elapsed := max(time.Duration(0), time.Since(status.Started))
 		label := "working"
-		if status.Compacting {
-			label = "compacting"
-		}
 		hint := " · esc to stop"
 		if status.Cancelling {
 			label, hint = "cancelling", ""

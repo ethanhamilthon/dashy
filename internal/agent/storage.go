@@ -3,7 +3,6 @@ package agent
 import (
 	"bufio"
 	"bytes"
-	"cmp"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -18,11 +17,10 @@ import (
 )
 
 // Session files hold one history item per line plus at most one {"meta":{...}}
-// line: the custom title, and the default title saved by compaction.
+// line: the custom title.
 type sessionMeta struct {
 	Meta *struct {
-		Title        string `json:"title"`
-		DefaultTitle string `json:"default_title"`
+		Title string `json:"title"`
 	} `json:"meta"`
 }
 
@@ -134,7 +132,7 @@ func sessionSummary(path string) (SessionSummary, error) {
 		line, err := reader.ReadBytes('\n')
 		var meta sessionMeta
 		if json.Unmarshal(line, &meta) == nil && meta.Meta != nil {
-			if title := cmp.Or(meta.Meta.Title, meta.Meta.DefaultTitle); title != "" {
+			if title := meta.Meta.Title; title != "" {
 				return SessionSummary{Title: title}, nil
 			}
 		} else if title := firstUserLine([]json.RawMessage{line}); title != "" {
@@ -183,18 +181,15 @@ func FirstLine(text string) string {
 	return ""
 }
 
-// DefaultTitle is the first line of the first user message, or the value saved by compaction.
+// DefaultTitle is the first line of the first user message.
 func (a *Agent) DefaultTitle() string {
-	if a.defaultTitle != "" {
-		return a.defaultTitle
-	}
 	return firstUserLine(a.History)
 }
 
 func (a *Agent) sessionData() ([]byte, error) {
 	var buffer bytes.Buffer
-	if a.title != "" || a.defaultTitle != "" {
-		meta, err := json.Marshal(map[string]any{"meta": map[string]string{"title": a.title, "default_title": a.defaultTitle}})
+	if a.title != "" {
+		meta, err := json.Marshal(map[string]any{"meta": map[string]string{"title": a.title}})
 		if err != nil {
 			return nil, err
 		}
@@ -215,17 +210,17 @@ func (a *Agent) sessionData() ([]byte, error) {
 // readSession loads history and the custom title.
 func (a *Agent) readSession() error {
 	var err error
-	a.History, a.title, a.defaultTitle, err = readSessionFile(a.HistoryPath)
+	a.History, a.title, err = readSessionFile(a.HistoryPath)
 	return err
 }
 
-// readSessionFile parses a session file into history items, the last custom title
-// and the last default title. A torn last line is dropped. There is no line length
-// limit, so a valid item of any size reads back.
-func readSessionFile(path string) (history []json.RawMessage, title, defaultTitle string, err error) {
+// readSessionFile parses a session file into history items and the last custom
+// title. A torn last line is dropped. There is no line length limit, so a valid
+// item of any size reads back.
+func readSessionFile(path string) (history []json.RawMessage, title string, err error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, "", "", err
+		return nil, "", err
 	}
 	lines := bytes.Split(data, []byte("\n"))
 	if len(lines) > 0 && len(lines[len(lines)-1]) == 0 {
@@ -241,15 +236,15 @@ func readSessionFile(path string) (history []json.RawMessage, title, defaultTitl
 			if i == len(lines)-1 {
 				break // torn last line
 			}
-			return nil, "", "", fmt.Errorf("%s: line %d is not a JSON object", path, i+1)
+			return nil, "", fmt.Errorf("%s: line %d is not a JSON object", path, i+1)
 		}
 		if meta.Meta != nil {
-			title, defaultTitle = meta.Meta.Title, meta.Meta.DefaultTitle
+			title = meta.Meta.Title
 			continue
 		}
 		history = append(history, append(json.RawMessage(nil), line...))
 	}
-	return history, title, defaultTitle, nil
+	return history, title, nil
 }
 
 func writePrivate(path string, data []byte) error {

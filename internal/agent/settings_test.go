@@ -11,12 +11,12 @@ import (
 // A missing settings file means defaults; invalid files are rejected with the reason in the error.
 func TestLoadSettingsDefaultsAndValidation(t *testing.T) {
 	s, err := LoadSettings(filepath.Join(t.TempDir(), "missing.json"))
-	if err != nil || !s.ReasoningSummary || !s.AutoCompact || s.ShowLines != "normal" {
+	if err != nil || !s.ReasoningSummary || s.ShowLines != "normal" {
 		t.Fatalf("defaults: %+v %v", s, err)
 	}
 	t.Setenv("DASHY_TEST_UNSET_KEY", "")
 	bad := map[string]string{
-		"show_lines":       `{"show_lines":"huge","reasoning_summary":true,"auto_compact":true}`,
+		"show_lines":       `{"show_lines":"huge","reasoning_summary":true}`,
 		"base_url":         `{"provider":"p","model":"m","show_lines":"short","providers":{"p":{"base_url":"ftp://x"}}}`,
 		"key and env":      `{"provider":"p","model":"m","show_lines":"short","providers":{"p":{"base_url":"https://x","api_key":"a","api_key_env":"B"}}}`,
 		"effort":           `{"provider":"p","model":"m","show_lines":"short","effort":"ultra","providers":{"p":{"base_url":"https://x"}}}`,
@@ -72,27 +72,15 @@ func TestSelectionsAreAppliedAndSaved(t *testing.T) {
 	if a.Select("missing", "m", "") == nil || a.Settings().Model != "m2" {
 		t.Fatal("selection of an unknown provider accepted")
 	}
-	if err := a.ChangeSettings(func(s *Settings) { s.AutoCompact, s.ShowLines = false, "full" }); err != nil || a.Settings().ShowLines != "full" {
+	if err := a.ChangeSettings(func(s *Settings) { s.ReasoningSummary, s.ShowLines = false, "full" }); err != nil || a.Settings().ShowLines != "full" {
 		t.Fatalf("change: %v", err)
 	}
-	if a.ChangeSettings(func(s *Settings) { s.ShowLines, s.CompactThreshold = "huge", 0 }) == nil || a.Settings().ShowLines != "full" {
+	if a.ChangeSettings(func(s *Settings) { s.ShowLines = "huge" }) == nil || a.Settings().ShowLines != "full" {
 		t.Fatal("invalid settings accepted")
 	}
 	back, err := LoadSettings(a.SettingsPath())
-	if err != nil || back.Model != "m2" || back.Effort != "high" || back.AutoCompact || back.Providers["q"].BaseURL == "" {
+	if err != nil || back.Model != "m2" || back.Effort != "high" || back.ReasoningSummary || back.Providers["q"].BaseURL == "" {
 		t.Fatalf("saved settings: %+v %v", back, err)
-	}
-}
-
-// A settings file written before compact_threshold existed gets the default threshold.
-func TestCompactThresholdDefaultsForOlderSettings(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "settings.json")
-	if err := os.WriteFile(path, []byte(`{"show_lines":"short","providers":{}}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	s, err := LoadSettings(path)
-	if err != nil || s.CompactThreshold != DefaultCompactThreshold {
-		t.Fatalf("threshold %d, %v", s.CompactThreshold, err)
 	}
 }
 

@@ -107,12 +107,6 @@ func RecordsForItem(item json.RawMessage) []Record {
 		}
 		if strings.HasPrefix(text, "<notify>") {
 			kind = "notice"
-		} else if strings.HasPrefix(text, "<compact_summary>") {
-			summary := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(text, "<compact_summary>"), "</compact_summary>"))
-			if summary != "" {
-				return []Record{{Kind: "info", Text: "Compacted conversation: " + summary}}
-			}
-			return []Record{{Kind: "info", Text: "Compacted earlier conversation."}}
 		}
 		if text != "" {
 			return []Record{{Kind: kind, Text: text}}

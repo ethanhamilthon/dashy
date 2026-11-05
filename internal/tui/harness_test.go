@@ -241,19 +241,6 @@ func heldModel(t *testing.T) (model, *agent.Agent, func()) {
 	return f.m, f.a, release
 }
 
-// compactableModel is a held model whose history has enough turns to compact;
-// the summary request waits for release.
-func compactableModel(t *testing.T) (model, func()) {
-	t.Helper()
-	m, a, release := heldModel(t)
-	for i, text := range []string{"one", "two", "three", "four", "five"} {
-		a.Records()
-		_ = i
-		a.History = append(a.History, []byte(`{"role":"user","content":"`+text+`"}`), []byte(`{"role":"assistant","content":"done `+text+`"}`))
-	}
-	return m, release
-}
-
 // awaitRequest blocks until the provider has received a streamed request for m.
 func awaitRequest(t *testing.T, m model) {
 	t.Helper()

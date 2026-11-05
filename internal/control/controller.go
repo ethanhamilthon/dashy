@@ -11,8 +11,8 @@ import (
 	"dashy/internal/agent"
 )
 
-// Controller coordinates turns for the TUI. One operation (a turn or a
-// compaction) is active at a time; inputs arriving meanwhile become steering.
+// Controller coordinates turns for the TUI. One turn is active at a
+// time; inputs arriving meanwhile become steering.
 // Events are emitted under the controller lock, so emit must not block and must
 // not call back into the controller.
 type Controller struct {
@@ -34,9 +34,8 @@ type Controller struct {
 	closed   chan struct{}
 }
 
-// operation is a turn or compaction holding the controller.
+// operation is the turn holding the controller.
 type operation struct {
-	kind      string // turn or compact
 	ctx       context.Context
 	cancel    context.CancelFunc
 	started   time.Time
@@ -75,7 +74,7 @@ func (c *Controller) Status() (s Status) {
 		s = Status{}
 		if c.active != nil {
 			s.Busy, s.Cancelling = true, c.active.cancelled
-			s.Compacting, s.Started = c.active.kind == "compact", c.active.started
+			s.Started = c.active.started
 			s.Queued = c.a.Queue().Pending()
 		}
 	})
@@ -182,27 +181,18 @@ func (c *Controller) closeLocked() error {
 	return nil
 }
 
-// beginLocked makes a new operation of kind (turn or compact) active.
-func (c *Controller) beginLocked(kind string) *operation {
+// beginLocked makes a new operation active.
+func (c *Controller) beginLocked() *operation {
 	ctx, cancel := context.WithCancel(context.Background())
-	c.active = &operation{kind: kind, ctx: ctx, cancel: cancel, started: time.Now()}
+	c.active = &operation{ctx: ctx, cancel: cancel, started: time.Now()}
 	c.idle = make(chan struct{})
 	return c.active
 }
 
 func (c *Controller) beginTurnLocked(input agent.Input) {
-	op := c.beginLocked("turn")
+	op := c.beginLocked()
 	c.publish(Event{Kind: "started", Operation: "turn", Text: input.Text})
 	go func() { c.finishTurn(op, c.a.RunInput(op.ctx, input, func(e agent.Event) { c.observe(e) })) }()
-}
-
-func (c *Controller) beginCompactLocked(prompt string) {
-	op := c.beginLocked("compact")
-	c.publish(Event{Kind: "started", Operation: "compact", Text: prompt})
-	go func() {
-		text, err := c.a.Compact(op.ctx, prompt)
-		c.finishCompact(op, text, err)
-	}()
 }
 
 func (c *Controller) endLocked(op *operation) {
@@ -249,30 +239,6 @@ func (c *Controller) finishTurn(op *operation, err error) {
 			final = c.a.FinalText() // committed history: the answer after the last tool output
 		}
 		c.publish(Event{Kind: "done", Operation: "turn", Status: status, Error: text, Unsent: unsent, Text: final})
-		c.settleLocked()
-	})
-}
-
-// finishCompact ends a compaction. Success replaces the display with the compacted history.
-func (c *Controller) finishCompact(op *operation, text string, err error) {
-	c.view(func() {
-		status, message, failure := "ok", text, ""
-		switch {
-		case op.cancelled || errors.Is(err, context.Canceled):
-			status, message = "cancelled", "Compaction cancelled."
-		case err != nil:
-			status, message, failure = "error", "", err.Error()
-		}
-		c.endLocked(op)
-		if status == "ok" {
-			c.ctx = c.a.ContextTokens()
-		}
-		if status == "error" {
-			c.publish(Event{Kind: "error", Text: failure})
-		} else {
-			c.publish(Event{Kind: "notice", Text: message})
-		}
-		c.publish(Event{Kind: "done", Operation: "compact", Status: status, Error: failure})
 		c.settleLocked()
 	})
 }

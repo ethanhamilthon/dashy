@@ -21,7 +21,7 @@ curl -fsSL https://raw.githubusercontent.com/ethanhamilthon/dashy/main/scripts/i
 
 ## First start
 
-Run `dashy` in a project directory. Use `/connect` to add or select a provider, `/models` to choose a model and reasoning effort, and `/settings` for display, compaction and bash output options. Settings are saved to `$DASHY_HOME/settings.json` (default `~/.dashy/settings.json`).
+Run `dashy` in a project directory. Use `/connect` to add or select a provider, `/models` to choose a model and reasoning effort, and `/settings` for display and bash output options. Settings are saved to `$DASHY_HOME/settings.json` (default `~/.dashy/settings.json`).
 
 Settings apply on the fly: the file is re-read before each model request when it changes, and changes made in the TUI take effect immediately, even while the agent works. The running turn is not interrupted; its next request uses the new values. A broken file keeps the previous settings and shows a warning. `--provider`, `--model` and `--effort` keep priority over the file.
 

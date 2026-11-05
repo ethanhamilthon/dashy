@@ -15,7 +15,7 @@ import (
 // events in emission order and must not call the controller from the callback.
 type Event struct {
 	Kind      string         // started, agent, notice, error, done or session
-	Operation string         // started and done: turn or compact
+	Operation string         // started and done: turn
 	Agent     *agent.Event   // agent: the unmodified event from the agent
 	Text      string         // started: the input text; notice and error: the text; done (ok): final assistant text
 	Status    string         // done: ok, error or cancelled
@@ -52,8 +52,7 @@ var commandList = []CommandInfo{
 	{"/reload", "~", "Re-read settings and DASHY.md for the next request"},
 	{"/rename", "#", "Rename this session; empty name restores the default"},
 	{"/events", "i", "Show notices and errors of this session"},
-	{"/compact", "=", "Summarize older turns; add a prompt to guide it"},
-	{"/settings", "*", "Configure display, compaction and bash output options"},
+	{"/settings", "*", "Configure display and bash output options"},
 	{"/models", "*", "Select the model and reasoning effort"},
 	{"/connect", "+", "Select or create a provider"},
 }
@@ -76,7 +75,6 @@ func Help(keyboard string) string {
 type Status struct {
 	Busy       bool
 	Cancelling bool
-	Compacting bool
 	Started    time.Time
 	Queued     []agent.Input
 }

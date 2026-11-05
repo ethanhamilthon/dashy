@@ -25,7 +25,7 @@ func TestSettingsModelsAndConnectCommandsOpenTheirPickers(t *testing.T) {
 		t.Fatalf("/settings opened %q", f.m.menuKind)
 	}
 	names := strings.Join(menuNames(f.m), "|")
-	for _, row := range []string{"Reasoning summary", "Auto compact", "Show lines"} {
+	for _, row := range []string{"Reasoning summary", "Show lines"} {
 		if !strings.Contains(names, row) {
 			t.Fatalf("settings rows %q lack %q", names, row)
 		}
@@ -78,11 +78,11 @@ func TestToggleWhileBusyChangesSetting(t *testing.T) {
 	m, _, release := heldModel(t)
 	defer release()
 	m = openPickerCmd(t, m, "/settings")
-	m = selectRow(t, m, "Auto compact")
-	before := m.ctl.Settings().AutoCompact
+	m = selectRow(t, m, "Reasoning summary")
+	before := m.ctl.Settings().ReasoningSummary
 	m = startBusy(t, m)
 	m = key(m, tea.KeyMsg{Type: tea.KeyRight})
-	if m.ctl.Settings().AutoCompact == before || !m.ctl.Status().Busy {
+	if m.ctl.Settings().ReasoningSummary == before || !m.ctl.Status().Busy {
 		t.Fatalf("setting unchanged (%v) or turn stopped", before)
 	}
 }
@@ -146,11 +146,11 @@ func TestPickerToggleAppliesWhenNotificationStartsTurn(t *testing.T) {
 	}
 	awaitRequest(t, f.m) // the notification starts a turn by itself
 	f.m = settle(f.m)
-	f.m = selectRow(t, f.m, "Auto compact")
-	before := f.m.ctl.Settings().AutoCompact
+	f.m = selectRow(t, f.m, "Reasoning summary")
+	before := f.m.ctl.Settings().ReasoningSummary
 	f.m = key(f.m, tea.KeyMsg{Type: tea.KeyRight})
-	if f.m.ctl.Settings().AutoCompact == before || f.m.menuKind != pickerSettings {
-		t.Fatalf("picker %q, setting %v", f.m.menuKind, f.m.ctl.Settings().AutoCompact)
+	if f.m.ctl.Settings().ReasoningSummary == before || f.m.menuKind != pickerSettings {
+		t.Fatalf("picker %q, setting %v", f.m.menuKind, f.m.ctl.Settings().ReasoningSummary)
 	}
 }
 

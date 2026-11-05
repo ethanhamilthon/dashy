@@ -125,7 +125,7 @@ func TestInvalidSettingsKeepOld(t *testing.T) {
 // -p overrides win over settings.json before and after a reload.
 func TestOverridesSurviveReload(t *testing.T) {
 	a, fp := reloadAgent(t, Options{Model: "cli-model", Effort: "low"}, func(a *Agent) {
-		editFile(t, a, func(s *Settings) { s.Model, s.Effort, s.AutoCompact = "file-model", "high", false })
+		editFile(t, a, func(s *Settings) { s.Model, s.Effort, s.ReasoningSummary = "file-model", "high", false })
 	})
 	if _, err := turn(t, a, "go"); err != nil {
 		t.Fatal(err)
@@ -135,7 +135,7 @@ func TestOverridesSurviveReload(t *testing.T) {
 			t.Fatalf("request %d lost the overrides: %s", i+1, body)
 		}
 	}
-	if a.Settings().AutoCompact {
+	if a.Settings().ReasoningSummary {
 		t.Fatal("other settings from the file were not reloaded")
 	}
 }
@@ -171,7 +171,7 @@ func TestConcurrentSettingsChangesDuringTurn(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				for j := 0; j < 20; j++ {
-					_ = a.ChangeSettings(func(s *Settings) { s.AutoCompact = !s.AutoCompact })
+					_ = a.ChangeSettings(func(s *Settings) { s.ReasoningSummary = !s.ReasoningSummary })
 					_ = a.Settings()
 					a.refreshSettings(nil)
 				}
