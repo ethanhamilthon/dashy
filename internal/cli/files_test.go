@@ -80,3 +80,41 @@ func TestGrep(t *testing.T) {
 		t.Fatalf("missing path: %v", err)
 	}
 }
+
+// Malformed or empty blocks change nothing; untouched line endings stay as they were.
+func TestPatchRejectsMalformedAndKeepsLineEndings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "a.txt")
+	patch := func(file, blocks string) (string, error) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(file), 0600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := runTool(t, blocks, "patch", path)
+		data, _ := os.ReadFile(path)
+		return string(data), err
+	}
+	block := func(search, replace string) string {
+		return "<<<<<<< SEARCH\n" + search + "\n=======\n" + replace + "\n>>>>>>> REPLACE\n"
+	}
+	for name, blocks := range map[string]string{
+		"truncated second block": block("one", "ONE") + "<<<<<<< SEARCH\ntwo\n=======\nTWO\n",
+		"replace without search": block("one", "ONE") + ">>>>>>> REPLACE\n",
+		"empty search":           "<<<<<<< SEARCH\n=======\n>>>>>>> REPLACE\n",
+		"nested search":          "<<<<<<< SEARCH\none\n<<<<<<< SEARCH\n=======\nx\n>>>>>>> REPLACE\n",
+	} {
+		if got, err := patch("one\ntwo\n", blocks); err == nil || got != "one\ntwo\n" {
+			t.Errorf("%s: %q %v", name, got, err)
+		}
+	}
+	for name, c := range map[string]struct{ file, blocks, want string }{
+		"mixed endings":       {"a\r\nb\nc\r\n", block("b", "B"), "a\r\nB\nc\r\n"},
+		"multi-line in CRLF":  {"a\r\nb\r\nc\n", block("a\nb", "A\nB"), "A\r\nB\r\nc\n"},
+		"multi-line in LF":    {"a\r\nb\nc\n", block("b\nc", "x"), "a\r\nx\n"},
+		"delete a CRLF line":  {"a\r\nb\r\nc\n", block("b", ""), "a\r\nc\n"},
+		"insert in CRLF line": {"a\r\nb\r\n", block("a", "a\nz"), "a\r\nz\r\nb\r\n"},
+	} {
+		if got, err := patch(c.file, c.blocks); err != nil || got != c.want {
+			t.Errorf("%s: %q %v", name, got, err)
+		}
+	}
+}

@@ -107,23 +107,15 @@ func patchCommand(args []string, in io.Reader, out io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("patch: %w", err)
 	}
-	crlf, text := bytes.Contains(old, []byte("\r\n")), strings.ReplaceAll(string(old), "\r\n", "\n")
-	blocks := regexp.MustCompile(`(?s)<<<<<<< SEARCH\n(.*?)\n?=======\n(.*?)\n?>>>>>>> REPLACE`).FindAllStringSubmatch(strings.ReplaceAll(string(data), "\r\n", "\n"), -1)
-	if len(blocks) == 0 {
-		return errors.New("patch: no <<<<<<< SEARCH / ======= / >>>>>>> REPLACE blocks on stdin")
+	blocks, err := parseBlocks(string(data))
+	if err != nil {
+		return fmt.Errorf("patch: %w; nothing changed", err)
 	}
+	text := string(old)
 	for i, b := range blocks {
-		search, replace := b[1], b[2]
-		if replace == "" && strings.Count(text, search+"\n") == 1 {
-			search += "\n" // deleting whole lines takes their line break too
+		if text, err = applyBlock(text, b[0], b[1]); err != nil {
+			return fmt.Errorf("patch %s: block %d: %w; nothing changed (dashy read the file and copy the text exactly, with more context if it repeats)", args[0], i+1, err)
 		}
-		if n := strings.Count(text, search); n != 1 || search == "" {
-			return fmt.Errorf("patch %s: block %d: search text found %d times, need exactly 1; nothing changed (dashy read the file and copy the text exactly, with more context if it repeats)", args[0], i+1, n)
-		}
-		text = strings.Replace(text, search, replace, 1)
-	}
-	if crlf {
-		text = strings.ReplaceAll(text, "\n", "\r\n")
 	}
 	if err = writeFile(args[0], []byte(text)); err != nil {
 		return fmt.Errorf("patch %s: %w", args[0], err)
@@ -233,4 +225,82 @@ func searchFiles(paths []string) ([]string, error) {
 		})
 	}
 	return files, nil
+}
+
+// parseBlocks splits patch input into SEARCH/REPLACE pairs. Text outside blocks is
+// ignored; a marker out of order or an unclosed block rejects the whole patch.
+func parseBlocks(input string) (blocks [][2]string, err error) {
+	state, search := 0, "" // 0 outside, 1 in SEARCH, 2 in REPLACE
+	var cur []string
+	for i, line := range strings.Split(strings.ReplaceAll(input, "\r\n", "\n"), "\n") {
+		switch {
+		case line == "<<<<<<< SEARCH":
+			if state != 0 {
+				return nil, fmt.Errorf("line %d: <<<<<<< SEARCH inside block %d", i+1, len(blocks)+1)
+			}
+			state, cur = 1, nil
+		case line == "=======" && state == 1:
+			state, search, cur = 2, strings.Join(cur, "\n"), nil
+		case line == ">>>>>>> REPLACE":
+			if state != 2 {
+				return nil, fmt.Errorf("line %d: >>>>>>> REPLACE without its SEARCH and =======", i+1)
+			}
+			blocks, state = append(blocks, [2]string{search, strings.Join(cur, "\n")}), 0
+		case state != 0:
+			cur = append(cur, line)
+		}
+	}
+	if state != 0 {
+		return nil, fmt.Errorf("block %d is not closed with >>>>>>> REPLACE", len(blocks)+1)
+	}
+	if len(blocks) == 0 {
+		return nil, errors.New("no <<<<<<< SEARCH / ======= / >>>>>>> REPLACE blocks on stdin")
+	}
+	return blocks, nil
+}
+
+// applyBlock replaces the one occurrence of search in text. Line breaks in the search
+// match LF or CRLF, whichever the file has there; the replacement takes the same ones,
+// and the rest of the file stays byte for byte.
+func applyBlock(text, search, replace string) (string, error) {
+	if search == "" {
+		return "", errors.New("empty search text")
+	}
+	var eols []string
+	if strings.Contains(search, "\n") {
+		eols = []string{"\n", "\r\n"}
+	} else if i := strings.Index(text, search); i >= 0 {
+		eols = []string{lineBreakAt(text, i+len(search))} // a one-line search can match only once
+	} else {
+		eols = []string{"\n"}
+	}
+	total, from, to := 0, "", ""
+	for _, eol := range eols {
+		s, r := strings.ReplaceAll(search, "\n", eol), strings.ReplaceAll(replace, "\n", eol)
+		if r == "" && strings.Count(text, s+eol) == 1 {
+			s += eol // deleting whole lines takes their line break too
+		}
+		if n := strings.Count(text, s); n > 0 {
+			total, from, to = total+n, s, r
+		}
+	}
+	if total != 1 {
+		return "", fmt.Errorf("search text found %d times, need exactly 1", total)
+	}
+	return strings.Replace(text, from, to, 1), nil
+}
+
+// lineBreakAt is the line break ending the line that contains offset i: CRLF or LF;
+// on the last line, CRLF if the file uses it anywhere.
+func lineBreakAt(text string, i int) string {
+	if j := strings.IndexByte(text[i:], '\n'); j >= 0 {
+		if j > 0 && text[i+j-1] == '\r' || j == 0 && i > 0 && text[i-1] == '\r' {
+			return "\r\n"
+		}
+		return "\n"
+	}
+	if strings.Contains(text, "\r\n") {
+		return "\r\n"
+	}
+	return "\n"
 }
