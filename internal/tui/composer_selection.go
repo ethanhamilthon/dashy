@@ -166,7 +166,7 @@ func (m *model) composerScroll(rows []composerRow) int {
 // outside the composer map to its nearest edge, as used while dragging.
 func (m *model) composerOffset(x, y int, clamp bool) (int, bool) {
 	value := m.input.Value()
-	if value == "" || (m.menuKind == "setup" && len(m.setup) == 2) {
+	if value == "" || m.keyInComposer() {
 		return 0, false
 	}
 	rows := m.composerRows()

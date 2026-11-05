@@ -27,6 +27,7 @@ func Run(ctx context.Context, a *agent.Agent, cwd string) error {
 	reporter := osc7501.New(os.Stdout, osc7501.Enabled(os.Stdout))
 	defer reporter.Close()
 	m := newModel(a, cwd, reporter)
+	m.startCmd = m.onboard()
 	program := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithFilter(keyboard.filter))
 	running, stop := context.WithCancel(ctx)
 	defer stop()

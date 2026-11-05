@@ -160,16 +160,33 @@ func renderRail(text string, width int) string {
 	return strings.Join(lines, "\n")
 }
 func (m model) inputBlock() string {
-	if m.menuKind == pickerSetup && len(m.setup) == 2 {
-		return renderRail("API key: "+strings.Repeat("*", len([]rune(m.input.Value()))), m.width)
+	if m.keyInComposer() {
+		return renderRail(strings.Repeat("•", len([]rune(m.input.Value()))), m.width)
 	}
 	return renderRail(m.input.View(), m.width)
 }
 
-// pickerHints are the keys of a picker, shown under its list.
-var pickerHints = map[string]string{
-	pickerTasks: "Enter: show output · k: stop · Esc: close",
+// pickerHint is the keys of the open picker, shown under its list.
+func (m model) pickerHint() string {
+	switch {
+	case m.confirmDelete != "":
+		return "Delete " + m.confirmDelete + "? d: delete · Esc: keep"
+	case m.menuKind == pickerTasks:
+		return "Enter: show output · k: stop · Esc: close"
+	case m.menuKind == pickerConnect:
+		return "Enter: use · e: edit · d: delete · Esc: close"
+	case m.menuKind == pickerProvider:
+		save := "Enter: save"
+		if m.form.failedAsTyped(m.input.Value()) {
+			save = "Enter: save anyway"
+		}
+		return "Tab: next field · " + save + " · Esc: " + map[bool]string{true: "skip", false: "back"}[m.form.welcome]
+	}
+	return ""
 }
+
+// keyInComposer reports whether the composer holds an API key, which is never shown.
+func (m model) keyInComposer() bool { return m.form != nil && m.form.field == 2 }
 
 // timeline renders the whole timeline at once; the interface uses timelineRows.
 func (m *model) timeline() string { return strings.Join(m.timelineRows(0), "\n") }
@@ -197,7 +214,7 @@ func (m *model) timelineRows(budget time.Duration) []string {
 	out.WriteString(lipgloss.NewStyle().Foreground(cyan).Bold(true).Render("dashy. minimal coding agent."))
 	out.WriteString(lipgloss.NewStyle().Foreground(muted).Render(" v" + strings.TrimPrefix(Version, "v")))
 	out.WriteString("\n")
-	if hint := m.ctl.Settings().SetupHint(); hint != "" {
+	if hint := m.ctl.Settings().SetupHint(); hint != "" && m.form == nil {
 		out.WriteString(lipgloss.NewStyle().Foreground(warnColor).Render(hint) + "\n")
 	}
 	for _, path := range m.ctl.Instructions() {
@@ -285,7 +302,7 @@ func (m *model) timelineRows(budget time.Duration) []string {
 		} else {
 			cmd := matches[i]
 			row = fmt.Sprintf("%s%-2s %-9s %s", marker, cmd.icon, cmd.name, cmd.description)
-			if m.menuKind == pickerSettings || m.menuKind == pickerModels || m.menuKind == pickerTasks {
+			if m.menuKind == pickerSettings || m.menuKind == pickerModels || m.menuKind == pickerTasks || m.menuKind == pickerConnect {
 				if cmd.label != "" {
 					row = marker + cmd.label
 				} else if cmd.description != "" {
@@ -299,7 +316,22 @@ func (m *model) timelineRows(budget time.Duration) []string {
 		}
 		screen.add("\n" + paint(ansi.Truncate(row, m.width, "…"), m.width, bg, fg))
 	}
-	if hint := pickerHints[m.menuKind]; hint != "" && !fileMode {
+	if m.form != nil {
+		rows, errRow := m.formRows()
+		for i, row := range rows {
+			fg := muted
+			if i == 0 || strings.HasPrefix(row, "›") {
+				fg = foreground
+			}
+			screen.add("\n" + paint(ansi.Truncate("  "+row, m.width, "…"), m.width, lipgloss.NoColor{}, fg))
+		}
+		if errRow != "" {
+			for _, line := range strings.Split(ansi.Wrap(errRow, max(1, m.width-2), ""), "\n") {
+				screen.add("\n" + paint("  "+line, m.width, lipgloss.NoColor{}, errorColor))
+			}
+		}
+	}
+	if hint := m.pickerHint(); hint != "" && !fileMode {
 		screen.add("\n" + paint(ansi.Truncate("  "+hint, m.width, "…"), m.width, lipgloss.NoColor{}, muted))
 	}
 	screen.add("\n\n" + m.bottomBar())

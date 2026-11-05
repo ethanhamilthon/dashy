@@ -222,16 +222,59 @@ func (c *Controller) selectLocked(provider, model, effort string) error {
 
 // AddProvider configures a new provider. The API key is never reported back.
 func (c *Controller) AddProvider(name, baseURL, apiKey string) error {
+	return c.SaveProvider("", name, baseURL, apiKey)
+}
+
+// SaveProvider adds a provider (old is "") or edits the provider old, which may be
+// renamed; an empty key then keeps the stored one. The API key is never reported back.
+func (c *Controller) SaveProvider(old, name, baseURL, apiKey string) error {
 	var err error
 	c.view(func() {
 		settings := c.a.Settings()
-		if err = c.a.AddProvider(name, agent.Provider{BaseURL: baseURL, APIKey: apiKey}); err != nil {
+		if err = c.a.SaveProvider(old, name, agent.Provider{BaseURL: strings.TrimSpace(baseURL), APIKey: strings.TrimSpace(apiKey)}); err != nil {
 			err = fail("failed", "%s", agent.Redact(settings, err.Error(), apiKey))
 			return
 		}
-		c.publish(Event{Kind: "notice", Text: "Provider created in " + c.a.DBPath() + ". Choose a model with /models."})
+		verb := "created"
+		if old != "" {
+			verb = "saved"
+		}
+		c.publish(Event{Kind: "notice", Text: "Provider " + verb + ": " + strings.TrimSpace(name) + "."})
 	})
 	return err
+}
+
+// DeleteProvider removes a provider; a selection that used it is cleared.
+func (c *Controller) DeleteProvider(name string) error {
+	var err error
+	c.view(func() {
+		if err = c.a.DeleteProvider(name); err != nil {
+			err = fail("failed", "%s", err.Error())
+			return
+		}
+		c.publish(Event{Kind: "notice", Text: "Provider deleted: " + name + "."})
+	})
+	return err
+}
+
+// ProviderModels tests a provider before it is saved by listing its models. With an
+// empty key, the key of the stored provider old is used.
+func (c *Controller) ProviderModels(ctx context.Context, old, baseURL, apiKey string) ([]string, error) {
+	var p agent.Provider
+	var settings agent.Settings
+	c.view(func() {
+		settings = c.a.Settings()
+		p = settings.Providers[old]
+	})
+	p.BaseURL = strings.TrimSpace(baseURL)
+	if key := strings.TrimSpace(apiKey); key != "" {
+		p.APIKey, p.APIKeyEnv = key, ""
+	}
+	models, err := agent.ProviderModels(ctx, p)
+	if err != nil {
+		return nil, fail("failed", "%s", agent.Redact(settings, err.Error(), apiKey))
+	}
+	return models, nil
 }
 
 // Tasks lists the background tasks of the session, oldest first.

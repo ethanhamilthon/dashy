@@ -142,3 +142,39 @@ func TestConcurrentSettingsEditsKeepBoth(t *testing.T) {
 		t.Fatalf("applied: %+v", s)
 	}
 }
+
+// Editing keeps the key when none is given and a rename carries the selection;
+// deleting the selected provider clears the selection.
+func TestEditRenameAndDeleteProvider(t *testing.T) {
+	a := newTestAgent(t, &fakeProvider{reply: func(int, string) string { return "" }}, Options{})
+	if err := a.AddProvider("q", Provider{BaseURL: "https://q.example", APIKey: "secret"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SaveProvider("q", "q2", Provider{BaseURL: "https://q2.example"}); err != nil {
+		t.Fatal(err)
+	}
+	if p := a.Settings().Providers["q2"]; p.BaseURL != "https://q2.example" || p.APIKey != "secret" || len(a.Settings().Providers) != 2 {
+		t.Fatalf("edited: %+v", a.Settings().Providers)
+	}
+	if a.SaveProvider("q2", "p", Provider{BaseURL: "https://x"}) == nil || a.SaveProvider("missing", "z", Provider{BaseURL: "https://x"}) == nil {
+		t.Fatal("rename onto an existing or missing provider accepted")
+	}
+	base := a.Settings().Providers["p"].BaseURL
+	if err := a.SaveProvider("p", "main", Provider{BaseURL: base}); err != nil {
+		t.Fatal(err)
+	}
+	if s := a.Settings(); s.Provider != "main" || s.Model != "m" {
+		t.Fatalf("rename lost the selection: %+v", s)
+	}
+	if err := a.DeleteProvider("main"); err != nil {
+		t.Fatal(err)
+	}
+	s := a.Settings()
+	if _, ok := s.Providers["main"]; ok || s.Provider != "" || s.Model != "" || s.SetupHint() == "" {
+		t.Fatalf("after delete: %+v", s)
+	}
+	back, err := LoadSettings(a.home)
+	if err != nil || back.Provider != "" || len(back.Providers) != 1 {
+		t.Fatalf("saved: %+v %v", back, err)
+	}
+}

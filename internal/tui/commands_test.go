@@ -42,34 +42,26 @@ func TestSettingsModelsAndConnectCommandsOpenTheirPickers(t *testing.T) {
 	}
 }
 
-// First run: no provider yet. /connect offers "Add provider", whose three prompts
-// create the provider in the settings file.
-func TestFirstRunSetupThroughConnect(t *testing.T) {
+// First run: no provider yet, so the provider form opens; with providers but no
+// model, the models open; with both, nothing does.
+func TestOnboarding(t *testing.T) {
 	f := newFixture(t, false)
-	f.command(t, "/connect")
-	idx := -1
-	for i, c := range f.m.menu {
-		if c.name == "Add" {
-			idx = i
-		}
+	if f.m.onboard(); f.m.menuKind != pickerProvider || !f.m.form.welcome {
+		t.Fatalf("first run opened %q", f.m.menuKind)
 	}
-	if idx < 0 {
-		t.Fatalf("no Add provider row: %v", menuNames(f.m))
-	}
-	f.m.selected = idx
-	f.key(tea.KeyMsg{Type: tea.KeyEnter})
-	if f.m.menuKind != pickerSetup {
-		t.Fatalf("Add provider opened %q", f.m.menuKind)
-	}
-	for _, answer := range []string{"work", "http://127.0.0.1:9", ""} {
-		f.m.input.SetValue(answer)
-		f.key(tea.KeyMsg{Type: tea.KeyEnter})
-	}
+	f.key(tea.KeyMsg{Type: tea.KeyEsc})
 	if f.m.menuKind != "" {
-		t.Fatalf("picker still open: %q", f.m.menuKind)
+		t.Fatalf("Esc left %q open", f.m.menuKind)
 	}
-	if _, ok := f.m.ctl.Settings().Providers["work"]; !ok {
-		t.Fatal("provider was not added")
+	if err := f.m.ctl.AddProvider("work", "http://127.0.0.1:9", ""); err != nil {
+		t.Fatal(err)
+	}
+	if f.m.onboard(); f.m.menuKind != pickerModels {
+		t.Fatalf("no model opened %q", f.m.menuKind)
+	}
+	ready := newFixture(t, true)
+	if ready.m.onboard(); ready.m.menuKind != "" {
+		t.Fatalf("configured run opened %q", ready.m.menuKind)
 	}
 }
 

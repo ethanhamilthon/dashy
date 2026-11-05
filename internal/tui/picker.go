@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -20,7 +19,6 @@ const (
 	pickerSettings = "settings"
 	pickerModels   = "models"
 	pickerConnect  = "connect"
-	pickerSetup    = "setup" // provider prompts after "Add provider"
 	pickerTasks    = "tasks" // background tasks of the session (/tasks)
 )
 
@@ -46,13 +44,18 @@ func (m *model) openPicker(kind string) tea.Cmd {
 	m.menuKind, m.selected = kind, 0
 	m.menu = nil
 	m.input.Reset()
+	m.input.Placeholder = map[string]string{pickerConnect: "Providers", pickerTasks: "Background tasks",
+		pickerModels: "Type to filter models", pickerSettings: "Type to filter settings"}[kind]
 	m.menuGeneration++
 	if kind == pickerConnect {
-		for name := range m.ctl.Settings().Providers {
-			m.menu = append(m.menu, command{name: name, description: "Provider"})
+		m.rebuildConnectMenu()
+		if s := m.ctl.Settings(); s.Provider != "" {
+			for i, c := range m.menu {
+				if c.name == s.Provider && c.action == "" {
+					m.selected = i
+				}
+			}
 		}
-		sort.Slice(m.menu, func(i, j int) bool { return m.menu[i].name < m.menu[j].name })
-		m.menu = append(m.menu, command{name: "Add", icon: "+", description: "Create provider", label: "Add provider", action: actionAdd})
 		return nil
 	}
 	if kind == pickerSettings {
@@ -93,11 +96,15 @@ func (m *model) rebuildSettingsMenu() {
 	}
 }
 
-// rebuildModelsMenu lists the models known so far and selects the current one.
+// rebuildModelsMenu lists the models known so far (of modelsFor only, when set) and
+// selects the current one.
 func (m *model) rebuildModelsMenu() {
 	s := m.ctl.Settings()
 	m.menu = nil
 	for _, c := range m.pickerModels {
+		if m.modelsFor != "" && c.Provider != m.modelsFor {
+			continue
+		}
 		m.menu = append(m.menu, command{name: c.Model, description: c.Provider, label: c.Model + "  " + c.Provider})
 		if c.Provider == s.Provider && c.Model == s.Model {
 			m.selected = len(m.menu) - 1
@@ -113,8 +120,8 @@ func (m *model) closePicker() {
 		m.menuCancel = nil
 	}
 	m.menuKind, m.menu = "", nil
-	m.pickerModels = nil
-	m.setup = nil
+	m.pickerModels, m.modelsFor = nil, ""
+	m.form, m.confirmDelete = nil, ""
 	m.input.Placeholder = "Ask anything, or type / for commands"
 	m.input.Reset()
 }
@@ -124,6 +131,14 @@ func (m *model) closePicker() {
 func (m model) pickerKey(key tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	if m.menuKind == "" {
 		return m, nil, false
+	}
+	if m.menuKind == pickerProvider {
+		return m.formKey(key)
+	}
+	if m.menuKind == pickerConnect && len(m.menu) > 0 {
+		if next, cmd, handled := m.connectKey(key); handled {
+			return next, cmd, true
+		}
 	}
 	if m.menuKind == pickerTasks {
 		switch key.String() {
@@ -180,9 +195,6 @@ func (m model) pickerKey(key tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		if m.pasting {
 			return m, nil, true
 		}
-		if m.menuKind == pickerSetup {
-			return m.finishSetup()
-		}
 		return m.pickerEnter()
 	default:
 		return m, nil, false
@@ -199,48 +211,10 @@ func (m model) pickerEnter() (tea.Model, tea.Cmd, bool) {
 		return m, nil, true
 	}
 	chosen := matches[m.selected%len(matches)]
-	if chosen.action == actionAdd {
-		m.menuKind = pickerSetup
-		m.menu = nil
-		m.selected = 0
-		m.input.Reset()
-		m.input.Placeholder = "Provider name"
-		m.refresh(true)
-		return m, nil, true
-	}
 	if m.menuKind == pickerSettings {
 		return m, nil, true // settings rows change with Left/Right
 	}
-	var err error
-	if m.menuKind == pickerConnect {
-		err = m.ctl.SelectProvider(chosen.name)
-	} else {
-		err = m.ctl.SelectModel(chosen.description, chosen.name, agent.Efforts[m.effort])
-	}
-	m.closePicker()
-	if err != nil {
-		next, cmd := m.reject(err)
-		return next, cmd, true
-	}
-	m.refresh(true)
-	return m, nil, true
-}
-
-// finishSetup collects the provider setup prompts and adds the provider. The API key is optional.
-func (m model) finishSetup() (tea.Model, tea.Cmd, bool) {
-	value := strings.TrimSpace(m.input.Value())
-	if value == "" && len(m.setup) != 2 {
-		return m, nil, true
-	}
-	m.setup = append(m.setup, value)
-	m.input.Reset()
-	prompts := []string{"Provider name", "HTTP(S) base URL", "API key (optional)"}
-	if len(m.setup) < 3 {
-		m.input.Placeholder = prompts[len(m.setup)]
-		m.refresh(true)
-		return m, nil, true
-	}
-	err := m.ctl.AddProvider(m.setup[0], m.setup[1], m.setup[2])
+	err := m.ctl.SelectModel(chosen.description, chosen.name, agent.Efforts[m.effort])
 	m.closePicker()
 	if err != nil {
 		next, cmd := m.reject(err)

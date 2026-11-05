@@ -52,7 +52,10 @@ type model struct {
 	effort, menuGeneration   int
 	menuCancel               context.CancelFunc
 	pickerModels             []agent.ModelChoice
-	setup                    []string
+	modelsFor                string        // the models picker shows this provider only
+	form                     *providerForm // the add/edit provider form
+	confirmDelete            string        // provider whose deletion waits for a second d
+	startCmd                 tea.Cmd       // run by Init: the first-run onboarding
 	sessions                 []agent.SessionSummary
 	fileGen, fileDebounceGen int
 	fileLoading              bool
@@ -107,7 +110,7 @@ func newModel(a *agent.Agent, cwd string, reporter *osc7501.Reporter) model {
 	return m
 }
 
-func (m model) Init() tea.Cmd { return textarea.Blink }
+func (m model) Init() tea.Cmd { return tea.Batch(textarea.Blink, m.startCmd) }
 func (m *model) resizeInput() {
 	value, width, height := m.input.Value(), max(1, m.width-2), max(1, m.height/2)
 	if m.inputWidth == width && m.inputHeight == height && m.inputValue == value {
@@ -259,6 +262,8 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.refresh(true)
 		return m, nil
+	case providerChecked:
+		return m.providerResult(v)
 	case tasksTick:
 		if m.menuKind != pickerTasks || v.generation != m.menuGeneration {
 			return m, nil

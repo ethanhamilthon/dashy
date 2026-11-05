@@ -94,24 +94,119 @@ func TestSettingsAndModelsPickers(t *testing.T) {
 	}
 }
 
-// /connect lists providers and adds one through the setup prompts; the key is never shown.
+// keyRun sends a key and applies the message its command returns (a connection test
+// or a models listing), as the program would.
+func keyRun(t *testing.T, m model, k tea.KeyMsg) model {
+	t.Helper()
+	next, cmd := m.Update(k)
+	m = settle(next.(model))
+	if cmd != nil {
+		if msg := cmd(); msg != nil {
+			if _, batch := msg.(tea.BatchMsg); !batch {
+				next, _ = m.Update(msg)
+				m = settle(next.(model))
+			}
+		}
+	}
+	return m
+}
+
+// typeField replaces the active field of the provider form.
+func typeField(m model, value string) model {
+	m.input.SetValue(value)
+	return m
+}
+
+// /connect adds a provider through one form: the connection test lists its models,
+// which open next. The key is never shown.
 func TestConnectAddsProviderWithoutShowingKey(t *testing.T) {
 	m, a := freshModel(t)
+	url := modelServer(t, `{"data":[{"id":"m1"},{"id":"m2"}]}`)
 	m = openPickerCmd(t, m, "/connect")
 	m = selectRow(t, m, "Add")
 	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
-	for _, value := range []string{"corp", "https://llm.example.com/v1", "sk-secret-key"} {
-		m.input.SetValue(value)
-		m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.menuKind != pickerProvider || m.form == nil || m.form.old != "" {
+		t.Fatalf("Add provider opened %q", m.menuKind)
 	}
+	m = typeField(m, "corp")
+	m = key(m, tea.KeyMsg{Type: tea.KeyTab})
+	m = typeField(m, url)
+	m = key(m, tea.KeyMsg{Type: tea.KeyTab})
+	m = typeField(m, "sk-secret-key")
+	if view := ansi.Strip(m.View()); strings.Contains(view, "sk-secret-key") || !strings.Contains(view, "Name      corp") || !strings.Contains(view, "Tab: next field") {
+		t.Fatalf("form view:\n%s", view)
+	}
+	m = keyRun(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	p, ok := a.Settings().Providers["corp"]
-	if !ok || p.APIKey != "sk-secret-key" || p.BaseURL != "https://llm.example.com/v1" || m.menuKind != "" {
-		t.Fatalf("provider %+v (found %v), picker %q", p, ok, m.menuKind)
+	if !ok || p.APIKey != "sk-secret-key" || p.BaseURL != url {
+		t.Fatalf("provider %+v (found %v)", p, ok)
+	}
+	if m.menuKind != pickerModels || m.modelsFor != "corp" || strings.Join(menuNames(m), "|") != "m1|m2" {
+		t.Fatalf("after save: picker %q for %q, rows %v", m.menuKind, m.modelsFor, menuNames(m))
+	}
+	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if s := a.Settings(); s.Provider != "corp" || s.Model != "m1" {
+		t.Fatalf("selection %+v", s)
 	}
 	for _, e := range m.entries {
 		if strings.Contains(e.Text, "sk-secret-key") {
 			t.Fatalf("API key shown in the timeline: %q", e.Text)
 		}
+	}
+}
+
+// A missing field takes the focus; a failed connection test stays in the form and
+// Enter again saves anyway.
+func TestProviderFormValidatesAndSavesAnyway(t *testing.T) {
+	m, a := freshModel(t)
+	m.openProviderForm("", true)
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "Welcome to dashy") || !strings.Contains(view, "Esc: skip") {
+		t.Fatalf("welcome view:\n%s", view)
+	}
+	m = typeField(m, "work")
+	m = keyRun(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.form.field != 1 || !strings.Contains(ansi.Strip(m.View()), "must start with http") {
+		t.Fatalf("missing URL: field %d\n%s", m.form.field, ansi.Strip(m.View()))
+	}
+	m = typeField(m, "http://127.0.0.1:9")
+	m = keyRun(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if _, ok := a.Settings().Providers["work"]; ok || !strings.Contains(ansi.Strip(m.View()), "Could not connect") || !strings.Contains(ansi.Strip(m.View()), "save anyway") {
+		t.Fatalf("failed test saved or not shown:\n%s", ansi.Strip(m.View()))
+	}
+	m = keyRun(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if _, ok := a.Settings().Providers["work"]; !ok || m.menuKind != pickerModels {
+		t.Fatalf("not saved anyway: picker %q", m.menuKind)
+	}
+}
+
+// e edits a provider (a rename keeps the key when none is typed); d twice deletes it.
+func TestConnectEditsAndDeletesProvider(t *testing.T) {
+	m, a := freshModel(t)
+	url := modelServer(t, `{"data":[{"id":"m1"}]}`)
+	if err := a.AddProvider("old", agent.Provider{BaseURL: url, APIKey: "k1"}); err != nil {
+		t.Fatal(err)
+	}
+	m = openPickerCmd(t, m, "/connect")
+	m = selectRow(t, m, "old")
+	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("e")})
+	if m.menuKind != pickerProvider || m.form.old != "old" || m.input.Value() != "old" || !strings.Contains(ansi.Strip(m.View()), "API key   saved") {
+		t.Fatalf("edit form: %q\n%s", m.menuKind, ansi.Strip(m.View()))
+	}
+	m = typeField(m, "new")
+	m = keyRun(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if p, ok := a.Settings().Providers["new"]; !ok || p.APIKey != "k1" || len(a.Settings().Providers) != 1 {
+		t.Fatalf("after edit: %+v", a.Settings().Providers)
+	}
+	m = key(m, tea.KeyMsg{Type: tea.KeyEsc})
+	m = openPickerCmd(t, m, "/connect")
+	m = selectRow(t, m, "new")
+	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	if _, ok := a.Settings().Providers["new"]; !ok || !strings.Contains(ansi.Strip(m.View()), "Delete new?") {
+		t.Fatal("first d deleted or asked nothing")
+	}
+	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	if _, ok := a.Settings().Providers["new"]; ok || m.menuKind != pickerConnect {
+		t.Fatalf("not deleted: %v, picker %q", a.Settings().Providers, m.menuKind)
 	}
 }
 
@@ -140,11 +235,10 @@ func TestPickerNamesThatMatchActionsAreChoices(t *testing.T) {
 	}
 	m = openPickerCmd(t, m, "/connect")
 	m = selectRow(t, m, "Add")
-	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if a.Settings().Provider != "Add" || m.menuKind != "" {
-		t.Fatalf("provider row named Add: provider %q, picker %q", a.Settings().Provider, m.menuKind)
+	m = keyRun(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.menuKind != pickerModels || m.modelsFor != "Add" {
+		t.Fatalf("provider row named Add opened %q for %q", m.menuKind, m.modelsFor)
 	}
-	m = openPickerCmd(t, m, "/models")
 	before := a.Settings()
 	m = selectModel(t, m, "Reasoning summary")
 	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})

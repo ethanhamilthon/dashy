@@ -72,17 +72,86 @@ func AllModels(ctx context.Context, providers map[string]Provider) (choices []Mo
 
 // AddProvider registers a new provider and saves the settings.
 func (a *Agent) AddProvider(name string, provider Provider) error {
+	return a.SaveProvider("", name, provider)
+}
+
+// SaveProvider adds the provider name (old is "") or replaces the provider old, which
+// may be renamed. An empty key keeps the key of old. Sessions using old follow a rename.
+func (a *Agent) SaveProvider(old, name string, provider Provider) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return fmt.Errorf("provider name is required")
 	}
-	return a.update(func(s *Settings) error {
-		if _, exists := s.Providers[name]; exists {
+	err := a.withSelection(func(sel *selection) {
+		if old != "" && sel.Provider == old {
+			sel.Provider = name
+		}
+	}, func(s *Settings) error {
+		previous, editing := s.Providers[old]
+		if old != "" && !editing {
+			return fmt.Errorf("provider %q not found", old)
+		}
+		if _, exists := s.Providers[name]; exists && name != old {
 			return fmt.Errorf("provider %q already exists", name)
 		}
+		if editing && provider.APIKey == "" && provider.APIKeyEnv == "" {
+			provider.APIKey, provider.APIKeyEnv = previous.APIKey, previous.APIKeyEnv
+		}
+		delete(s.Providers, old)
 		s.Providers[name] = provider
+		if old != "" && s.Provider == old {
+			s.Provider = name
+		}
 		return nil
 	})
+	if err == nil && old != "" && old != name {
+		_, err = a.db.Exec(`UPDATE sessions SET provider = ? WHERE provider = ?`, name, old)
+	}
+	return err
+}
+
+// DeleteProvider removes a provider. A selection that used it is cleared.
+func (a *Agent) DeleteProvider(name string) error {
+	return a.withSelection(func(sel *selection) {
+		if sel.Provider == name {
+			*sel = selection{}
+		}
+	}, func(s *Settings) error {
+		if _, ok := s.Providers[name]; !ok {
+			return fmt.Errorf("provider %q not found", name)
+		}
+		delete(s.Providers, name)
+		if s.Provider == name {
+			s.Provider, s.Model, s.Effort = "", "", ""
+		}
+		return nil
+	})
+}
+
+// withSelection adjusts the session selection, then saves the change; a failed save
+// restores the previous selection.
+func (a *Agent) withSelection(adjust func(*selection), change func(*Settings) error) error {
+	a.cfg.mu.Lock()
+	previous := a.cfg.sel
+	adjust(&a.cfg.sel)
+	a.cfg.mu.Unlock()
+	if err := a.update(change); err != nil {
+		a.cfg.mu.Lock()
+		a.cfg.sel = previous
+		a.cfg.mu.Unlock()
+		return err
+	}
+	return nil
+}
+
+// ProviderModels lists the models of a provider that need not be saved yet: a connection test.
+func ProviderModels(ctx context.Context, p Provider) ([]string, error) {
+	models, err := newClient(p).models(ctx)
+	if err != nil && p.key() != "" {
+		err = errors.New(strings.ReplaceAll(err.Error(), p.key(), "[redacted]"))
+	}
+	sort.Strings(models)
+	return models, err
 }
 
 // ChangeSettings applies change to a copy of the settings, then validates, applies and saves it.

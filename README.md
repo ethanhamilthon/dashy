@@ -21,7 +21,7 @@ curl -fsSL https://raw.githubusercontent.com/ethanhamilthon/dashy/main/scripts/i
 
 ## First start
 
-Run `dashy` in a project directory. Use `/connect` to add or select a provider, `/models` to choose a model and reasoning effort, and `/settings` for display and bash output options. Settings and sessions are stored in the SQLite database `$DASHY_HOME/dashy.db` (default `~/.dashy/dashy.db`).
+Run `dashy` in a project directory. The first run asks for a provider (any OpenAI-compatible endpoint) and a model. Use `/connect` to add, edit, delete or switch providers, `/models` to choose a model and reasoning effort, `/settings` for display and bash output options and `/tasks` to see or stop background tasks. Settings and sessions are stored in the SQLite database `$DASHY_HOME/dashy.db` (default `~/.dashy/dashy.db`).
 
 Settings apply on the fly: changes made in the TUI take effect immediately, even while the agent works, and changes saved by another dashy process are picked up before the next model request. The running turn is not interrupted; its next request uses the new values. `--provider`, `--model` and `--effort` keep priority over the stored settings.
 
