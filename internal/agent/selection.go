@@ -31,19 +31,22 @@ func (a *Agent) Select(provider, model, effort string) error {
 }
 
 // ModelChoice is a model offered by one configured provider.
-type ModelChoice struct{ Provider, Model string }
+type ModelChoice struct {
+	Provider, Model string
+	ContextWindow   int64 // Zero means the provider did not report a limit.
+}
 
 // AllModels lists the models of every provider concurrently. Failures are reported per provider.
 func AllModels(ctx context.Context, providers map[string]Provider) (choices []ModelChoice, errs map[string]error) {
 	type result struct {
 		name   string
-		models []string
+		models []modelInfo
 		err    error
 	}
 	results := make(chan result, len(providers))
 	for name, p := range providers {
 		go func(name string, p Provider) {
-			models, err := newClient(p).models(ctx)
+			models, err := newClient(p).modelCatalog(ctx)
 			if err != nil && p.key() != "" {
 				err = errors.New(strings.ReplaceAll(err.Error(), p.key(), "[redacted]"))
 			}
@@ -58,7 +61,7 @@ func AllModels(ctx context.Context, providers map[string]Provider) (choices []Mo
 			continue
 		}
 		for _, m := range r.models {
-			choices = append(choices, ModelChoice{r.name, m})
+			choices = append(choices, ModelChoice{Provider: r.name, Model: m.ID, ContextWindow: m.window()})
 		}
 	}
 	sort.Slice(choices, func(i, j int) bool {

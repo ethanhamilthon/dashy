@@ -6,15 +6,17 @@
 - The previous one-shot/headless `-p` mode is removed, per the user's request.
 - ACP runs code freely, like the TUI: **no permission prompts**, explicitly requested
   by the user. This supersedes section 9's approval gate and its acceptance tests.
-- Implementation is client-independent. Paseo 0.13.2 was used only for an external
-  interoperability smoke test; no client-specific code or fixtures are included.
+- Implementation is client-independent; no client-specific code or fixtures are included.
 - The first preview implements ACP v1 text/tools, cancellation, isolated sessions,
   and standard session-scoped model/reasoning configuration selectors.
   Exact schema and SDK test-peer revisions and limitations are in `docs/ACP.md`.
 - Core runner is reused directly; TUI controller auto-delivery does not match ACP
   prompt ownership. TUI, task helpers, saved history and instruction snapshots remain.
-- Load/resume/replay, richer input, MCP and client filesystem/terminal integration
-  are follow-up milestones and are not advertised.
+- ACP v1 session loading now restores persisted history and configuration and replays
+  the transcript without rerunning tools. Context occupancy is reported through
+  `usage_update`, with a 1,000,000-token display fallback for unknown model limits.
+- Resume without replay, listing, richer input, MCP and client filesystem/terminal
+  integration remain follow-up milestones and are not advertised.
 
 The original roadmap below is retained for follow-up work. Explicit scope updates
 above take precedence where the original roadmap conflicts with them.

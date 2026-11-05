@@ -11,20 +11,18 @@ contain an editor integration or depend on a particular editor. The old one-shot
 | Protocol | ACP **v1**, newline-delimited JSON-RPC 2.0 |
 | Schema | `agentclientprotocol/agent-client-protocol` revision `734309dc6ff8f5a3b93adca62826dd63cff85a26`, `schema/v1/schema.json` |
 | Independent test peer | `github.com/coder/acp-go-sdk` **v0.13.5**, revision `0845a3bb9eddda5bfc22a94dd3598c90cb842451` (tests only) |
-| Request flow | `initialize`, `session/new`, `session/prompt`, `session/set_config_option` |
+| Request flow | `initialize`, `session/new`, `session/load`, `session/prompt`, `session/set_config_option` |
 | Cancellation | `session/cancel` notification; `$/cancel_request` for individual requests |
 | Authentication | Existing Dashy provider settings / environment; no interactive ACP auth methods |
 | Execution policy | No approvals, matching the trusted local TUI policy |
 | Input | Text only; all blocks validated before mutating history |
-| Updates | Committed agent text, structured tools, terminal tool results, configuration changes |
+| Updates | Committed agent text, structured tools, terminal tool results, configuration changes, context usage |
 | Configuration | Session-local model/provider and reasoning effort selectors |
-| Unsupported | ACP v2, MCP, additional roots, load/resume/replay/list/close, images/audio/resources, mode configuration, client filesystem/terminals |
+| Unsupported | ACP v2, MCP, additional roots, resume without replay/list/close, images/audio/resources, mode configuration, client filesystem/terminals |
 
-An external interoperability smoke test with Paseo 0.13.2 completed a real tool turn
-and displayed its final answer. This was an external test using temporary state and
-a fake provider, without paid calls or edits to the desktop's live configuration.
 There is no client-specific runtime code, test fixture, configuration, or dependency
-in the implementation. Visual desktop UI automation was not performed.
+in the implementation. Interoperability tests use an independent ACP client,
+isolated state and a fake provider, without paid calls or live configuration edits.
 
 The maintained Go SDK was evaluated. Its v0.13.5 transport logs malformed raw frames,
 does not return standard parse errors, and overwrites duplicate in-flight IDs.
@@ -69,6 +67,27 @@ and never change another session or shared TUI defaults. The effort choices matc
 the TUI; providers may reject levels unsupported by a particular model. `default`
 means omit the reasoning effort and use the provider's default.
 
+## History and context usage
+
+`initialize` advertises `loadSession: true`. Clients can reconnect with
+`session/load` using the saved `sessionId`, its original absolute `cwd`, and an
+empty `mcpServers` array. Dashy restores the stored instruction snapshot,
+conversation and model/effort selection. Before replying, it replays user and
+agent messages, saved reasoning and tool calls/results through `session/update`.
+Tools and instruction blocks are not re-executed. Loading an already open idle
+session also replays its history; loading a busy session or a different workspace
+is rejected. Clients should replace their transcript with the replay rather than
+append it to a previously rendered copy.
+
+`usage_update` reports context occupancy on session creation/load, configuration
+changes and after each prompt, including interrupted turns. `used` is the latest
+provider-reported input token count, or a history estimate when no count is known.
+`size` uses the selected model's positive `context_length` or `context_window`
+from the provider's `/models` response. When neither is available, the display
+falls back to **1,000,000 tokens**. This fallback is a UI assumption, not a verified
+model limit, and does not change requests or enforce/truncate the context.
+No cost or token billing totals are fabricated.
+
 ## Trust and lifecycle
 
 Commands, instruction blocks and task helpers execute freely, just as in the TUI.
@@ -98,8 +117,9 @@ all owned tasks, saves recoverable history, and releases sessions and sockets.
   Configured provider credentials are redacted from errors and tool/text updates.
 - Frame limit: 8 MiB; request IDs: strings or signed 64-bit integers. Maximum 64
   concurrent requests, 16 sessions, and 64 queued output frames per connection.
-- One writer preserves update/response ordering. Queue overflow fails the connection
-  instead of dropping critical events. A stalled write times out after 5 seconds.
+- One writer preserves update/response ordering. Live-update queue overflow fails
+  the connection instead of dropping critical events; bulk history replay and
+  responses apply backpressure. A stalled write times out after 5 seconds.
   Standard descriptors are made pollable so cancellation can interrupt stdio reads.
 - Invalid JSON/envelopes/params return standard JSON-RPC errors. Unknown notifications
   and valid unsolicited responses are ignored. Duplicate in-flight IDs or oversized

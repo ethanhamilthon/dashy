@@ -70,6 +70,9 @@ func TestBinaryACPAndSignal(t *testing.T) {
 				SessionID string `json:"sessionId"`
 			}
 			f := next()
+			for string(f["method"]) == `"session/update"` {
+				f = next()
+			}
 			if err := json.Unmarshal(f["result"], &session); err != nil || session.SessionID == "" {
 				t.Fatalf("new session: %s %v", f, err)
 			}
@@ -81,7 +84,17 @@ func TestBinaryACPAndSignal(t *testing.T) {
 					break
 				}
 				if string(f["method"]) == `"session/update"` {
-					messages++
+					var notification struct {
+						Update struct {
+							Kind string `json:"sessionUpdate"`
+						}
+					}
+					if err := json.Unmarshal(f["params"], &notification); err != nil {
+						t.Fatal(err)
+					}
+					if notification.Update.Kind == "agent_message_chunk" {
+						messages++
+					}
 				}
 			}
 			if messages != 1 {

@@ -128,6 +128,7 @@ func (s *server) setConfig(ctx context.Context, params []byte, reply replyFunc) 
 		}
 		options := session.configOptions()
 		s.update(session, map[string]any{"sessionUpdate": "config_option_update", "configOptions": options})
+		s.usage(session)
 		reply(map[string]any{"configOptions": options}, nil)
 	})
 }

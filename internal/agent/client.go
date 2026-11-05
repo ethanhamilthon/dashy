@@ -81,7 +81,29 @@ func (c *client) send(ctx context.Context, method, path string, body any) (*http
 // models lists the model IDs of the provider, following pagination. A page that
 // brings no new model ends the listing, so a looping provider cannot hang it.
 func (c *client) models(ctx context.Context) ([]string, error) {
+	models, err := c.modelCatalog(ctx)
 	var ids []string
+	for _, m := range models {
+		ids = append(ids, m.ID)
+	}
+	return ids, err
+}
+
+type modelInfo struct {
+	ID            string
+	ContextLength int64 `json:"context_length"`
+	ContextWindow int64 `json:"context_window"`
+}
+
+func (m modelInfo) window() int64 {
+	if m.ContextLength > 0 {
+		return m.ContextLength
+	}
+	return max(m.ContextWindow, 0)
+}
+
+func (c *client) modelCatalog(ctx context.Context) ([]modelInfo, error) {
+	var ids []modelInfo
 	seen := map[string]bool{}
 	for after, pages := "", 0; pages < maxModelPages; pages++ {
 		path := "/models"
@@ -93,7 +115,7 @@ func (c *client) models(ctx context.Context) ([]string, error) {
 			return nil, err
 		}
 		var page struct {
-			Data    []struct{ ID string }
+			Data    []modelInfo
 			HasMore bool `json:"has_more"`
 		}
 		err = json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(&page)
@@ -105,7 +127,7 @@ func (c *client) models(ctx context.Context) ([]string, error) {
 		for _, m := range page.Data {
 			if !seen[m.ID] {
 				seen[m.ID] = true
-				ids = append(ids, m.ID)
+				ids = append(ids, m)
 				fresh++
 			}
 		}

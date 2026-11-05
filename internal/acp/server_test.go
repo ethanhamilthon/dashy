@@ -24,14 +24,18 @@ func command(cmd string) string {
 	item, _ := json.Marshal(map[string]any{"type": "function_call", "call_id": "call", "name": "bash", "arguments": string(args)})
 	return fmt.Sprintf("data: {\"type\":\"response.completed\",\"response\":{\"output\":[%s]}}\n\n", item)
 }
-func settings(t *testing.T, reply func(string) string) string {
+func settings(t *testing.T, reply func(string) string, catalog ...string) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("DASHY_HOME", home)
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, `{"data":[{"id":"m"},{"id":"m2"}]}`)
+			data := `{"data":[{"id":"m"},{"id":"m2"}]}`
+			if len(catalog) > 0 {
+				data = catalog[0]
+			}
+			fmt.Fprint(w, data)
 			return
 		}
 		data, _ := io.ReadAll(r.Body)
@@ -170,7 +174,7 @@ func TestTextTurnAndUnsupportedMethods(t *testing.T) {
 	if messages != 1 {
 		t.Fatalf("duplicate streamed/final messages: %d", messages)
 	}
-	for _, method := range []string{"session/load", "session/resume", "session/set_mode", "fs/read_text_file"} {
+	for _, method := range []string{"session/resume", "session/set_mode", "fs/read_text_file"} {
 		w.request(t, 4, method, map[string]string{"sessionId": session})
 		if f := w.response(t, 4); f.Error == nil || f.Error.Code != -32601 {
 			t.Fatal(f)

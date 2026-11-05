@@ -85,6 +85,25 @@ func (p *peer) send(v any) error {
 		return errors.New("ACP output queue full")
 	}
 }
+
+// sendWait applies backpressure to bulk history replay without dropping frames.
+// The writer's timeout and connection cancellation bound a stalled consumer.
+func (p *peer) sendWait(ctx context.Context, v any) error {
+	b, err := json.Marshal(v)
+	if err != nil || len(b) > maxFrame {
+		p.stop(errors.New("ACP output frame limit"))
+		return errors.New("ACP output frame limit")
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-p.ctx.Done():
+		return p.ctx.Err()
+	case p.queue <- append(b, '\n'):
+		return nil
+	}
+}
+
 func (p *peer) notify(params any) error {
 	return p.send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": params})
 }
@@ -95,7 +114,7 @@ func (p *peer) response(id json.RawMessage, value any, e *rpcError) {
 	} else {
 		m["result"] = value
 	}
-	_ = p.send(m)
+	_ = p.sendWait(p.ctx, m)
 }
 func (p *peer) writeLoop() {
 	for {

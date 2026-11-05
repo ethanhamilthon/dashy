@@ -49,10 +49,11 @@ func TestMaintainedSDKClientInteroperability(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	initialized, err := peer.Initialize(ctx, sdk.InitializeRequest{ProtocolVersion: 1})
-	if err != nil || initialized.ProtocolVersion != 1 || initialized.AgentCapabilities.LoadSession {
+	if err != nil || initialized.ProtocolVersion != 1 || !initialized.AgentCapabilities.LoadSession {
 		t.Fatalf("initialize: %+v %v", initialized, err)
 	}
-	session, err := peer.NewSession(ctx, sdk.NewSessionRequest{Cwd: t.TempDir(), McpServers: []sdk.McpServer{}})
+	dir := t.TempDir()
+	session, err := peer.NewSession(ctx, sdk.NewSessionRequest{Cwd: dir, McpServers: []sdk.McpServer{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,12 +75,35 @@ func TestMaintainedSDKClientInteroperability(t *testing.T) {
 	if err != nil || result.StopReason != "end_turn" {
 		t.Fatalf("prompt: %+v %v", result, err)
 	}
+	loaded, err := peer.LoadSession(ctx, sdk.LoadSessionRequest{SessionId: session.SessionId, Cwd: dir, McpServers: []sdk.McpServer{}})
+	if err != nil || len(loaded.ConfigOptions) != 2 {
+		t.Fatalf("load: %+v %v", loaded, err)
+	}
 	callback.mu.Lock()
 	defer callback.mu.Unlock()
-	if len(callback.updates) != 3 {
-		t.Fatalf("updates: %+v", callback.updates)
+	users, answers, usage, configs := 0, 0, 0, 0
+	for _, notification := range callback.updates {
+		if notification.SessionId != session.SessionId {
+			t.Fatal("session association lost")
+		}
+		u := notification.Update
+		if u.UserMessageChunk != nil {
+			users++
+		}
+		if u.AgentMessageChunk != nil {
+			answers++
+		}
+		if u.ConfigOptionUpdate != nil {
+			configs++
+		}
+		if u.UsageUpdate != nil {
+			usage++
+			if u.UsageUpdate.Size != 1_000_000 || u.UsageUpdate.Used < 0 {
+				t.Fatalf("usage: %+v", u.UsageUpdate)
+			}
+		}
 	}
-	if callback.updates[0].SessionId != session.SessionId {
-		t.Fatal("session association lost")
+	if users != 1 || answers != 2 || configs != 2 || usage != 5 {
+		t.Fatalf("SDK update counts: users=%d answers=%d configs=%d usage=%d", users, answers, configs, usage)
 	}
 }

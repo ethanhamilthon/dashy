@@ -82,7 +82,7 @@ func (s *server) handle(ctx context.Context, method string, params json.RawMessa
 		// Per v1, return the supported version; clients must disconnect on a mismatch.
 		s.initialized = p.ProtocolVersion == 1
 		s.clientCapabilities = p.ClientCapabilities
-		reply(map[string]any{"protocolVersion": 1, "agentInfo": map[string]string{"name": "dashy", "version": s.opts.Version}, "agentCapabilities": map[string]any{"loadSession": false, "promptCapabilities": map[string]bool{"image": false, "audio": false, "embeddedContext": false}, "mcpCapabilities": map[string]bool{"http": false, "sse": false}}, "authMethods": []any{}}, nil)
+		reply(map[string]any{"protocolVersion": 1, "agentInfo": map[string]string{"name": "dashy", "version": s.opts.Version}, "agentCapabilities": map[string]any{"loadSession": true, "promptCapabilities": map[string]bool{"image": false, "audio": false, "embeddedContext": false}, "mcpCapabilities": map[string]bool{"http": false, "sse": false}}, "authMethods": []any{}}, nil)
 		return
 	}
 	if !s.initialized {
@@ -91,7 +91,9 @@ func (s *server) handle(ctx context.Context, method string, params json.RawMessa
 	}
 	switch method {
 	case "session/new":
-		s.newSession(ctx, params, reply)
+		s.openSession(ctx, params, reply, false)
+	case "session/load":
+		s.openSession(ctx, params, reply, true)
 	case "session/prompt":
 		s.prompt(ctx, params, reply)
 	case "session/set_config_option":
@@ -117,8 +119,9 @@ func (s *server) handle(ctx context.Context, method string, params json.RawMessa
 		reply(nil, problem(-32601, "Method not found"))
 	}
 }
-func (s *server) newSession(ctx context.Context, params json.RawMessage, reply replyFunc) {
+func (s *server) openSession(ctx context.Context, params json.RawMessage, reply replyFunc, load bool) {
 	var p struct {
+		SessionID             string            `json:"sessionId"`
 		Cwd                   string            `json:"cwd"`
 		MCPServers            []json.RawMessage `json:"mcpServers"`
 		AdditionalDirectories []string          `json:"additionalDirectories"`
@@ -128,9 +131,27 @@ func (s *server) newSession(ctx context.Context, params json.RawMessage, reply r
 		reply(nil, problem(-32602, "Absolute cwd and mcpServers array are required"))
 		return
 	}
+	if load && (p.SessionID == "" || filepath.Base(p.SessionID) != p.SessionID || strings.ContainsAny(p.SessionID, `/\`)) {
+		reply(nil, problem(-32602, "A valid sessionId is required"))
+		return
+	}
 	if len(p.MCPServers) > 0 || len(p.AdditionalDirectories) > 0 {
 		reply(nil, problem(-32602, "MCP servers and additional workspace roots are not supported by this preview"))
 		return
+	}
+	if load {
+		if existing := s.lookup(p.SessionID); existing != nil {
+			existing.mu.Lock()
+			if existing.busy || filepath.Clean(p.Cwd) != existing.a.Shell.Dir {
+				existing.mu.Unlock()
+				reply(nil, problem(-32600, "Session is busy or belongs to a different workspace"))
+				return
+			}
+			existing.busy = true
+			existing.mu.Unlock()
+			s.job(func() { s.sessionReady(ctx, existing, true, reply) })
+			return
+		}
 	}
 	s.mu.Lock()
 	if len(s.sessions)+s.creating >= 16 {
@@ -149,6 +170,9 @@ func (s *server) newSession(ctx context.Context, params json.RawMessage, reply r
 		}
 		session := &session{}
 		opts := agent.Options{Mode: "acp", Config: s.opts.Config, NoGlobal: s.opts.NoGlobal}
+		if load {
+			opts.Resume = p.SessionID
+		}
 		opts.Observe = func(e agent.ExecutionEvent) { s.tool(session, e) }
 		a, err := agent.New(p.Cwd, opts)
 		if err != nil {
@@ -172,10 +196,11 @@ func (s *server) newSession(ctx context.Context, params json.RawMessage, reply r
 			reply(nil, problem(-32800, "Request cancelled"))
 			return
 		}
+		session.busy = true
 		s.mu.Lock()
 		s.sessions[a.SessionID()] = session
 		s.mu.Unlock()
-		reply(map[string]any{"sessionId": a.SessionID(), "configOptions": session.configOptions()}, nil)
+		s.sessionReady(ctx, session, load, reply)
 	})
 }
 func (s *server) lookup(id string) *session { s.mu.Lock(); defer s.mu.Unlock(); return s.sessions[id] }
@@ -228,6 +253,7 @@ func (s *server) prompt(ctx context.Context, params json.RawMessage, reply reply
 				s.update(session, map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]string{"type": "text", "text": agent.Redact(session.a.Settings(), e.Text)}})
 			}
 		})
+		s.usage(session)
 		session.mu.Lock()
 		stopped, sessionCancelled := turn.Err() != nil, session.cancelled
 		session.busy = false
