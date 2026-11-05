@@ -291,9 +291,8 @@ func TestSettingsChangeWhileNotificationTurnRuns(t *testing.T) {
 		}
 	}
 	for name, err := range map[string]error{
-		"reasoning": h.ctl.ChangeSetting(SettingReasoning, 1),
-		"lines":     h.ctl.ChangeSetting(SettingLines, 1),
-		"model":     h.ctl.SelectModel("p", "other", "high"),
+		"settings": h.ctl.ChangeSettings(func(s *agent.Settings) { s.ShowLines, s.ReasoningSummary = "full", false }),
+		"model":    h.ctl.SelectModel("p", "other", "high"),
 	} {
 		if err != nil {
 			t.Errorf("%s while busy: %v", name, err)
@@ -372,10 +371,8 @@ func TestSettingsAndProvidersThroughTheController(t *testing.T) {
 	if codeOf(h.ctl.SaveProvider("", "q", "https://q.example/v1", "")) != "failed" {
 		t.Fatal("duplicate provider accepted")
 	}
-	for _, setting := range []string{SettingReasoning, SettingLines, SettingShellOutput} {
-		if err := h.ctl.ChangeSetting(setting, 1); err != nil {
-			t.Fatal(err)
-		}
+	if err := h.ctl.ChangeSettings(func(s *agent.Settings) { s.ShowLines, s.ReasoningSummary, s.ShellOutput = "full", false, 16384 }); err != nil {
+		t.Fatal(err)
 	}
 	s := h.ctl.Settings()
 	if s.Model != "m2" || s.Effort != "high" || s.ShowLines != "full" || s.ReasoningSummary || s.ShellOutput != 16384 || s.Providers["q"].APIKey != "sk-x" {

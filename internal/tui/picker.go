@@ -10,7 +10,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"dashy/internal/agent"
-	"dashy/internal/control"
 )
 
 // Picker kinds. "settings" lists the display settings rows (/settings), "models" every
@@ -22,7 +21,7 @@ const (
 	pickerTasks    = "tasks" // background tasks of the session (/tasks)
 )
 
-// actionAdd is the "Add provider" row. Settings rows have a control.Setting* action;
+// actionAdd is the "Add provider" row. Settings rows have their name as action;
 // provider and model rows have none, so their names can be anything.
 const actionAdd = "add"
 
@@ -82,8 +81,8 @@ func (m *model) openPicker(kind string) tea.Cmd {
 func (m *model) rebuildSettingsMenu() {
 	s := m.ctl.Settings()
 	m.menu = nil
-	for _, setting := range []string{control.SettingReasoning, control.SettingLines, control.SettingShellOutput} {
-		options, current := control.SettingOptions(setting, s)
+	for _, row := range settingRows {
+		options, current := row.options(s)
 		parts := make([]string, len(options))
 		for i, option := range options {
 			parts[i] = " " + option + " "
@@ -91,8 +90,7 @@ func (m *model) rebuildSettingsMenu() {
 				parts[i] = "[" + option + "]"
 			}
 		}
-		name := control.SettingName(setting)
-		m.menu = append(m.menu, command{name: name, icon: "*", label: fmt.Sprintf("%-18s%s", name, strings.Join(parts, "")), action: setting})
+		m.menu = append(m.menu, command{name: row.name, icon: "*", label: fmt.Sprintf("%-18s%s", row.name, strings.Join(parts, "")), action: row.name})
 	}
 }
 
@@ -162,7 +160,7 @@ func (m model) pickerKey(key tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			if len(matches) == 0 {
 				return m, nil, true
 			}
-			err := m.ctl.ChangeSetting(matches[m.selected%len(matches)].action, delta)
+			err := m.changeSetting(matches[m.selected%len(matches)].action, delta)
 			m.rebuildSettingsMenu()
 			m.refresh(true)
 			if err != nil {
@@ -295,4 +293,77 @@ func (m model) showSelectedTask() (tea.Model, tea.Cmd, bool) {
 	m.add("info", task.label+"\n\n"+agent.TaskOutput(agent.Task{Log: task.action})+"\n\nlog: "+task.action)
 	m.refresh(true)
 	return m, nil, true
+}
+
+// settingRow is one /settings row: its values with the index of the current one (-1 when
+// the stored value is not one of them) and how a step left (delta < 0) or right changes it.
+type settingRow struct {
+	name    string
+	options func(agent.Settings) (options []string, current int)
+	step    func(delta int, s *agent.Settings)
+}
+
+var settingRows = []settingRow{
+	{"Reasoning summary",
+		func(s agent.Settings) ([]string, int) { return onOff(s.ReasoningSummary) },
+		func(delta int, s *agent.Settings) { s.ReasoningSummary = delta < 0 }},
+	{"Show lines",
+		func(s agent.Settings) ([]string, int) {
+			return agent.ShowLinesModes, slices.Index(agent.ShowLinesModes, s.ShowLines)
+		},
+		func(delta int, s *agent.Settings) {
+			i := max(slices.Index(agent.ShowLinesModes, s.ShowLines), 0)
+			if delta > 0 {
+				i++
+			} else {
+				i--
+			}
+			s.ShowLines = agent.ShowLinesModes[min(max(i, 0), len(agent.ShowLinesModes)-1)]
+		}},
+	{"Bash output",
+		func(s agent.Settings) (options []string, current int) {
+			current = -1
+			for v := agent.ShellOutputMin; v <= agent.ShellOutputMax; v *= 2 {
+				if v == s.ShellOutput {
+					current = len(options)
+				}
+				options = append(options, fmt.Sprintf("%dK", v/1024))
+			}
+			return options, current
+		},
+		func(delta int, s *agent.Settings) {
+			// Doubling steps; from a value off the grid, a step goes to the next grid value in
+			// that direction. 0 (no truncation) is not offered.
+			v := s.ShellOutput
+			switch {
+			case v == 0 && delta > 0:
+				return
+			case v == 0:
+				v = agent.ShellOutputMax
+			case delta > 0:
+				n := agent.ShellOutputMin
+				for n <= v && n < agent.ShellOutputMax {
+					n *= 2
+				}
+				v = n
+			default:
+				n := agent.ShellOutputMax
+				for n >= v && n > agent.ShellOutputMin {
+					n /= 2
+				}
+				v = n
+			}
+			s.ShellOutput = v
+		}},
+}
+
+func onOff(v bool) ([]string, int) { return []string{"on", "off"}, map[bool]int{true: 0, false: 1}[v] }
+
+func (m *model) changeSetting(name string, delta int) error {
+	for _, row := range settingRows {
+		if row.name == name {
+			return m.ctl.ChangeSettings(func(s *agent.Settings) { row.step(delta, s) })
+		}
+	}
+	return nil
 }

@@ -2,7 +2,6 @@ package control
 
 import (
 	"context"
-	"fmt"
 	"slices"
 	"strings"
 
@@ -289,97 +288,12 @@ func (c *Controller) StopTask(id string) error {
 	return err
 }
 
-// Settings rows that ChangeSetting toggles or cycles.
-const (
-	SettingReasoning   = "reasoning"
-	SettingLines       = "lines"
-	SettingShellOutput = "shelloutput"
-)
-
-// settingRow describes one /settings row: its label, its values with the index of the
-// current one (-1 when the stored value is not one of them) and how a step changes it.
-type settingRow struct {
-	name    string
-	options func(agent.Settings) (options []string, current int)
-	step    func(delta int, s *agent.Settings)
-}
-
-var settingRows = map[string]settingRow{
-	SettingReasoning: {"Reasoning summary",
-		func(s agent.Settings) ([]string, int) { return onOff(s.ReasoningSummary) },
-		func(delta int, s *agent.Settings) { s.ReasoningSummary = delta < 0 }},
-	SettingLines: {"Show lines",
-		func(s agent.Settings) ([]string, int) {
-			return agent.ShowLinesModes, slices.Index(agent.ShowLinesModes, s.ShowLines)
-		},
-		func(delta int, s *agent.Settings) {
-			i := max(slices.Index(agent.ShowLinesModes, s.ShowLines), 0)
-			if delta > 0 {
-				i++
-			} else {
-				i--
-			}
-			s.ShowLines = agent.ShowLinesModes[min(max(i, 0), len(agent.ShowLinesModes)-1)]
-		}},
-	SettingShellOutput: {"Bash output",
-		func(s agent.Settings) (options []string, current int) {
-			current = -1
-			for v := agent.ShellOutputMin; v <= agent.ShellOutputMax; v *= 2 {
-				if v == s.ShellOutput {
-					current = len(options)
-				}
-				options = append(options, fmt.Sprintf("%dK", v/1024))
-			}
-			return options, current
-		},
-		func(delta int, s *agent.Settings) {
-			// Doubling steps; from a value off the grid, a step goes to the next grid value in
-			// that direction. 0 (no truncation) is not offered.
-			v := s.ShellOutput
-			switch {
-			case v == 0 && delta > 0:
-				return
-			case v == 0:
-				v = agent.ShellOutputMax
-			case delta > 0:
-				n := agent.ShellOutputMin
-				for n <= v && n < agent.ShellOutputMax {
-					n *= 2
-				}
-				v = n
-			default:
-				n := agent.ShellOutputMax
-				for n >= v && n > agent.ShellOutputMin {
-					n /= 2
-				}
-				v = n
-			}
-			s.ShellOutput = v
-		}},
-}
-
-func onOff(v bool) ([]string, int) { return []string{"on", "off"}, map[bool]int{true: 0, false: 1}[v] }
-
-// SettingOptions lists every value of a setting row and the index of the current one
-// (-1 when the stored value is not one of them).
-func SettingOptions(setting string, s agent.Settings) (options []string, current int) {
-	return settingRows[setting].options(s)
-}
-
-// SettingName is the name of a setting row.
-func SettingName(setting string) string { return settingRows[setting].name }
-
-// ChangeSetting moves one setting a step back (delta < 0) or forward (delta > 0) and saves it.
-// Settings stop at their first and last value. It is allowed while a turn runs: that turn's
-// next model request picks the change up.
-func (c *Controller) ChangeSetting(setting string, delta int) error {
-	row, ok := settingRows[setting]
-	if !ok {
-		return fail("invalid", "unknown setting: %s", setting)
-	}
+// ChangeSettings applies change to the settings and saves them. It is allowed while a
+// turn runs: that turn's next model request picks the change up.
+func (c *Controller) ChangeSettings(change func(*agent.Settings)) error {
 	var err error
 	c.view(func() {
-		if e := c.a.ChangeSettings(func(s *agent.Settings) { row.step(delta, s) }); e != nil {
+		if e := c.a.ChangeSettings(change); e != nil {
 			err = fail("failed", "%s", e)
 		}
 	})
