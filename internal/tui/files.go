@@ -167,7 +167,8 @@ func scanProjectFiles(ctx context.Context, root string) ([]string, error) {
 	c := pathCollector{seen: make(map[string]bool)}
 	cmd := exec.CommandContext(ctx, "git", "ls-files", "-z", "-c", "--others", "--exclude-standard")
 	cmd.Dir = root
-	if out, err := cmd.Output(); err == nil && len(out) > 0 {
+	// A successful empty listing is the answer too: the walk would show ignored files.
+	if out, err := cmd.Output(); err == nil {
 		for _, item := range bytes.Split(out, []byte{0}) {
 			p := string(item)
 			for d := filepath.Dir(p); d != "." && d != "/" && d != "" && d != p; d = filepath.Dir(d) {

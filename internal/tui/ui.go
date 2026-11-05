@@ -376,7 +376,7 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m.reject(err)
 				}
 				if in != nil {
-					m.input.SetValue(in.Text)
+					m.setComposer(in.Text)
 					m.input.CursorEnd()
 					m.refresh(true)
 					return m, nil

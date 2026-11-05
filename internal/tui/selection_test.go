@@ -60,3 +60,25 @@ func TestSingleClickDoesNotCopy(t *testing.T) {
 		t.Fatal("click without drag copied to clipboard")
 	}
 }
+
+// Selection works on screen cells: wide characters take two, emoji and combining
+// sequences stay whole.
+func TestSelectionWideCharacters(t *testing.T) {
+	for _, c := range []struct {
+		line     string
+		from, to int // selected cells, inclusive
+		want     string
+	}{
+		{"界ab", 2, 3, "ab"},
+		{"界ab", 1, 2, "界a"},
+		{"e\u0301xy", 1, 2, "xy"},
+		{"e\u0301xy", 0, 1, "e\u0301x"},
+		{"👍🏽 ok", 1, 2, "👍🏽"},
+		{"ab  ", 0, 3, "ab"},
+	} {
+		s := selection{start: point{c.from, 0}, end: point{c.to, 0}}
+		if got := s.text([]string{c.line}, 20); got != c.want {
+			t.Errorf("%q [%d,%d]: %q, want %q", c.line, c.from, c.to, got, c.want)
+		}
+	}
+}

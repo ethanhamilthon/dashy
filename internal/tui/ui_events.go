@@ -153,5 +153,13 @@ func (m *model) restoreUnsent(unsent []agent.Input) {
 	if draft := m.input.Value(); draft != "" {
 		texts = append(texts, draft)
 	}
-	m.input.SetValue(strings.Join(texts, "\n\n"))
+	m.setComposer(strings.Join(texts, "\n\n"))
+}
+
+// setComposer replaces the composer text from outside the editor (restored or recalled
+// input). Completions of the old text are dropped: their offsets no longer apply.
+func (m *model) setComposer(text string) {
+	m.input.SetValue(text)
+	m.selected, m.hideCompletion = 0, false
+	m.dismissFileCompletion()
 }

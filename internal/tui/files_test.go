@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"dashy/internal/agent"
 )
 
 func TestFindFileTokenBasics(t *testing.T) {
@@ -466,5 +468,36 @@ func TestQuotedPathWithSpacesAcceptance(t *testing.T) {
 	want := "look at @\"my folder/document.pdf\""
 	if got := m.input.Value(); got != want {
 		t.Fatalf("quoted path replacement = %q, want %q", got, want)
+	}
+}
+
+// Restored steering drops the file completion of the old draft, so accepting it cannot
+// overwrite the restored text.
+func TestRestoredSteeringDropsFileCompletion(t *testing.T) {
+	m := bareModel(t, t.TempDir())
+	m.input.SetValue("@ma")
+	m.input.CursorEnd()
+	m.fileCompletions = []string{"main.go"}
+	m.fileTokenStart, m.fileTokenEnd = 0, 3
+	m.restoreUnsent([]agent.Input{{Text: "KEEP"}})
+	if m.hasFileCompletions() {
+		t.Fatal("completion of the old draft survived")
+	}
+	if got := m.input.Value(); got != "KEEP\n\n@ma" {
+		t.Fatalf("composer %q", got)
+	}
+}
+
+// A repository whose files are all ignored lists nothing: the walk fallback would show them.
+func TestScanEmptyGitListing(t *testing.T) {
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "-C", dir, "init", "-q").CombinedOutput(); err != nil {
+		t.Skipf("git: %v %s", err, out)
+	}
+	os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("*\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "private.txt"), []byte("x"), 0644)
+	paths, err := scanProjectFiles(context.Background(), dir)
+	if err != nil || len(paths) != 0 {
+		t.Fatalf("paths %v %v", paths, err)
 	}
 }

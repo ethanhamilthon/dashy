@@ -6,6 +6,7 @@ import (
 	"github.com/atotto/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/rivo/uniseg"
 )
 
 // point is a screen cell inside the timeline viewport.
@@ -35,31 +36,48 @@ func (s selection) span(row, width int) (int, int, bool) {
 	return max(0, min(from, width)), max(0, min(to, width)), true
 }
 
-// cells returns the plain runes of one row and the selected rune range.
-func (s selection) cells(line string, row, width int) ([]rune, int, int, bool) {
+// cells splits the plain text of one row around its selected cells. Characters are
+// whole grapheme clusters: a wide character is selected if any of its cells is.
+// Trailing spaces are never selected.
+func (s selection) cells(line string, row, width int) (before, selected, after string, ok bool) {
 	from, to, ok := s.span(row, width)
 	if !ok {
-		return nil, 0, 0, false
+		return "", "", "", false
 	}
-	plain := []rune(strings.TrimRight(ansi.Strip(line), " "))
-	from, to = min(from, len(plain)), min(to, len(plain))
-	for to > from && plain[to-1] == ' ' {
-		to--
+	full := ansi.Strip(line)
+	plain := len(strings.TrimRight(full, " "))
+	var parts [3]strings.Builder
+	phase, col := 0, 0
+	g := uniseg.NewGraphemes(full)
+	for g.Next() {
+		start, _ := g.Positions()
+		w := max(g.Width(), 1)
+		inside := start < plain && col < to && col+w > from
+		switch {
+		case phase == 0 && inside:
+			phase = 1
+		case phase == 1 && !inside:
+			phase = 2
+		}
+		parts[phase].WriteString(g.Str())
+		col += w
 	}
-	return plain, from, to, from < to
+	before, selected, after = parts[0].String(), parts[1].String(), parts[2].String()
+	trimmed := strings.TrimRight(selected, " ")
+	selected, after = trimmed, selected[len(trimmed):]+after
+	return before, selected, after, selected != ""
 }
 
 // highlight reverses the selected cells while leaving other rows untouched.
 func (s selection) highlight(rows []string, width int) []string {
 	out := make([]string, len(rows))
 	for row, line := range rows {
-		plain, from, to, ok := s.cells(line, row, width)
+		before, selected, after, ok := s.cells(line, row, width)
 		if !ok {
 			out[row] = line
 			continue
 		}
-		tail := []rune(ansi.Strip(line))[to:]
-		out[row] = string(plain[:from]) + "\x1b[7m" + string(plain[from:to]) + "\x1b[0m" + string(tail)
+		out[row] = before + "\x1b[7m" + selected + "\x1b[0m" + after
 	}
 	return out
 }
@@ -68,8 +86,8 @@ func (s selection) highlight(rows []string, width int) []string {
 func (s selection) text(rows []string, width int) string {
 	var out []string
 	for row, line := range rows {
-		if plain, from, to, ok := s.cells(line, row, width); ok {
-			out = append(out, string(plain[from:to]))
+		if _, selected, _, ok := s.cells(line, row, width); ok {
+			out = append(out, selected)
 		}
 	}
 	return strings.Join(out, "\n")
