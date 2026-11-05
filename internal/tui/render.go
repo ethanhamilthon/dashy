@@ -151,7 +151,14 @@ func bodyColor(kind string) lipgloss.TerminalColor {
 func renderRail(text string, width int) string {
 	lines := strings.Split(text, "\n")
 	rail := lipgloss.NewStyle().Foreground(inputBlue).Background(inputBackground).Render("▌")
+	// The textarea viewport pads its placeholder with resets before spaces.
+	// Restore the input background after those resets as well.
+	background := ""
+	if sequence := lipgloss.ColorProfile().Color(string(inputBackground)).Sequence(true); sequence != "" {
+		background = "\x1b[" + sequence + "m"
+	}
 	for i, line := range lines {
+		line = strings.NewReplacer("\x1b[0m", "\x1b[0m"+background, "\x1b[m", "\x1b[m"+background, "\x1b[49m", background).Replace(line)
 		body := paint(" "+line, max(1, width-1), inputBackground, foreground)
 		lines[i] = ansi.Truncate(rail+body, max(1, width), "")
 	}

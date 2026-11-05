@@ -16,12 +16,14 @@ func TestUserInputBackground(t *testing.T) {
 	t.Cleanup(func() { lipgloss.SetColorProfile(previous) })
 	m := bareModel(t, "/project")
 	m.width = 40
+	placeholder := m.inputBlock()
 	m.input.SetValue("hello")
 	for name, block := range map[string]string{
-		"composer": m.inputBlock(),
-		"sent":     renderEntry(entry{Kind: "user", Text: "hello\nworld"}, 40, -1),
-		"empty":    renderRail("", 40),
-		"narrow":   renderRail("long text", 1),
+		"placeholder": placeholder,
+		"composer":    m.inputBlock(),
+		"sent":        renderEntry(entry{Kind: "user", Text: "hello\nworld"}, 40, -1),
+		"empty":       renderRail("", 40),
+		"narrow":      renderRail("long text", 1),
 	} {
 		width := 40
 		if name == "narrow" {
