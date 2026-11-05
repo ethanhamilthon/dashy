@@ -237,9 +237,19 @@ func (m *model) checkFileCompletion() tea.Cmd {
 	m.fileDismissed = false
 	m.fileGen++
 	m.fileDebounceGen++
-	m.fileCompletions, m.fileSelected = nil, 0
-	m.fileLoading, m.hideCompletion = true, false
+	m.fileSelected, m.hideCompletion = 0, false
 	m.fileTokenStart, m.fileTokenEnd = token.start, token.end
+	root := fileCompletionRoot(m.cwd, token.query)
+	if m.fileIndexCwd == root {
+		m.fileCompletions = filterFileCompletions(m.fileIndexCache, token.query)
+		if time.Since(m.fileIndexCacheTime) < fileIndexCacheTTL {
+			m.fileLoading = false
+			return nil
+		}
+	} else {
+		m.fileCompletions = nil
+	}
+	m.fileLoading = true
 	dGen, fGen := m.fileDebounceGen, m.fileGen
 	return tea.Tick(fileDebounceDelay, func(time.Time) tea.Msg {
 		return fileDebounceMsg{debounceGen: dGen, fileGen: fGen}
