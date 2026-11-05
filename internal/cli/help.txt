@@ -7,6 +7,11 @@ USAGE
   dashy models [--provider NAME]
   dashy notify [-s ID] TEXT...
   dashy view [-s ID] PATH...
+  dashy read [-o LINE] [-n COUNT] FILE
+  dashy grep [-i] [-l] [-g GLOB] PATTERN [PATH...]
+  dashy grep --files [-g GLOB] [PATH...]
+  dashy write FILE < CONTENT
+  dashy patch FILE < BLOCKS
   dashy version
   dashy --help | -h | help
 
@@ -32,6 +37,19 @@ FLAGS & COMMANDS
   models          List exact model IDs as 'PROVIDER<TAB>MODEL' for the configured
                   providers (or only --provider NAME). Failed providers go to stderr
                   and make the exit code 1.
+  read            Print numbered lines of a text file: -n COUNT (default 2000) from -o LINE.
+  grep            Search files for a Go regexp (-i ignores case, -l lists files, -g filters
+                  names by glob). Directories are searched recursively without git-ignored
+                  and hidden files. Prints FILE:LINE:TEXT, at most 200 matches; no match exits 1.
+                  --files lists the files instead (at most 500), like find.
+  write           Replace or create FILE with stdin, keeping its mode; parent dirs are created.
+  patch           Apply SEARCH/REPLACE blocks from stdin to FILE. Each search text must occur
+                  exactly once, else nothing changes. Block format:
+                    <<<<<<< SEARCH
+                    old lines
+                    =======
+                    new lines
+                    >>>>>>> REPLACE
   version         Print the dashy version.
 
 SYSTEM PROMPT (DASHY.md)

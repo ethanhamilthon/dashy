@@ -86,6 +86,14 @@ func Run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.W
 			return viewCommand(args[1:])
 		case "models":
 			return modelsCommand(ctx, args[1:], out, diagnostics)
+		case "read":
+			return readCommand(args[1:], out)
+		case "write":
+			return writeCommand(args[1:], in, out)
+		case "patch":
+			return patchCommand(args[1:], in, out)
+		case "grep":
+			return grepCommand(args[1:], out)
 		}
 	}
 	return sessionCommand(ctx, args, in, out, diagnostics)
