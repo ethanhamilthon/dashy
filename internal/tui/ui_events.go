@@ -26,7 +26,6 @@ func Run(ctx context.Context, a *agent.Agent, cwd, version string) error {
 	running, stop := context.WithCancel(ctx)
 	defer stop()
 	go forwardControl(running, m.events, program)
-	// A signal ends the interface through the program's own exit path.
 	go func() {
 		<-running.Done()
 		program.Quit()
@@ -46,7 +45,6 @@ func Run(ctx context.Context, a *agent.Agent, cwd, version string) error {
 	return err
 }
 
-// forwardControl delivers controller events to the program in the order emitted.
 func forwardControl(ctx context.Context, events *eventQueue, program *tea.Program) {
 	for {
 		event, ok := events.Pop(ctx)
@@ -63,7 +61,6 @@ func workingPulse(started time.Time) tea.Cmd {
 	return tea.Tick(80*time.Millisecond, func(time.Time) tea.Msg { return workingTick{started} })
 }
 
-// workingBlock renders queued steering and the spinner for the active operation.
 func (m model) workingBlock() string {
 	status := m.ctl.Status()
 	var block strings.Builder
@@ -89,7 +86,6 @@ func (m model) workingBlock() string {
 	return block.String()
 }
 
-// tasksRunning is "<sep>n tasks running", or empty without background tasks.
 func tasksRunning(n int, sep string) string {
 	if n == 0 {
 		return ""
@@ -97,7 +93,6 @@ func tasksRunning(n int, sep string) string {
 	return sep + fmt.Sprint(n) + map[bool]string{true: " task", false: " tasks"}[n == 1] + " running"
 }
 
-// handleControl applies one controller event to the interface.
 func (m model) handleControl(e control.Event) (tea.Model, tea.Cmd) {
 	follow := m.viewport.AtBottom()
 	var cmd tea.Cmd
@@ -105,7 +100,7 @@ func (m model) handleControl(e control.Event) (tea.Model, tea.Cmd) {
 	case "started":
 		m.refresh(true)
 		cmd = workingPulse(m.ctl.Status().Started)
-	case "agent": // streamed deltas are coalesced into frames
+	case "agent":
 		if time.Since(m.frameAt) >= frameInterval {
 			m.refresh(follow)
 		} else {
@@ -114,7 +109,6 @@ func (m model) handleControl(e control.Event) (tea.Model, tea.Cmd) {
 	case "notice", "error":
 		m.setFlash(e.Kind, e.Text)
 	case "session":
-		// A session change starts a fresh composer context, as /new and /resume always have.
 		m.cache = nil
 		m.pasteGeneration++
 		m.pasting = false
@@ -135,8 +129,6 @@ func (m model) handleControl(e control.Event) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// restoreUnsent puts instructions the model did not accept back into the composer,
-// ahead of the text already typed there.
 func (m *model) restoreUnsent(unsent []agent.Input) {
 	var texts []string
 	for _, in := range unsent {
@@ -150,8 +142,6 @@ func (m *model) restoreUnsent(unsent []agent.Input) {
 	m.setComposer(strings.Join(texts, "\n\n"))
 }
 
-// setComposer replaces the composer text from outside the editor (restored or recalled
-// input). Completions of the old text are dropped: their offsets no longer apply.
 func (m *model) setComposer(text string) {
 	m.input.SetValue(text)
 	m.selected, m.hideCompletion = 0, false

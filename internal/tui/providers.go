@@ -13,31 +13,27 @@ import (
 	"dashy/internal/agent"
 )
 
-// pickerProvider is the add/edit provider form; the composer edits its active field.
 const pickerProvider = "provider"
 
-// providerForm is the state of the add/edit provider form.
 type providerForm struct {
-	old        string    // provider being edited; "" adds one
-	fields     [3]string // name, base URL, API key
-	field      int       // the field in the composer
-	welcome    bool      // first run: no provider yet
-	checking   bool      // the connection test runs
-	err        string    // the last failed connection test
-	failedWith [3]string // the fields that failed it: Enter again saves them anyway
+	old        string
+	fields     [3]string
+	field      int
+	welcome    bool
+	checking   bool
+	err        string
+	failedWith [3]string
 	generation int
 }
 
 var formLabels = [3]string{"Name", "Base URL", "API key"}
 
-// providerChecked is the result of the connection test of a form.
 type providerChecked struct {
 	generation int
 	models     []string
 	err        error
 }
 
-// rebuildConnectMenu lists the providers, the one in use marked, then "Add provider".
 func (m *model) rebuildConnectMenu() {
 	s := m.ctl.Settings()
 	names := make([]string, 0, len(s.Providers))
@@ -57,8 +53,6 @@ func (m *model) rebuildConnectMenu() {
 	m.selected = min(m.selected, len(m.menu)-1)
 }
 
-// connectKey handles the provider list: Enter uses a provider (then pick its model),
-// e edits, d deletes after a second d. Other keys do nothing: the list has no filter.
 func (m model) connectKey(key tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	chosen := m.menu[m.selected%len(m.menu)]
 	isProvider := chosen.action != actionAdd
@@ -108,7 +102,6 @@ func (m model) connectKey(key tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	return m, nil, true
 }
 
-// openProviderForm opens the form to add (old "") or edit a provider.
 func (m *model) openProviderForm(old string, welcome bool) {
 	m.closePicker()
 	m.menuKind = pickerProvider
@@ -121,7 +114,6 @@ func (m *model) openProviderForm(old string, welcome bool) {
 	m.refresh(true)
 }
 
-// loadFormField puts the active field into the composer.
 func (m *model) loadFormField() {
 	f := m.form
 	m.input.Reset()
@@ -133,8 +125,6 @@ func (m *model) loadFormField() {
 	}
 }
 
-// formKey handles the provider form: Tab and arrows move between fields, Enter saves
-// (a missing field takes the focus instead), Esc goes back.
 func (m model) formKey(key tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	f := m.form
 	f.fields[f.field] = m.input.Value()
@@ -164,8 +154,6 @@ func (m model) formKey(key tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	return m, nil, true
 }
 
-// submitProviderForm validates the form and tests the connection by listing the
-// models; a failed test is shown, and Enter again with the same fields saves anyway.
 func (m model) submitProviderForm() (tea.Model, tea.Cmd, bool) {
 	f := m.form
 	for i := range f.fields {
@@ -201,7 +189,6 @@ func (m model) submitProviderForm() (tea.Model, tea.Cmd, bool) {
 	}, true
 }
 
-// providerResult applies a connection test: a failure stays in the form, a success saves.
 func (m model) providerResult(v providerChecked) (tea.Model, tea.Cmd) {
 	f := m.form
 	if f == nil || v.generation != f.generation {
@@ -217,7 +204,6 @@ func (m model) providerResult(v providerChecked) (tea.Model, tea.Cmd) {
 	return next, cmd
 }
 
-// saveProviderForm saves the provider and opens its models (known from the test, else listed).
 func (m model) saveProviderForm(models []string) (tea.Model, tea.Cmd, bool) {
 	f := m.form
 	if err := m.ctl.SaveProvider(f.old, f.fields[0], f.fields[1], f.fields[2]); err != nil {
@@ -231,7 +217,7 @@ func (m model) saveProviderForm(models []string) (tea.Model, tea.Cmd, bool) {
 	m.modelsFor = name
 	if models != nil {
 		if m.menuCancel != nil {
-			m.menuCancel() // the test already listed them
+			m.menuCancel()
 			m.menuCancel, cmd = nil, nil
 		}
 		for _, id := range models {
@@ -246,8 +232,6 @@ func (m model) saveProviderForm(models []string) (tea.Model, tea.Cmd, bool) {
 	return m, cmd, true
 }
 
-// formRows renders the provider form under the composer: a title, the fields with the
-// active one marked (the key masked), the last error and the keys.
 func (m model) formRows() (rows []string, errRow string) {
 	f := m.form
 	switch {
@@ -290,7 +274,6 @@ func (m model) formRows() (rows []string, errRow string) {
 	return rows, errRow
 }
 
-// failedAsTyped reports whether the fields are those a connection test just failed with.
 func (f *providerForm) failedAsTyped(active string) bool {
 	fields := f.fields
 	fields[f.field] = strings.TrimSpace(active)
@@ -300,8 +283,6 @@ func (f *providerForm) failedAsTyped(active string) bool {
 	return f.err != "" && fields == f.failedWith
 }
 
-// onboard opens what a first run needs: the provider form without providers, the
-// models without a selected model.
 func (m *model) onboard() tea.Cmd {
 	s := m.ctl.Settings()
 	switch {

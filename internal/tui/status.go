@@ -33,7 +33,6 @@ func (m model) status() (string, string) {
 	return left, "ctx ~" + formatContext(m.ctl.Context()) + " · " + shortPath(m.cwd)
 }
 
-// bottomBar centers the latest event between the model and the context, where it fits.
 func (m model) bottomBar() string {
 	left, right := m.status()
 	bar, style := renderBottomBar(m.width, left, right), lipgloss.NewStyle().Foreground(muted)

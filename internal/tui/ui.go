@@ -20,7 +20,7 @@ type renderedEntry struct {
 	source   entry
 	width    int
 	maxLines int
-	draft    bool // plain text standing in for Markdown not rendered yet
+	draft    bool
 	Text     string
 	rows     []string
 }
@@ -29,7 +29,7 @@ type model struct {
 	events                   *eventQueue
 	input                    textarea.Model
 	viewport                 pager
-	entries                  []entry // copy of the controller's timeline, refreshed by refresh
+	entries                  []entry
 	pasteGeneration          int
 	pasting                  bool
 	width, height            int
@@ -50,10 +50,10 @@ type model struct {
 	effort, menuGeneration   int
 	menuCancel               context.CancelFunc
 	pickerModels             []agent.ModelChoice
-	modelsFor                string        // the models picker shows this provider only
-	form                     *providerForm // the add/edit provider form
-	confirmDelete            string        // provider whose deletion waits for a second d
-	startCmd                 tea.Cmd       // run by Init: the first-run onboarding
+	modelsFor                string
+	form                     *providerForm
+	confirmDelete            string
+	startCmd                 tea.Cmd
 	sessions                 []agent.SessionSummary
 	fileGen, fileDebounceGen int
 	fileLoading              bool
@@ -69,16 +69,14 @@ type model struct {
 	fileDismissedValue       string
 	fileDismissedCursor      int
 	version                  string
-	flash                    entry // the latest notice or error, shown in the status bar
+	flash                    entry
 	flashAt                  time.Time
-	frameAt                  time.Time // the last refresh
-	dirty                    bool      // agent events arrived since frameAt
-	renderPending            bool      // some Markdown is still shown as plain text
+	frameAt                  time.Time
+	dirty                    bool
+	renderPending            bool
 	redrawScheduled          bool
 }
 
-// Streaming events refresh at most once per frameInterval; renderBudget bounds the
-// Markdown rendered by one refresh so a resize or a resumed session never freezes.
 const (
 	frameInterval = 33 * time.Millisecond
 	renderBudget  = 25 * time.Millisecond
@@ -132,7 +130,7 @@ func (m *model) updateInput(msg tea.Msg) tea.Cmd {
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	m.input.SetHeight(previous)
-	m.inputValue, m.inputWidth = "\x00", 0 // force resizeInput to recompute height
+	m.inputValue, m.inputWidth = "\x00", 0
 	return cmd
 }
 func (m *model) refresh(follow bool) {
@@ -143,8 +141,8 @@ func (m *model) refresh(follow bool) {
 	} else {
 		m.sessions = nil
 	}
-	m.entries = m.ctl.History() // the controller's timeline is the only one; this is a view of it
-	m.resizeInput()             // Constant-time unless input text or dimensions changed.
+	m.entries = m.ctl.History()
+	m.resizeInput()
 	m.viewport.Width = max(1, m.width)
 	m.viewport.Height = max(1, m.height)
 	m.viewport.SetLines(m.timelineRows(renderBudget))
@@ -154,7 +152,6 @@ func (m *model) refresh(follow bool) {
 	}
 }
 
-// add records a message of the interface: info goes to the timeline, notices and errors to the status bar.
 func (m *model) add(kind, text string) {
 	m.ctl.Note(agent.Event{Kind: kind, Text: text})
 	if kind != "info" {
@@ -166,7 +163,6 @@ func (m *model) setFlash(kind, text string) {
 	m.flash, m.flashAt = entry{Kind: kind, Text: shortEvent(text)}, time.Now()
 }
 
-// shortEvent is the first clause of a notice or error; /events keeps the full text.
 func shortEvent(text string) string {
 	short := strings.TrimSuffix(strings.TrimSpace(text), ".")
 	for _, sep := range []string{"\n", ". ", "; ", ": "} {
@@ -180,8 +176,6 @@ func shortEvent(text string) string {
 
 type flashExpired struct{ at time.Time }
 
-// Update hides the status bar event 10 seconds after the latest one and schedules
-// the next frame while streamed events or Markdown rendering are pending.
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	next, cmd := m.update(msg)
 	n, ok := next.(model)
@@ -199,7 +193,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return n, cmd
 }
 
-// stop adds a diagnostic, refreshes the view and ends the update cycle.
 func (m *model) stop(kind, text string) (tea.Model, tea.Cmd) {
 	m.add(kind, text)
 	m.refresh(true)
@@ -393,8 +386,6 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, m.edit(follow, func() tea.Cmd { return m.updateInput(msg) })
 }
 
-// edit applies a text change to the composer. Changed text restarts the completion
-// menu, and changed text or cursor movement rechecks the @path completion.
 func (m *model) edit(follow bool, change func() tea.Cmd) tea.Cmd {
 	valBefore, curBefore := m.input.Value(), m.composerCursorOffset()
 	cmd := change()
@@ -419,8 +410,6 @@ func (m model) View() string {
 	return strings.Join(lines, "\n")
 }
 
-// sendInput hands a complete input to the controller. Idle input starts a turn;
-// input during a turn is queued as steering. The composer clears only once accepted.
 func (m model) sendInput(input agent.Input) (tea.Model, tea.Cmd) {
 	if err := m.ctl.Input(input); err != nil {
 		return m.reject(err)
@@ -432,7 +421,6 @@ func (m model) sendInput(input agent.Input) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// requestCancel stops the active operation; the cancellation completes later as a done event.
 func (m *model) requestCancel() {
 	m.ctl.Stop()
 	m.refresh(false)

@@ -10,8 +10,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// The database holds settings (one JSON row with a version that grows on every
-// save) and sessions with their history items, one row per item.
 const schema = `
 CREATE TABLE IF NOT EXISTS settings (
 	id      INTEGER PRIMARY KEY CHECK (id = 1),
@@ -33,13 +31,10 @@ CREATE TABLE IF NOT EXISTS items (
 	PRIMARY KEY (session, seq)
 ) WITHOUT ROWID;`
 
-// migrations upgrade the schema; PRAGMA user_version counts those applied.
 var migrations = []string{
-	// Each session keeps the provider, model and effort it was created or switched to.
 	`ALTER TABLE sessions ADD COLUMN provider TEXT NOT NULL DEFAULT '';
 	 ALTER TABLE sessions ADD COLUMN model TEXT NOT NULL DEFAULT '';
 	 ALTER TABLE sessions ADD COLUMN effort TEXT NOT NULL DEFAULT '';`,
-	// Background tasks started with dashy tasks run; output goes to the log file.
 	`CREATE TABLE tasks (
 		session   TEXT NOT NULL,
 		id        TEXT NOT NULL,
@@ -51,11 +46,9 @@ var migrations = []string{
 		log       TEXT NOT NULL,
 		PRIMARY KEY (session, id)
 	);`,
-	// Metadata of answer items (JSON: time, duration, usage), so a resumed session shows them.
 	`ALTER TABLE items ADD COLUMN meta TEXT NOT NULL DEFAULT '';`,
 }
 
-// migrate creates the schema and applies the migrations it lacks, in one transaction.
 func migrate(db *sql.DB) error {
 	tx, err := db.Begin()
 	if err != nil {
@@ -83,7 +76,6 @@ func migrate(db *sql.DB) error {
 	return tx.Commit()
 }
 
-// DBPath is the database in DASHY_HOME.
 func DBPath(home string) string { return filepath.Join(home, "dashy.db") }
 
 // openDB opens the database in home, creating it private to the user. Several dashy

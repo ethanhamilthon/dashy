@@ -9,12 +9,10 @@ import (
 	"github.com/rivo/uniseg"
 )
 
-// point is a screen cell inside the timeline viewport.
 type point struct{ x, y int }
 
 type selection struct{ start, end point }
 
-// span returns the selected cells of one row and whether the row is touched at all.
 func (s selection) span(row, width int) (int, int, bool) {
 	if s.start == s.end {
 		return 0, 0, false
@@ -68,7 +66,6 @@ func (s selection) cells(line string, row, width int) (before, selected, after s
 	return before, selected, after, selected != ""
 }
 
-// highlight reverses the selected cells while leaving other rows untouched.
 func (s selection) highlight(rows []string, width int) []string {
 	out := make([]string, len(rows))
 	for row, line := range rows {
@@ -82,7 +79,6 @@ func (s selection) highlight(rows []string, width int) []string {
 	return out
 }
 
-// text extracts the selected rows as plain text.
 func (s selection) text(rows []string, width int) string {
 	var out []string
 	for row, line := range rows {
@@ -93,7 +89,6 @@ func (s selection) text(rows []string, width int) string {
 	return strings.Join(out, "\n")
 }
 
-// copyText puts text on the system clipboard.
 func copyText(text string) tea.Cmd {
 	return func() tea.Msg {
 		return clipboardCopied{lines: strings.Count(text, "\n") + 1, err: clipboard.WriteAll(text)}
@@ -105,10 +100,6 @@ type clipboardCopied struct {
 	err   error
 }
 
-// mouseSelection handles left-button selection in the composer and the timeline. It reports
-// whether the event was consumed; the wheel and other buttons keep scrolling the viewport.
-// A composer press places its cursor; composer drags are ignored.
-// Timeline drags select text and copy it on release.
 func (m *model) mouseSelection(msg tea.MouseMsg) (tea.Cmd, bool) {
 	if msg.Button != tea.MouseButtonLeft {
 		return nil, false

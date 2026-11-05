@@ -8,8 +8,6 @@ import (
 	"strings"
 )
 
-// Select sets the provider, model and reasoning effort of this session and makes
-// them the default for new sessions. Other open sessions keep theirs.
 func (a *Agent) Select(provider, model, effort string) error {
 	a.cfg.mu.Lock()
 	previous := a.cfg.sel
@@ -30,13 +28,11 @@ func (a *Agent) Select(provider, model, effort string) error {
 	return err
 }
 
-// ModelChoice is a model offered by one configured provider.
 type ModelChoice struct {
 	Provider, Model string
-	ContextWindow   int64 // Zero means the provider did not report a limit.
+	ContextWindow   int64
 }
 
-// AllModels lists the models of every provider concurrently. Failures are reported per provider.
 func AllModels(ctx context.Context, providers map[string]Provider) (choices []ModelChoice, errs map[string]error) {
 	type result struct {
 		name   string
@@ -73,8 +69,6 @@ func AllModels(ctx context.Context, providers map[string]Provider) (choices []Mo
 	return choices, errs
 }
 
-// SaveProvider adds the provider name (old is "") or replaces the provider old, which
-// may be renamed. An empty key keeps the key of old. Sessions using old follow a rename.
 func (a *Agent) SaveProvider(old, name string, provider Provider) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -108,7 +102,6 @@ func (a *Agent) SaveProvider(old, name string, provider Provider) error {
 	return err
 }
 
-// DeleteProvider removes a provider. A selection that used it is cleared.
 func (a *Agent) DeleteProvider(name string) error {
 	return a.withSelection(func(sel *selection) {
 		if sel.Provider == name {
@@ -126,8 +119,6 @@ func (a *Agent) DeleteProvider(name string) error {
 	})
 }
 
-// withSelection adjusts the session selection, then saves the change; a failed save
-// restores the previous selection.
 func (a *Agent) withSelection(adjust func(*selection), change func(*Settings) error) error {
 	a.cfg.mu.Lock()
 	previous := a.cfg.sel
@@ -142,7 +133,6 @@ func (a *Agent) withSelection(adjust func(*selection), change func(*Settings) er
 	return nil
 }
 
-// ProviderModels lists the models of a provider that need not be saved yet: a connection test.
 func ProviderModels(ctx context.Context, p Provider) ([]string, error) {
 	models, err := newClient(p).models(ctx)
 	if err != nil && p.key() != "" {
@@ -152,7 +142,6 @@ func ProviderModels(ctx context.Context, p Provider) ([]string, error) {
 	return models, err
 }
 
-// ChangeSettings applies change to a copy of the settings, then validates, applies and saves it.
 func (a *Agent) ChangeSettings(change func(*Settings)) error {
 	return a.update(func(s *Settings) error { change(s); return nil })
 }

@@ -11,12 +11,11 @@ import (
 	"dashy/internal/shell"
 )
 
-// Input keeps attachments with their instruction through acceptance and recall.
 type Input struct {
 	Text   string
 	Images []shell.Image
 	sentAt time.Time
-	Notice bool // from dashy itself (task result, view image): queued in order with composer input, never recalled
+	Notice bool
 }
 
 func (input Input) Display() string {
@@ -37,7 +36,6 @@ func (a *Agent) addInput(input Input, emit func(Event)) {
 	emit(e)
 }
 
-// commitInput appends the input to API history without displaying it.
 func (a *Agent) commitInput(input Input) {
 	if input.sentAt.IsZero() {
 		input.sentAt = time.Now()
@@ -56,8 +54,6 @@ func (a *Agent) commitInput(input Input) {
 	a.History = append(a.History, raw(map[string]any{"role": "user", "content": parts}))
 }
 
-// originalImage precedes the path of an attachment original in the model's copy of a
-// user message; RecordsForItem drops it from what people see.
 const originalImage = "\nOriginal image (for crops): "
 
 func imageOriginals(images []shell.Image) string {
@@ -78,16 +74,13 @@ func inputEvent(input Input) Event {
 	return Event{Kind: kind, Text: input.Display()}
 }
 
-// Steering is the session's one ordered queue of input waiting for the running turn: composer
-// input, task results and dashy view images, in admission order. Taken input cannot be recalled.
 type Steering struct {
 	mu      sync.Mutex
 	pending []Input
-	wake    func()        // called after every push; a new session's queue keeps it
-	typed   chan struct{} // signalled when composer input is pushed
+	wake    func()
+	typed   chan struct{}
 }
 
-// typedSignal fires when composer input is pushed (not on notices).
 func (s *Steering) typedSignal() <-chan struct{} {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -97,7 +90,6 @@ func (s *Steering) typedSignal() <-chan struct{} {
 	return s.typed
 }
 
-// drainTyped forgets earlier signals; then the signal means input pushed from now on.
 func (s *Steering) drainTyped() {
 	select {
 	case <-s.typedSignal():
@@ -105,27 +97,22 @@ func (s *Steering) drainTyped() {
 	}
 }
 
-// hasTyped reports whether composer input is waiting.
 func (s *Steering) hasTyped() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return slices.ContainsFunc(s.pending, func(input Input) bool { return !input.Notice })
 }
 
-// OnPush sets the function called after every push, so an idle session can start a turn at once.
 func (s *Steering) OnPush(wake func()) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.wake = wake
 }
 
-// maxQueued bounds the steering queue.
 const maxQueued = 64
 
-// Queue returns the session's steering queue.
 func (a *Agent) Queue() *Steering { return a.queue }
 
-// PushNotice queues input from dashy itself, such as a task result, even when the queue is full.
 func (s *Steering) PushNotice(input Input) {
 	input.sentAt = time.Now()
 	s.mu.Lock()
@@ -137,7 +124,6 @@ func (s *Steering) PushNotice(input Input) {
 	}
 }
 
-// Push queues input behind everything waiting; false when the queue is full.
 func (s *Steering) Push(input Input) bool {
 	input.sentAt = time.Now()
 	s.mu.Lock()
@@ -160,7 +146,6 @@ func (s *Steering) Push(input Input) bool {
 	return true
 }
 
-// Take removes all queued input, in order, for acceptance by the running turn.
 func (s *Steering) Take() []Input {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -169,7 +154,6 @@ func (s *Steering) Take() []Input {
 	return pending
 }
 
-// Pop removes the oldest queued input, which starts the next turn.
 func (s *Steering) Pop() (Input, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -181,7 +165,6 @@ func (s *Steering) Pop() (Input, bool) {
 	return input, true
 }
 
-// RemoveComposer removes the composer input a turn did not accept and returns it; notices stay queued.
 func (s *Steering) RemoveComposer() []Input {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -195,7 +178,6 @@ func (s *Steering) RemoveComposer() []Input {
 	return composer
 }
 
-// Recall removes the newest composer input that is still queued.
 func (s *Steering) Recall() (Input, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -208,7 +190,6 @@ func (s *Steering) Recall() (Input, bool) {
 	return Input{}, false
 }
 
-// Pending returns the composer input still queued.
 func (s *Steering) Pending() []Input {
 	s.mu.Lock()
 	defer s.mu.Unlock()

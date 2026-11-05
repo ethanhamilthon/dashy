@@ -9,11 +9,8 @@ import (
 	"syscall"
 )
 
-// lockPath is the flock file that marks a session as open in some dashy process.
 func (a *Agent) lockPath() string { return filepath.Join(a.home, "locks", a.id+".lock") }
 
-// acquire takes the exclusive per-session lock and opens the session socket. Every session has
-// its own socket, so tasks and view from its shell reach the correct session.
 func (a *Agent) acquire() error {
 	if err := os.MkdirAll(filepath.Dir(a.lockPath()), 0700); err != nil {
 		return err
@@ -37,7 +34,6 @@ func (a *Agent) acquire() error {
 		a.release()
 		return err
 	}
-	// Tasks see the session endpoint, so dashy commands in them find their session.
 	env := a.shellEnv()
 	a.tasks.mu.Lock()
 	a.tasks.env = env
@@ -63,8 +59,6 @@ func (a *Agent) release() {
 	}
 }
 
-// StopNotifications closes the session socket; later notify and view calls are refused.
-// It reports whether a socket was open.
 func (a *Agent) StopNotifications() bool {
 	if a.sock == nil {
 		return false
@@ -75,10 +69,8 @@ func (a *Agent) StopNotifications() bool {
 	return true
 }
 
-// HasSavedSession reports whether the session has history or is stored.
 func (a *Agent) HasSavedSession() bool { return len(a.History) > 0 || a.stored }
 
-// Close releases the session (its socket and its lock) and closes the database.
 func (a *Agent) Close() {
 	a.release()
 	if a.db != nil {
@@ -91,7 +83,6 @@ func (a *Agent) Close() {
 func (a *Agent) NewSession() error      { return a.changeSession("") }
 func (a *Agent) Resume(id string) error { return a.changeSession(id) }
 
-// Reload re-reads settings and appends a fresh instruction snapshot.
 func (a *Agent) Reload() error {
 	if err := a.loadConfig(a.Shell.Dir); err != nil {
 		return err
@@ -105,8 +96,6 @@ func (a *Agent) Reload() error {
 	return nil
 }
 
-// changeSession switches to a new or saved session and re-reads settings and
-// DASHY.md files. Resuming keeps the stored instruction snapshot.
 func (a *Agent) changeSession(id string) error {
 	if id != "" && id == a.SessionID() {
 		if err := a.loadConfig(a.Shell.Dir); err != nil {

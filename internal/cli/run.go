@@ -24,7 +24,6 @@ import (
 //go:embed help.txt
 var helpText string
 
-// ExitError ends the process with Code. Reported means the message was already written to stderr.
 type ExitError struct {
 	Code     int
 	Err      error
@@ -40,7 +39,6 @@ func (e *ExitError) Error() string {
 
 func (e *ExitError) Unwrap() error { return e.Err }
 
-// ExitCode is the process exit code for err: 0 for nil, the ExitError code, else 1.
 func ExitCode(err error) int {
 	var exit *ExitError
 	switch {
@@ -52,13 +50,11 @@ func ExitCode(err error) int {
 	return 1
 }
 
-// IsReported reports whether err was already printed.
 func IsReported(err error) bool {
 	var exit *ExitError
 	return errors.As(err, &exit) && exit.Reported
 }
 
-// cancelled is the exit of an interrupted run: SIGINT or SIGTERM ends it with 130.
 var cancelled = &ExitError{Code: 130, Reported: true}
 
 func isTerminal(v any) bool {
@@ -69,8 +65,6 @@ func isTerminal(v any) bool {
 	return ok && isatty.IsTerminal(f.Fd())
 }
 
-// IsHelper reports whether args run a helper command (file tools, tasks, view, help),
-// which ends at once on SIGINT or SIGTERM instead of cancelling a session.
 func IsHelper(args []string) bool {
 	if len(args) == 0 {
 		return false
@@ -82,7 +76,6 @@ func IsHelper(args []string) bool {
 	return false
 }
 
-// failedWriter remembers the first write error, so a lost result is not a success.
 type failedWriter struct {
 	w   io.Writer
 	err error
@@ -96,12 +89,8 @@ func (f *failedWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-// Version is the release shown by "dashy version", the TUI and ACP; main sets it.
 var Version = "dev"
 
-// Run executes one command line. stdout receives results; diagnostics receives
-// progress and errors. ctx ends everything: a cancelled run exits 130. A failed
-// write of the results fails the run.
 func Run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.Writer) error {
 	if len(args) > 0 && args[0] == "acp" {
 		var opts acp.Options
@@ -158,7 +147,6 @@ func run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.W
 	return sessionCommand(ctx, args, in, out, diagnostics)
 }
 
-// flagSet parses args with a fixed set of flags; positional arguments are returned.
 func flagSet(name string, define func(*flag.FlagSet)) *flag.FlagSet {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -200,7 +188,6 @@ func viewCommand(args []string) error {
 	return nil
 }
 
-// modelsCommand prints "PROVIDER<TAB>MODEL" for every model the configured providers offer.
 func modelsCommand(ctx context.Context, args []string, out, diagnostics io.Writer) error {
 	var provider string
 	fs := flagSet("models", func(fs *flag.FlagSet) { fs.StringVar(&provider, "provider", "", "provider name") })
@@ -243,7 +230,6 @@ func modelsCommand(ctx context.Context, args []string, out, diagnostics io.Write
 	return nil
 }
 
-// sessionCommand starts the interactive TUI. ACP has its own stdio entry point.
 func sessionCommand(ctx context.Context, args []string, in io.Reader, out, diagnostics io.Writer) error {
 	var config, resume string
 	var noGlobal bool
@@ -274,7 +260,6 @@ func sessionCommand(ctx context.Context, args []string, in io.Reader, out, diagn
 	return cancelledOr(ctx, tui.Run(ctx, a, cwd, Version))
 }
 
-// cancelledOr maps an interrupted wait to the cancelled exit; other errors pass through.
 func cancelledOr(ctx context.Context, err error) error {
 	if ctx.Err() != nil {
 		return cancelled

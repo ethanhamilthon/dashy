@@ -27,8 +27,6 @@ type Image struct {
 	URL  string `json:"url"`
 }
 
-// CaptureImageCopy embeds a bounded preview and saves an immutable original in directory
-// for later crops (none when directory is empty), leaving the file at path untouched.
 func CaptureImageCopy(path, directory string) (Image, error) {
 	// Check the file type before os.Open, which blocks on a FIFO until a writer
 	// appears. Nonblocking open also handles a replacement between stat and open.
@@ -59,7 +57,6 @@ func CaptureImageCopy(path, directory string) (Image, error) {
 	return CaptureImageData(data, path, directory)
 }
 
-// CaptureImageData is CaptureImageCopy for image bytes; path names them when directory is empty.
 func CaptureImageData(data []byte, path, directory string) (Image, error) {
 	if len(data) > MaxImageInputBytes {
 		return Image{}, fmt.Errorf("view image exceeds %d MiB", MaxImageInputBytes>>20)

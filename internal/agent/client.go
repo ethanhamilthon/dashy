@@ -14,7 +14,6 @@ import (
 	"time"
 )
 
-// client is a minimal OpenAI-compatible HTTP client: model listing and streamed Responses.
 type client struct {
 	base, key string
 }
@@ -25,7 +24,6 @@ func newClient(p Provider) *client {
 	return &client{base: strings.TrimRight(p.BaseURL, "/"), key: p.key()}
 }
 
-// apiError is a non-2xx answer of the provider: its status and the message it gave.
 type apiError struct {
 	Status     int
 	Message    string
@@ -40,7 +38,6 @@ func (e *apiError) Error() string {
 	return text
 }
 
-// send makes a request; a non-2xx answer is returned as *apiError with the body closed.
 func (c *client) send(ctx context.Context, method, path string, body any) (*http.Response, error) {
 	var reader io.Reader
 	if body != nil {
@@ -141,7 +138,6 @@ func (c *client) modelCatalog(ctx context.Context) ([]modelInfo, error) {
 
 const maxModelPages = 100
 
-// streamEvent holds the fields of a Responses stream event that dashy reads.
 type streamEvent struct {
 	Type        string                          `json:"type"`
 	OutputIndex int64                           `json:"output_index"`
@@ -180,8 +176,6 @@ const (
 	maxStreamEvents = 100000
 )
 
-// stream posts a streamed /responses request and calls fn for every event until
-// the stream ends, fn fails or returns errStreamDone, or ctx is done.
 func (c *client) stream(ctx context.Context, body map[string]any, fn func(streamEvent) error) error {
 	body["stream"] = true
 	resp, err := c.send(ctx, http.MethodPost, "/responses", body)
@@ -213,7 +207,6 @@ func (c *client) stream(ctx context.Context, body map[string]any, fn func(stream
 		if events > maxStreamEvents {
 			return errors.New("provider stream: event count limit exceeded")
 		}
-		// A blank line ends one server-sent event.
 		if data.Len() == 0 || data.String() == "[DONE]" {
 			data.Reset()
 			continue
@@ -238,7 +231,7 @@ func (c *client) stream(ctx context.Context, body map[string]any, fn func(stream
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	if data.Len() > 0 && data.String() != "[DONE]" { // last event without a trailing blank line
+	if data.Len() > 0 && data.String() != "[DONE]" {
 		var event streamEvent
 		if err := json.Unmarshal([]byte(data.String()), &event); err != nil {
 			return fmt.Errorf("provider stream: invalid event: %w", err)

@@ -16,12 +16,11 @@ import (
 
 type clipboardResult struct {
 	generation int
-	image      string // path of a pasted image
+	image      string
 	text       string
 	err        error
 }
 
-// Bounded command output prevents clipboard data from growing host memory indefinitely.
 type clipboardBuffer struct {
 	data  []byte
 	limit int
@@ -57,8 +56,6 @@ function run(argv) {
  return "image";
 }`
 
-// readClipboard saves a clipboard image into directory and returns its path, or returns the clipboard text. The
-// platform and the command runner are parameters so that tests can fake them.
 func readClipboard(ctx context.Context, directory, platform string, run func(context.Context, int, string, ...string) ([]byte, error)) (string, string, error) {
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		return "", "", err
@@ -149,7 +146,7 @@ func (m *model) acceptClipboard(result clipboardResult) tea.Cmd {
 		m.add("error", result.err.Error())
 		return nil
 	}
-	if result.image != "" { // the agent looks at a pasted image with dashy view
+	if result.image != "" {
 		result.text = result.image + " "
 	}
 	m.input.InsertString(result.text)

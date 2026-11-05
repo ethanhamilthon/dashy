@@ -26,12 +26,11 @@ type session struct {
 	cancel    context.CancelFunc
 	busy      bool
 	cancelled bool
-	closed    bool           // session/close removed it; no new work is admitted
-	work      sync.WaitGroup // busy periods; close waits for them before releasing the agent
+	closed    bool
+	work      sync.WaitGroup
 	models    map[string]agent.ModelChoice
 }
 
-// claim and release bracket a busy period; both run under session.mu.
 func (session *session) claim()   { session.busy = true; session.work.Add(1) }
 func (session *session) release() { session.busy = false; session.work.Done() }
 
@@ -45,7 +44,6 @@ type server struct {
 	creating           int
 }
 
-// Run owns stdin/stdout until disconnect; neither stream carries human-oriented text.
 func Run(ctx context.Context, in io.Reader, out io.Writer, opts Options) error {
 	if file, ok := in.(*os.File); ok {
 		stream, err := pollable(file)
@@ -272,7 +270,6 @@ func (s *server) prompt(ctx context.Context, params json.RawMessage, reply reply
 	session.mu.Unlock()
 	s.job(func() {
 		defer cancel()
-		// Images are validated and stored before the turn, so a bad one leaves history untouched.
 		for _, data := range images {
 			image, err := shell.CaptureImageData(data, "", session.a.AttachmentsDir())
 			if err != nil {
@@ -331,7 +328,6 @@ func (s *server) tool(session *session, e agent.ExecutionEvent) {
 	s.update(session, update)
 }
 
-// toolResult is the final tool_call_update of a command, live or replayed.
 func toolResult(id, output string, result shell.Result) map[string]any {
 	status := "completed"
 	if result.Error {

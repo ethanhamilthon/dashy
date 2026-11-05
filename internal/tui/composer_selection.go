@@ -8,13 +8,11 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// composerRow is one soft-wrapped visual row of the composer value: rune offsets, end exclusive.
 type composerRow struct{ start, end int }
 
 // composerNoop triggers a textarea update, which scrolls its viewport to the cursor.
 type composerNoop struct{}
 
-// composerLayout returns the visual rows that the composer textarea renders for value.
 func composerLayout(value string, width int) []composerRow {
 	if value == "" {
 		return nil
@@ -57,7 +55,7 @@ func wrapRows(runes []rune, width int) []int {
 			rows[row] += wordLen + spaces
 			rowWidth += wordWidth + spaces
 			wordLen, wordWidth, spaces = 0, 0, 0
-		case wordWidth+lastWidth > width: // the word fills a whole row
+		case wordWidth+lastWidth > width:
 			if rows[row] > 0 {
 				row++
 				rows = append(rows, 0)
@@ -83,7 +81,6 @@ func runeWidth(r rune) int {
 	return ansi.StringWidth(string(r))
 }
 
-// composerRows returns the cached layout of the current composer value.
 func (m *model) composerRows() []composerRow {
 	value, width := m.input.Value(), m.input.Width()
 	if m.layoutValue != value || m.layoutWidth != width {
@@ -93,7 +90,6 @@ func (m *model) composerRows() []composerRow {
 	return m.layout
 }
 
-// composerCursorRow returns the visual row index of the textarea cursor.
 func (m *model) composerCursorRow(rows []composerRow) int {
 	lines := strings.Split(m.input.Value(), "\n")
 	base := 0
@@ -148,7 +144,6 @@ func (m *model) composerScroll(rows []composerRow) int {
 	return low
 }
 
-// composerOffset maps a screen cell inside the composer to a rune offset.
 func (m *model) composerOffset(x, y int) (int, bool) {
 	value := m.input.Value()
 	if value == "" || m.keyInComposer() {
@@ -162,7 +157,7 @@ func (m *model) composerOffset(x, y int) (int, bool) {
 	}
 	row := rows[min(len(rows)-1, m.composerScroll(rows)+r)]
 	runes := []rune(value)
-	cx := max(0, x-2) // the rail and its space take two cells
+	cx := max(0, x-2)
 	offset, cells := row.start, 0
 	for offset < row.end && cells < cx {
 		cells += ansi.StringWidth(string(runes[offset]))
@@ -171,7 +166,6 @@ func (m *model) composerOffset(x, y int) (int, bool) {
 	return offset, true
 }
 
-// setCursorOffset moves the textarea cursor to a rune offset of its value.
 func (m *model) setCursorOffset(offset int) tea.Cmd {
 	lines := strings.Split(m.input.Value(), "\n")
 	row, col := 0, offset
@@ -192,7 +186,6 @@ func (m *model) setCursorOffset(offset int) tea.Cmd {
 	return m.updateInput(composerNoop{})
 }
 
-// composerCursorOffset returns the current cursor position as a rune offset into value.
 func (m *model) composerCursorOffset() int {
 	lines := strings.Split(m.input.Value(), "\n")
 	row := min(m.input.Line(), len(lines)-1)

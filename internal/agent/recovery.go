@@ -6,7 +6,6 @@ import (
 	"dashy/internal/shell"
 )
 
-// interruptedOutputs closes incomplete call/output pairs without repeating effects.
 func interruptedOutputs(history []json.RawMessage) []json.RawMessage {
 	var calls []string
 	outputs := map[string]bool{}

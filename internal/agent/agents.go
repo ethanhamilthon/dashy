@@ -18,20 +18,18 @@ import (
 )
 
 const (
-	blockOutput     = 64 * 1024 // stdout: the start of the output is kept
-	blockStderrTail = 4 * 1024  // the last stderr bytes, kept for a failure report only
-	blockTailLines  = 5         // lines of that tail shown in a failure
+	blockOutput     = 64 * 1024
+	blockStderrTail = 4 * 1024
+	blockTailLines  = 5
 )
 
-var blockTimeout = 30 * time.Second // a variable only so tests can shorten it
+var blockTimeout = 30 * time.Second
 
 type dashyBlock struct {
-	start, end int // byte range replaced by the block output, fence lines included
+	start, end int
 	script     string
 }
 
-// parseDashyBlocks finds top-level fenced blocks whose info string is exactly "dashy".
-// Blocks nested in other blocks or quotes, and other info strings, are ignored.
 func parseDashyBlocks(source []byte) []dashyBlock {
 	doc := goldmark.DefaultParser().Parse(text.NewReader(source))
 	var blocks []dashyBlock
@@ -86,12 +84,10 @@ func isClosingFence(line []byte, fence byte, length int) bool {
 	return count >= length && len(bytes.Trim(trimmed[count:], " \t\r")) == 0
 }
 
-// blockOutputs captures one block run. Stdout keeps its first blockOutput bytes; stderr only
-// keeps its end, for failure text, so it cannot crowd out stdout.
 type blockOutputs struct {
 	mu      sync.Mutex
 	stdout  []byte
-	errTail []byte // last blockStderrTail bytes of stderr
+	errTail []byte
 }
 
 type blockWriter struct {
@@ -114,7 +110,6 @@ func (w blockWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// tail returns the last lines of stderr, or "" when there is none.
 func (o *blockOutputs) tail() string {
 	lines := strings.Split(strings.TrimSpace(string(o.errTail)), "\n")
 	if len(lines) > blockTailLines {
@@ -131,8 +126,6 @@ func blockFailure(reason string, out *blockOutputs) string {
 	return text
 }
 
-// runBlock executes one dashy block. A block failure is returned as prompt text;
-// only cancellation of the turn is an error, because the turn itself must stop.
 func (a *Agent) runBlock(turn context.Context, script, source string) (string, error) {
 	execution := Execution{ID: fmt.Sprintf("instructions-%d", time.Now().UnixNano()), Kind: "instructions", Command: script, Started: time.Now()}
 	a.observe(execution, "pending", shell.Result{})
@@ -173,8 +166,6 @@ func (a *Agent) runBlock(turn context.Context, script, source string) (string, e
 	return strings.TrimRight(string(out.stdout), "\r\n"), nil
 }
 
-// instructions returns the system prompt. It is assembled lazily, right before the
-// first request of a new session, then stored and reused until /reload.
 func (a *Agent) instructions(ctx context.Context) (string, error) {
 	if a.promptFrozen {
 		return a.prompt, nil
@@ -192,10 +183,6 @@ func (a *Agent) instructions(ctx context.Context) (string, error) {
 	return prompt, nil
 }
 
-// assemblePrompt builds the system prompt from the selected DASHY.md files.
-// Each file is a "# <path>" header and its bytes verbatim, with dashy blocks
-// replaced by their output; files are separated by one blank line. A selected
-// file that cannot be read is an error, never a silently shorter prompt.
 func (a *Agent) assemblePrompt(ctx context.Context) (string, error) {
 	var out strings.Builder
 	for i, path := range a.promptFiles {
@@ -215,7 +202,6 @@ func (a *Agent) assemblePrompt(ctx context.Context) (string, error) {
 	return out.String(), nil
 }
 
-// separator returns the bytes that make exactly one blank line after text.
 func separator(text string) string {
 	if strings.HasSuffix(text, "\n") {
 		return "\n"
@@ -240,8 +226,6 @@ func (a *Agent) expandBlocks(ctx context.Context, data []byte) (string, error) {
 	return out.String(), nil
 }
 
-// instructionFiles selects the DASHY.md files: the global one (unless NoGlobal),
-// then --config FILE or ./DASHY.md. Missing optional files are skipped.
 func instructionFiles(home, dir string, files Options) ([]string, error) {
 	var paths []string
 	if !files.NoGlobal && home != "" {

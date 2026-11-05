@@ -1,4 +1,3 @@
-// Package acp implements the pinned ACP v1 local stdio preview (see docs/ACP.md).
 package acp
 
 import (
@@ -86,8 +85,6 @@ func (p *peer) send(v any) error {
 	}
 }
 
-// sendWait applies backpressure to bulk history replay without dropping frames.
-// The writer's timeout and connection cancellation bound a stalled consumer.
 func (p *peer) sendWait(ctx context.Context, v any) error {
 	b, err := json.Marshal(v)
 	if err != nil || len(b) > maxFrame {

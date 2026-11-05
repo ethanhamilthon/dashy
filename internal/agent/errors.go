@@ -6,7 +6,6 @@ import (
 	"strings"
 )
 
-// providerError holds sanitized text; Unwrap keeps retry and cancellation checks working.
 type providerError struct {
 	text  string
 	cause error
@@ -15,14 +14,11 @@ type providerError struct {
 func (e *providerError) Error() string { return e.text }
 func (e *providerError) Unwrap() error { return e.cause }
 
-// AuthenticationRequired distinguishes credential failures without parsing display text.
 func AuthenticationRequired(err error) bool {
 	var api *apiError
 	return errors.As(err, &api) && (api.Status == 401 || api.Status == 403)
 }
 
-// safeError is the form of err that events, records, and callers see: configured
-// keys removed, and an HTTP failure reduced to its status and message.
 func (a *Agent) safeError(err error) error {
 	if err == nil {
 		return nil
@@ -34,7 +30,6 @@ func (a *Agent) safeError(err error) error {
 	return &providerError{text: Redact(a.Settings(), text), cause: err}
 }
 
-// streamFailure reports a failed stream event by its code and message, never the raw event.
 func streamFailure(event streamEvent) error {
 	fields := []string{event.Code, event.Message}
 	switch {

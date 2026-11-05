@@ -5,7 +5,6 @@ import (
 	"time"
 )
 
-// Execution describes arbitrary local code, not a read-only/write-only classification.
 type Execution struct {
 	ID, Kind, Command string
 	Started           time.Time

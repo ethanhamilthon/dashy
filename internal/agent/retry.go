@@ -19,7 +19,6 @@ const (
 	retryMax      = 8 * time.Second
 )
 
-// retryable reports whether err deserves another attempt before any output was shown.
 func retryable(err error) bool {
 	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
@@ -44,14 +43,11 @@ func retryable(err error) bool {
 	return errors.Is(err, io.EOF)
 }
 
-// delay returns the pause before the next attempt: capped exponential backoff,
-// lengthened by a provider Retry-After but never beyond retryMax.
 func delay(attempt int, err error) time.Duration {
 	wait := min(retryMax, retryBase<<attempt)
 	var api *apiError
 	if errors.As(err, &api) {
 		if seconds, e := strconv.Atoi(api.RetryAfter); e == nil && seconds > 0 {
-			// Clamp before converting to a duration so huge values cannot overflow.
 			seconds = min(seconds, int(retryMax/time.Second))
 			wait = max(wait, time.Duration(seconds)*time.Second)
 		}
@@ -59,8 +55,6 @@ func delay(attempt int, err error) time.Duration {
 	return wait
 }
 
-// requestWithRetries repeats a failed request while nothing has been shown to the user yet.
-// Retrying after output would duplicate text, so that case returns the error unchanged.
 func (a *Agent) requestWithRetries(ctx context.Context, emit func(Event)) ([]json.RawMessage, error) {
 	for attempt := 0; ; attempt++ {
 		shown := 0

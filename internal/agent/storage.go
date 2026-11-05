@@ -13,7 +13,6 @@ import (
 	"time"
 )
 
-// openProject selects the project of dir and opens or creates the session.
 func (a *Agent) openProject(dir string) error {
 	absolute, err := filepath.Abs(dir)
 	if err != nil {
@@ -67,7 +66,6 @@ func (a *Agent) createSession() error {
 	return a.acquire()
 }
 
-// readSession loads the history items of the session.
 func (a *Agent) readSession() error {
 	rows, err := a.db.Query(`SELECT data, meta FROM items WHERE session = ? ORDER BY seq`, a.id)
 	if err != nil {
@@ -94,7 +92,6 @@ func (a *Agent) readSession() error {
 	return rows.Err()
 }
 
-// Save stores the session row and the history items added since the last save.
 func (a *Agent) Save() error {
 	// Read before the transaction: update holds cfg.mu while it writes the database.
 	a.cfg.mu.Lock()
@@ -132,7 +129,6 @@ func (a *Agent) Save() error {
 	return nil
 }
 
-// SessionSummary is the /resume and ACP list view of a saved session.
 type SessionSummary struct {
 	ID      string
 	Title   string
@@ -140,14 +136,10 @@ type SessionSummary struct {
 	Updated time.Time
 }
 
-// Sessions returns saved sessions of this project, most recently updated first.
-// The title is the custom one, else the first line of the first user message.
 func (a *Agent) Sessions() ([]SessionSummary, error) {
 	return listSessions(a.db, a.project, SessionSummary{}, -1)
 }
 
-// ListSessions returns up to limit saved sessions of project (all projects when empty)
-// ordered after the cursor (none when its ID is empty), using the database for cwd.
 func ListSessions(cwd, project string, after SessionSummary, limit int) ([]SessionSummary, error) {
 	home, err := DashyHome(cwd)
 	if err != nil {
@@ -182,7 +174,6 @@ func listSessions(db *sql.DB, project string, after SessionSummary, limit int) (
 	return sessions, rows.Err()
 }
 
-// firstUserLine is the first non-empty line of the first user record of history.
 func firstUserLine(history []json.RawMessage) string {
 	for _, item := range history {
 		for _, r := range RecordsForItem(item) {
@@ -194,11 +185,8 @@ func firstUserLine(history []json.RawMessage) string {
 	return ""
 }
 
-// CustomTitle is the title set by /rename, or "" when the default applies.
 func (a *Agent) CustomTitle() string { return a.title }
 
-// Rename sets the custom title; an empty name restores the default (the first
-// user message). The change is saved at once for a saved session.
 func (a *Agent) Rename(name string) error {
 	a.title = strings.Join(strings.Fields(name), " ")
 	if !a.HasSavedSession() {
@@ -207,7 +195,6 @@ func (a *Agent) Rename(name string) error {
 	return a.Save()
 }
 
-// FirstLine is the first non-empty line of text, trimmed.
 func FirstLine(text string) string {
 	for _, line := range strings.Split(text, "\n") {
 		if line = strings.TrimSpace(line); line != "" {
@@ -217,7 +204,6 @@ func FirstLine(text string) string {
 	return ""
 }
 
-// DefaultTitle is the first line of the first user message.
 func (a *Agent) DefaultTitle() string {
 	return firstUserLine(a.History)
 }

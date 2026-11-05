@@ -46,18 +46,16 @@ func formatMetadata(meta *agent.Metadata, kind string) string {
 			cache = fmt.Sprintf("%.0f%%", 100*float64(u.Cached)/float64(u.Input))
 		}
 	}
-	if kind == "assistant" { // the answer footer shows the duration
+	if kind == "assistant" {
 		return fmt.Sprintf("  ↑%s ↓%s · cache %s", input, output, cache)
 	}
 	return fmt.Sprintf("  ↑%s ↓%s · %s · cache %s", input, output, duration, cache)
 }
 
-// formatContext is the prompt size in thousands of tokens, as in "ctx ~12K".
 func formatContext(n int64) string {
 	return fmt.Sprintf("%dK", (n+500)/1000)
 }
 
-// shortPath writes the home directory as ~ so the status bar stays compact.
 func shortPath(path string) string {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" || home == string(filepath.Separator) {

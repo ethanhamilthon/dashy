@@ -23,20 +23,17 @@ import (
 	"dashy/internal/shell"
 )
 
-// Message is one session socket request: an image for the next model request or a task operation.
 type Message struct {
 	Image *shell.Image `json:"image,omitempty"`
 	Task  *TaskRequest `json:"task,omitempty"`
 }
 
-// TaskRequest starts a background command (Op run) or stops a running task (Op stop).
 type TaskRequest struct {
 	Op      string `json:"op"`
 	Command string `json:"command,omitempty"`
 	ID      string `json:"id,omitempty"`
 }
 
-// reply answers one socket request: an error, or text such as a new task ID.
 type reply struct {
 	Error string `json:"error,omitempty"`
 	Text  string `json:"text,omitempty"`
@@ -59,17 +56,16 @@ func SocketPath(runDir, id string) string {
 	return filepath.Join("/tmp", "dashy-"+shortName)
 }
 
-// sessionSocket is one session's socket. Its handlers never reference the Agent.
 type sessionSocket struct {
 	path     string
 	listener net.Listener
 	queue    *Steering
 	slots    *imageSlots
 	tasks    *tasks
-	done     chan struct{} // closed when the accept loop has returned
-	mu       sync.Mutex    // guards retired and current, and admission
+	done     chan struct{}
+	mu       sync.Mutex
 	retired  bool
-	current  net.Conn // connection being read; retire closes it
+	current  net.Conn
 }
 
 func (a *Agent) listenNotifications() error {
@@ -99,7 +95,6 @@ func (a *Agent) listenNotifications() error {
 	return nil
 }
 
-// serve answers one connection; admit refuses it if the session was retired meanwhile.
 func (s *sessionSocket) serve(connection net.Conn) {
 	defer connection.Close()
 	s.mu.Lock()
@@ -111,7 +106,6 @@ func (s *sessionSocket) serve(connection net.Conn) {
 	_ = json.NewEncoder(connection).Encode(s.admit(message, err))
 }
 
-// admit handles a request if the session is still current and returns the reply.
 func (s *sessionSocket) admit(message Message, err error) reply {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -127,7 +121,6 @@ func (s *sessionSocket) admit(message Message, err error) reply {
 		case !s.slots.reserve(1):
 			return reply{Error: fmt.Sprintf("view: at most %d new images per model request", MaxPendingImages)}
 		}
-		// The image joins the input queue; it reaches the next model request.
 		if !s.queue.Push(Input{Text: "<view>\nImage queued by dashy view.\n</view>", Images: []shell.Image{*message.Image}, Notice: true}) {
 			s.slots.release(1)
 			return reply{Error: "input queue is full"}
@@ -148,7 +141,6 @@ func (s *sessionSocket) admit(message Message, err error) reply {
 	return reply{Error: "unknown request"}
 }
 
-// retire stops the socket before its session is replaced; no handler runs once it returns.
 func (s *sessionSocket) retire() {
 	s.mu.Lock()
 	s.retired = true
@@ -160,15 +152,12 @@ func (s *sessionSocket) retire() {
 	<-s.done
 }
 
-// imageSlots counts the images of the next model request: reserved from admission until they
-// are in the history, then committed until a request carrying the history is sent.
 type imageSlots struct {
 	mu        sync.Mutex
-	reserved  int // admitted, not yet in the history
-	committed int // in the history, not yet carried by a model request
+	reserved  int
+	committed int
 }
 
-// MaxPendingImages is how many new images one model request may carry.
 const MaxPendingImages = 4
 
 func (s *imageSlots) reserve(n int) bool {
@@ -187,7 +176,6 @@ func (s *imageSlots) release(n int) {
 	s.reserved = max(0, s.reserved-n)
 }
 
-// commit moves n admitted images into the history, where they wait for the next request.
 func (s *imageSlots) commit(n int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -195,14 +183,12 @@ func (s *imageSlots) commit(n int) {
 	s.committed += n
 }
 
-// sent runs when a request carrying the history is dispatched; those images are no longer new.
 func (s *imageSlots) sent() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.committed = 0
 }
 
-// validImage accepts only a PNG or JPEG data URL whose payload decodes as that format.
 func validImage(img shell.Image) bool {
 	for _, format := range []string{"png", "jpeg"} {
 		payload, ok := strings.CutPrefix(img.URL, "data:image/"+format+";base64,")
@@ -241,7 +227,6 @@ func Endpoint(cwd, id string) (string, error) {
 	return sockPath, nil
 }
 
-// RunTask starts command as a background task of a running session and returns its ID.
 func RunTask(cwd, session, command string) (string, error) {
 	endpoint, err := Endpoint(cwd, session)
 	if err != nil {
@@ -250,7 +235,6 @@ func RunTask(cwd, session, command string) (string, error) {
 	return Send(endpoint, Message{Task: &TaskRequest{Op: "run", Command: command}})
 }
 
-// Send makes one request to a session socket and returns the reply text.
 func Send(endpoint string, message Message) (string, error) {
 	connection, err := net.DialTimeout("unix", endpoint, 2*time.Second)
 	if err != nil {
@@ -268,7 +252,6 @@ func Send(endpoint string, message Message) (string, error) {
 	return answer.Text, err
 }
 
-// CleanAttachments deletes attachment files older than 7 days from dir.
 func CleanAttachments(dir string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {

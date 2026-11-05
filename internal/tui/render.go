@@ -23,8 +23,7 @@ var (
 	errorColor     = lipgloss.Color("#f09eac")
 	warnColor      = lipgloss.Color("#e5c07b")
 	infoColor      = lipgloss.Color("#d7c38b")
-	// The Markdown style uses the same fixed colors as the timeline.
-	markdownStyle = fmt.Sprintf(markdownTemplate, assistantColor, cyan, warnColor, muted,
+	markdownStyle  = fmt.Sprintf(markdownTemplate, assistantColor, cyan, warnColor, muted,
 		infoColor, errorColor, inputBlue, inputBlue)
 )
 
@@ -53,13 +52,11 @@ type paintKey struct {
 	row    string
 	width  int
 	bg, fg lipgloss.TerminalColor
-	color  any // the color profile
+	color  any
 }
 
-// painted memoizes paint per row: a streamed message repaints mostly unchanged rows.
 var painted = map[paintKey]string{}
 
-// paint fills every physical row, including trailing cells, rather than just text.
 func paint(text string, width int, bg, fg lipgloss.TerminalColor) string {
 	rows := strings.Split(text, "\n")
 	style := lipgloss.NewStyle().Width(width).Background(bg).Foreground(fg)
@@ -78,15 +75,14 @@ func paint(text string, width int, bg, fg lipgloss.TerminalColor) string {
 	return strings.Join(rows, "\n")
 }
 
-// renderEntryMode is renderEntry; without markdown an assistant entry shows as wrapped plain text.
 func renderEntryMode(e entry, width, limit int, markdown bool) string {
 	if limit == 0 {
-		return "" // hidden by show_lines
+		return ""
 	}
 	fg, label := eventColors(e.Kind)
 
 	text := ansi.Strip(e.Text)
-	if e.Kind == "notice" { // task results and view images; other notices and errors go to the status bar
+	if e.Kind == "notice" {
 		text = cmp.Or(agent.NoticeSummary(text), "Notice received.")
 		return paint(ansi.Truncate("  "+label+" · "+text, max(1, width), "…"), max(1, width), lipgloss.NoColor{}, fg)
 	}
@@ -127,7 +123,6 @@ func renderEntryMode(e entry, width, limit int, markdown bool) string {
 	return out
 }
 
-// answerFooter ends a finished answer: when it arrived and how long the turn took.
 func answerFooter(e entry) string {
 	if e.Kind != "assistant" || e.Preview || e.Meta == nil || e.Meta.At.IsZero() {
 		return ""
@@ -166,7 +161,6 @@ func (m model) inputBlock() string {
 	return renderRail(m.input.View(), m.width)
 }
 
-// pickerHint is the keys of the open picker, shown under its list.
 func (m model) pickerHint() string {
 	switch {
 	case m.confirmDelete != "":
@@ -185,11 +179,8 @@ func (m model) pickerHint() string {
 	return ""
 }
 
-// keyInComposer reports whether the composer holds an API key, which is never shown.
 func (m model) keyInComposer() bool { return m.form != nil && m.form.field == 2 }
 
-// screenRows collects text chunks as screen rows. A chunk continues the last row,
-// so cached entries are appended without joining and splitting them again.
 type screenRows []string
 
 func (r *screenRows) add(chunk string) { r.addLines(strings.Split(chunk, "\n")) }
@@ -203,9 +194,6 @@ func (r *screenRows) addLines(lines []string) {
 	*r = append(*r, lines[1:]...)
 }
 
-// timelineRows renders the timeline as screen rows. With a positive budget,
-// Markdown of stale assistant entries is rendered newest first until the budget is
-// spent; older ones show as plain text and renderPending asks for another pass.
 func (m *model) timelineRows(budget time.Duration) []string {
 	var out strings.Builder
 	out.WriteString(lipgloss.NewStyle().Foreground(cyan).Bold(true).Render("dashy. minimal coding agent."))
@@ -236,14 +224,13 @@ func (m *model) timelineRows(budget time.Duration) []string {
 		switch e.Kind {
 		case "code", "output", "reasoning":
 			limit = settings.MaxLines(e.Kind)
-		case "error": // a failed tool call is output in red
+		case "error":
 			limit = settings.MaxLines("output")
 		}
 		cached := &m.cache[i]
 		if cached.width == m.width && cached.source == e && cached.maxLines == limit && !cached.draft {
 			continue
 		}
-		// The newest Markdown always renders, so every pass makes progress.
 		draft := budget > 0 && e.Kind == "assistant" && rendered > 0 && time.Since(started) >= budget
 		if draft {
 			m.renderPending = true
@@ -265,7 +252,7 @@ func (m *model) timelineRows(budget time.Duration) []string {
 		}
 	}
 	screen.add(m.workingBlock())
-	m.inputTop = len(screen) - 1 // every row above the composer ends with a newline
+	m.inputTop = len(screen) - 1
 	screen.add(m.inputBlock())
 	fileMode := m.hasFileCompletions()
 	matches := m.completions()

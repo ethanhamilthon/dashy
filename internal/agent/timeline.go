@@ -6,7 +6,6 @@ import (
 	"time"
 )
 
-// Usage belongs to one request, never to the whole session.
 type Usage struct {
 	Input  int64
 	Output int64
@@ -18,9 +17,9 @@ type Metadata struct {
 	Usage        *Usage
 	ContextInput *int64
 	RequestID    string    `json:"-"`
-	RequestSeq   int       `json:",omitempty"` // one-based seq of the request's first item
-	TurnSeq      int       `json:",omitempty"` // seq at the beginning of the turn
-	At           time.Time `json:",omitzero"`  // when an answer arrived
+	RequestSeq   int       `json:",omitempty"`
+	TurnSeq      int       `json:",omitempty"`
+	At           time.Time `json:",omitzero"`
 }
 
 type Record struct {
@@ -40,7 +39,6 @@ type Event struct {
 	Provisional bool
 }
 
-// ApplyEvent applies one display event to a list of display records.
 func ApplyEvent(records []Record, e Event) []Record {
 	kind := e.Kind
 	switch kind {
@@ -72,7 +70,6 @@ func ApplyEvent(records []Record, e Event) []Record {
 	return append(records, Record{Kind: kind, Text: e.Text, ID: e.ID, Meta: e.Meta, Preview: e.Provisional})
 }
 
-// RecordsForItem is the only Responses-to-display conversion.
 func RecordsForItem(item json.RawMessage) []Record {
 	var v struct {
 		Role, Type, Name, Arguments, Output string
@@ -169,8 +166,6 @@ func RecordsForItem(item json.RawMessage) []Record {
 	return nil
 }
 
-// Records returns the display records derived from the session history. Answers
-// keep the metadata (time, duration, usage) they were shown with.
 func (a *Agent) Records() []Record {
 	var records []Record
 	for seq, item := range a.History {

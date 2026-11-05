@@ -1,4 +1,3 @@
-// Package filelist discovers project files with git and a filesystem fallback.
 package filelist
 
 import (
@@ -16,13 +15,12 @@ import (
 
 type Options struct {
 	Directories bool
-	LinkFiles   bool              // include symlinks to regular files in the fallback
-	Hidden      bool              // include hidden entries in the filesystem fallback; git controls its own exclusions
-	Max, Depth  int               // zero means unlimited
-	Ignore      func(string) bool // slash-separated relative path
+	LinkFiles   bool
+	Hidden      bool // include hidden entries in the filesystem fallback; git controls its own exclusions
+	Max, Depth  int
+	Ignore      func(string) bool
 }
 
-// List returns sorted relative paths and nonfatal walk failures. Cancellation is an error.
 func List(ctx context.Context, root string, o Options) (paths, failures []string, err error) {
 	seen := map[string]bool{}
 	add := func(p string) bool {

@@ -30,7 +30,6 @@ var commands = []command{
 	{name: "/connect", icon: "+", description: "Select or create a provider"},
 }
 
-// help renders the command reference followed by keyboard bindings.
 func help() string {
 	var help strings.Builder
 	for _, cmd := range commands {
@@ -41,7 +40,6 @@ func help() string {
 	return help.String()
 }
 
-// sessionTitle is the first user message, shortened for the resume picker.
 func sessionTitle(s agent.SessionSummary) string {
 	title := []rune(s.Title)
 	if len(title) == 0 {
@@ -53,7 +51,6 @@ func sessionTitle(s agent.SessionSummary) string {
 	return string(title)
 }
 
-// sessionTime shows the last update: time today, day this year, date before.
 func sessionTime(t time.Time) string {
 	now := time.Now()
 	if t.Year() == now.Year() && t.YearDay() == now.YearDay() {
@@ -106,7 +103,6 @@ func (m model) completions() []command {
 		return matches
 	}
 
-	// Commands with a free-text argument: Enter runs the typed text as is.
 	if !m.hideCompletion && !strings.ContainsAny(text, "\n\t") {
 		if name, ok := strings.CutPrefix(text, "/rename "); ok {
 			label := "Rename session to: " + strings.TrimSpace(name)
@@ -139,7 +135,6 @@ func (m *model) complete() bool {
 	return true
 }
 
-// keyboardHelp lists the interface key bindings shown by /help.
 const keyboardHelp = "Enter: execute selected completion or send · Shift+Enter / Alt+Enter / Ctrl+J: newline\n" +
 	"Sending while dashy works: a running command moves to the background (/tasks) and the model reads your message next\n" +
 	"Clipboard: Ctrl+V (Cmd+V when forwarded)\n" +
@@ -147,8 +142,6 @@ const keyboardHelp = "Enter: execute selected completion or send · Shift+Enter 
 	"PgUp/PgDn or mouse wheel: scroll timeline\n" +
 	"Esc / Ctrl+C: cancel current turn · Ctrl+C when idle or Ctrl+D on empty input: quit"
 
-// runCommand parses a slash command. Picker and completion steps stay in the
-// interface; every application operation goes through the controller.
 func (m model) runCommand(name string) (tea.Model, tea.Cmd) {
 	verb := strings.Fields(name)
 	if len(verb) == 0 {
@@ -225,14 +218,11 @@ func (m model) runCommand(name string) (tea.Model, tea.Cmd) {
 	return m.stop("error", "Unknown command: "+name+". Type /help.")
 }
 
-// resetCompletions drops file and session completion state before a session or settings change.
 func (m *model) resetCompletions() {
 	m.dismissFileCompletion()
 	m.fileIndexCache = nil
 }
 
-// submit sends an operation to the controller. Rejections keep the composer
-// intact and are shown as notices or errors.
 func (m model) submit(err error) (tea.Model, tea.Cmd) {
 	if err != nil {
 		return m.reject(err)
@@ -241,7 +231,6 @@ func (m model) submit(err error) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// reject shows a controller error. State rejections are notices; everything else is an error.
 func (m model) reject(err error) (tea.Model, tea.Cmd) {
 	kind := "error"
 	if e := (*control.Error)(nil); errors.As(err, &e) && slices.Contains([]string{"busy", "cancelling", "queue_full", "setup_required", "not_recallable"}, e.Code) {

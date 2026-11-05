@@ -14,14 +14,13 @@ import (
 	"sync"
 )
 
-// Fixed limits of the bash tool and the timeline (show_lines).
 const (
-	ShellTimeout      = 120  // seconds, default for a bash call
-	ShellMaxTimeout   = 600  // seconds
-	ShellOutput       = 8192 // bytes kept per bash call by default (shell_output setting)
-	normalCodeLines   = 3    // show_lines=normal: first lines of a tool call, no output
+	ShellTimeout      = 120
+	ShellMaxTimeout   = 600
+	ShellOutput       = 8192
+	normalCodeLines   = 3
 	normalReasonLines = 3
-	fullOutputLines   = 6 // show_lines=full: whole tool call, first lines of the output
+	fullOutputLines   = 6
 	fullReasonLines   = 6
 )
 
@@ -31,20 +30,16 @@ const (
 	ShellOutputMax = 65536
 )
 
-// ShowLinesModes are the show_lines values in /settings order.
 var ShowLinesModes = []string{"minimal", "normal", "full"}
 
-// Efforts are the reasoning efforts offered by /models; "" uses the provider default.
 var Efforts = []string{"", "none", "minimal", "low", "medium", "high", "xhigh", "max"}
 
-// Provider is an OpenAI-compatible endpoint. APIKey and APIKeyEnv are exclusive.
 type Provider struct {
 	BaseURL   string `json:"base_url"`
 	APIKey    string `json:"api_key,omitempty"`
 	APIKeyEnv string `json:"api_key_env,omitempty"`
 }
 
-// key is the API key of p: the stored key or the value of its environment variable.
 func (p Provider) key() string {
 	if p.APIKey == "" && p.APIKeyEnv != "" {
 		return os.Getenv(p.APIKeyEnv)
@@ -52,7 +47,6 @@ func (p Provider) key() string {
 	return p.APIKey
 }
 
-// Redact replaces every configured API key (and any extra secret) in text with [redacted].
 func Redact(s Settings, text string, extra ...string) string {
 	secrets := extra
 	for _, p := range s.Providers {
@@ -66,23 +60,20 @@ func Redact(s Settings, text string, extra ...string) string {
 	return text
 }
 
-// Settings are stored as one JSON row in the database.
 type Settings struct {
 	Provider         string              `json:"provider"`
 	Model            string              `json:"model"`
 	Effort           string              `json:"effort"`
 	ReasoningSummary bool                `json:"reasoning_summary"`
 	ShowLines        string              `json:"show_lines"`
-	ShellOutput      int                 `json:"shell_output"` // bytes of output kept per bash call, 0 = all
+	ShellOutput      int                 `json:"shell_output"`
 	Providers        map[string]Provider `json:"providers"`
 }
 
-// DefaultSettings is used when no settings file exists.
 func DefaultSettings() Settings {
 	return Settings{ReasoningSummary: true, ShowLines: "normal", ShellOutput: ShellOutput, Providers: map[string]Provider{}}
 }
 
-// SetupHint explains what must be configured before a model request; "" when nothing is missing.
 func (s Settings) SetupHint() string {
 	switch {
 	case s.Provider != "" && s.Model != "":
@@ -93,12 +84,6 @@ func (s Settings) SetupHint() string {
 	return "No model selected. Choose a model with /models (use /connect to add more providers)."
 }
 
-// MaxLines is how many lines of a kind ("code", "output" or "reasoning") the timeline shows;
-// 0 hides the block and -1 shows all of it.
-//
-//	minimal: only user and assistant messages
-//	normal:  messages, the first 3 lines of a tool call, no output
-//	full:    messages, the whole tool call, the first 6 lines of the output
 func (s Settings) MaxLines(kind string) int {
 	switch s.ShowLines {
 	case "minimal":
@@ -159,7 +144,6 @@ func validateSettings(s Settings) error {
 	return nil
 }
 
-// LoadSettings reads the settings stored in home; a fresh database means defaults.
 func LoadSettings(home string) (Settings, error) {
 	db, err := openDB(home)
 	if err != nil {
@@ -170,7 +154,6 @@ func LoadSettings(home string) (Settings, error) {
 	return s, err
 }
 
-// SaveSettings validates and stores settings in home.
 func SaveSettings(home string, s Settings) error {
 	db, err := openDB(home)
 	if err != nil {
@@ -187,7 +170,6 @@ func SaveSettings(home string, s Settings) error {
 	return err
 }
 
-// loadSettings reads and validates the stored settings and their version (0 when none are stored).
 func loadSettings(db *sql.DB) (Settings, int64, error) {
 	var data []byte
 	var version int64
@@ -208,7 +190,6 @@ func loadSettings(db *sql.DB) (Settings, int64, error) {
 	return s, version, nil
 }
 
-// settingsVersion is the version of the stored settings; it grows on every save.
 func settingsVersion(db *sql.DB) (version int64, err error) {
 	err = db.QueryRow(`SELECT version FROM settings WHERE id = 1`).Scan(&version)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -220,8 +201,6 @@ func settingsVersion(db *sql.DB) (version int64, err error) {
 // errSettingsConflict means another process saved the settings since they were read.
 var errSettingsConflict = errors.New("settings changed concurrently; try again")
 
-// storeSettingsAt saves s only if the stored version is still expected (0: none stored),
-// returning errSettingsConflict otherwise. s must be valid.
 func storeSettingsAt(db *sql.DB, s Settings, expected int64) (version int64, err error) {
 	data, err := json.Marshal(s)
 	if err != nil {
@@ -240,7 +219,6 @@ func storeSettingsAt(db *sql.DB, s Settings, expected int64) (version int64, err
 	return version, err
 }
 
-// DashyHome is DASHY_HOME: default ~/.dashy, a relative value resolves against cwd.
 func DashyHome(cwd string) (string, error) {
 	dir := os.Getenv("DASHY_HOME")
 	if dir == "" {
@@ -255,28 +233,24 @@ func DashyHome(cwd string) (string, error) {
 	return filepath.Abs(dir)
 }
 
-// DBPath is the database holding settings and sessions.
 func (a *Agent) DBPath() string { return DBPath(a.home) }
 
-// AttachmentsDir is where pasted and viewed images are saved.
 func (a *Agent) AttachmentsDir() string { return filepath.Join(a.home, "attachments") }
 
 // settingsState is the live settings of an agent. The turn goroutine, the TUI and
 // reloads of changes made by other dashy processes share it, so every access goes through mu.
 type settingsState struct {
 	mu      sync.Mutex
-	base    Settings  // as stored: shared by all sessions, its selection is the default for new ones
-	sel     selection // of this session; an empty model follows base
-	s       Settings  // effective: base with the session selection and launch overrides
+	base    Settings
+	sel     selection
+	s       Settings
 	client  *client
-	version int64 // of the stored settings when s was loaded or saved
-	warned  int64 // last version whose reload failed, reported once
+	version int64
+	warned  int64
 }
 
-// selection is the provider, model and reasoning effort of one session.
 type selection struct{ Provider, Model, Effort string }
 
-// effectiveLocked is base with the session selection and launch overrides applied, validated.
 func (a *Agent) effectiveLocked(base Settings) (Settings, error) {
 	s := base
 	s.Providers = maps.Clone(base.Providers)
@@ -294,7 +268,6 @@ func (a *Agent) effectiveLocked(base Settings) (Settings, error) {
 	return s, validateSettings(s)
 }
 
-// applyLocked makes base the stored settings and rebuilds the effective ones and the API client.
 func (a *Agent) applyLocked(base Settings, version int64) error {
 	s, err := a.effectiveLocked(base)
 	if err != nil {
@@ -306,9 +279,6 @@ func (a *Agent) applyLocked(base Settings, version int64) error {
 	return nil
 }
 
-// fixSelection gives the session its selection: sel, or the current default when sel is
-// empty or no longer valid. Later default changes do not reach this session; until a model
-// is configured at all, the session follows the default.
 func (a *Agent) fixSelection(sel selection) {
 	c := a.cfg
 	c.mu.Lock()
@@ -318,7 +288,6 @@ func (a *Agent) fixSelection(sel selection) {
 		c.sel = selection{}
 		_ = a.applyLocked(c.base, c.version)
 	}
-	// The session keeps what it runs with, launch overrides included.
 	if c.s.Model != "" {
 		c.sel = selection{c.s.Provider, c.s.Model, c.s.Effort}
 	}
@@ -356,7 +325,6 @@ func (a *Agent) refreshSettings(emit func(Event)) {
 	}
 }
 
-// snapshot is the settings and client for one model request.
 func (a *Agent) snapshot() (Settings, *client) {
 	a.cfg.mu.Lock()
 	defer a.cfg.mu.Unlock()
@@ -369,7 +337,6 @@ func (a *Agent) settingsLocked() Settings {
 	return s
 }
 
-// Settings returns a copy of the effective settings.
 func (a *Agent) Settings() Settings {
 	a.cfg.mu.Lock()
 	defer a.cfg.mu.Unlock()

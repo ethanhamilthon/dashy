@@ -17,24 +17,21 @@ import (
 	"dashy/internal/shell"
 )
 
-// Task is one background command of a session, as stored.
 type Task struct {
-	ID, Command, Status, Log string // Status: running, done, failed, stopped or lost
+	ID, Command, Status, Log string
 	ExitCode                 *int
 	Started, Ended           time.Time
 }
 
 const (
-	taskResultLines = 40   // output lines a task result carries
-	taskResultBytes = 8192 // and at most this many bytes of them
+	taskResultLines = 40
+	taskResultBytes = 8192
 )
 
-// tasks runs the background tasks of one session. A finished task queues its
-// result as session input; closing the session stops the tasks still running.
 type tasks struct {
 	db                *sql.DB
 	session, dir, log string
-	env               map[string]string // set again once the session socket is open
+	env               map[string]string
 	queue             *Steering
 	mu                sync.Mutex
 	running           map[string]*exec.Cmd
@@ -50,7 +47,6 @@ func (a *Agent) newTasks() *tasks {
 		queue: a.queue, running: map[string]*exec.Cmd{}, stopped: map[string]bool{}}
 }
 
-// run starts command in the project directory and returns the task ID.
 func (t *tasks) run(command string) (string, error) {
 	if strings.TrimSpace(command) == "" {
 		return "", errors.New("tasks run requires a command")
@@ -65,8 +61,6 @@ func (t *tasks) run(command string) (string, error) {
 	})
 }
 
-// adopt makes a running bash call a task: its output so far and from now on goes to
-// the task log. Without a task (session ended) the caller still owns the command.
 func (t *tasks) adopt(command string, bg *shell.Background) (string, error) {
 	return t.start(command, func(file *os.File) (*exec.Cmd, func() error, error) {
 		bg.Redirect(file)
@@ -74,8 +68,6 @@ func (t *tasks) adopt(command string, bg *shell.Background) (string, error) {
 	})
 }
 
-// start registers a task whose output goes to its log, launches it and reports its
-// result as session input when it ends.
 func (t *tasks) start(command string, launch func(*os.File) (*exec.Cmd, func() error, error)) (string, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -146,7 +138,6 @@ func (t *tasks) finish(id, status string, exit *int) {
 		status, exit, time.Now().UnixNano(), t.session, id)
 }
 
-// stop kills a running task; its result still arrives, with status stopped.
 func (t *tasks) stop(id string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -158,14 +149,12 @@ func (t *tasks) stop(id string) error {
 	return cmd.Cancel()
 }
 
-// Running reports how many tasks are running.
 func (t *tasks) Running() int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return len(t.running)
 }
 
-// close stops every running task without reporting results and waits for them.
 func (t *tasks) close() {
 	t.mu.Lock()
 	t.closed = true
@@ -177,7 +166,6 @@ func (t *tasks) close() {
 	t.wg.Wait()
 }
 
-// taskResult is the session input that reports a finished task.
 func taskResult(id, command, status string, exit *int, took time.Duration, logPath string) string {
 	attrs := fmt.Sprintf(`id=%q status=%q`, id, status)
 	if exit != nil {
@@ -191,8 +179,6 @@ func taskResult(id, command, status string, exit *int, took time.Duration, logPa
 // xmlText escapes text inside a tag; unlike xml.EscapeText it keeps newlines and quotes.
 var xmlText = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
 
-// tail is the end of a log: its last taskResultLines lines, at most taskResultBytes.
-// Only the end of the file is read, however large the log is.
 func tail(path string) string {
 	file, err := os.Open(path)
 	if err != nil {
@@ -210,7 +196,6 @@ func tail(path string) string {
 		data = data[:n]
 	}
 	if start > 0 {
-		// Drop the partial first line (and with it any cut UTF-8 sequence).
 		if i := bytes.IndexByte(data, '\n'); i >= 0 {
 			data = data[i+1:]
 		}
@@ -229,15 +214,12 @@ func tail(path string) string {
 	return strings.Join(lines, "\n")
 }
 
-// IsNotice reports whether text is session input from dashy itself (a task result or
-// a dashy view image) rather than from the user.
 func IsNotice(text string) bool {
 	return strings.HasPrefix(text, "<task-result ") || strings.HasPrefix(text, "<view>")
 }
 
 var taskHeader = regexp.MustCompile(`^<task-result id="([^"]*)" status="([^"]*)"(?: exit_code="([^"]*)")? duration="([^"]*)">\n\$ ([^\n]*)`)
 
-// NoticeSummary is the one-line form of a notice for the timeline: "task t1 done · exit 0 · 3s · $ make".
 func NoticeSummary(text string) string {
 	m := taskHeader.FindStringSubmatch(text)
 	if m == nil {
@@ -251,7 +233,6 @@ func NoticeSummary(text string) string {
 	return strings.Join(append(parts, m[4], "$ "+command), " · ")
 }
 
-// RunningTasks is how many background tasks of the session are running.
 func (a *Agent) RunningTasks() int {
 	if a.tasks == nil {
 		return 0
@@ -259,7 +240,6 @@ func (a *Agent) RunningTasks() int {
 	return a.tasks.Running()
 }
 
-// SessionTasks lists the tasks of a session, oldest first.
 func SessionTasks(home, session string) ([]Task, error) {
 	db, err := openDB(home)
 	if err != nil {
@@ -269,10 +249,8 @@ func SessionTasks(home, session string) ([]Task, error) {
 	return sessionTasks(db, session)
 }
 
-// Tasks lists the tasks of this session, oldest first.
 func (a *Agent) Tasks() ([]Task, error) { return sessionTasks(a.db, a.id) }
 
-// StopTask kills a running task of this session; its result reports stopped.
 func (a *Agent) StopTask(id string) error {
 	if a.tasks == nil {
 		return fmt.Errorf("task %s is not running", id)
@@ -307,5 +285,4 @@ func sessionTasks(db *sql.DB, session string) ([]Task, error) {
 	return list, rows.Err()
 }
 
-// TaskOutput is the end of a task's output, as its result shows it.
 func TaskOutput(task Task) string { return tail(task.Log) }

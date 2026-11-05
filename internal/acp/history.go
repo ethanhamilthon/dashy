@@ -105,7 +105,6 @@ func (s *server) replay(ctx context.Context, session *session) error {
 	return nil
 }
 
-// replayImages publishes the images of a user history item as ACP image blocks.
 func (s *server) replayImages(raw json.RawMessage, publish func(any) error) error {
 	var message struct {
 		Content []struct {
@@ -113,7 +112,7 @@ func (s *server) replayImages(raw json.RawMessage, publish func(any) error) erro
 			ImageURL string `json:"image_url"`
 		} `json:"content"`
 	}
-	_ = json.Unmarshal(raw, &message) // plain text content has no images
+	_ = json.Unmarshal(raw, &message)
 	for _, part := range message.Content {
 		mime, data, ok := strings.Cut(strings.TrimPrefix(part.ImageURL, "data:"), ";base64,")
 		if part.Type != "input_image" || !ok {

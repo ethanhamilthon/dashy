@@ -14,15 +14,12 @@ import (
 	"time"
 )
 
-// Result is the outcome of one bash call as the model sees it.
 type Result struct {
 	Output   string `json:"output"`
 	ExitCode int    `json:"exit_code"`
 	Error    bool   `json:"error,omitempty"`
 }
 
-// Runner executes stateless bash calls in Dir. Env supplies variables exported
-// before every call.
 type Runner struct {
 	Dir string
 	Env func() map[string]string
@@ -91,8 +88,6 @@ func killGroup(cmd *exec.Cmd) error {
 	return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 }
 
-// Run is Execute that can let go of the command: when detach fires first, Run returns
-// the output so far and the still running command, which the caller then owns.
 func (r *Runner) Run(ctx context.Context, command string, timeout time.Duration, limit int, detach <-chan struct{}) (Result, *Background) {
 	var env map[string]string
 	if r.Env != nil {
@@ -155,7 +150,6 @@ func (r *Runner) Run(ctx context.Context, command string, timeout time.Duration,
 	return result, nil
 }
 
-// switchWriter is the output of a command, which can move to a log file mid-run.
 type switchWriter struct {
 	mu sync.Mutex
 	w  io.Writer
@@ -167,7 +161,6 @@ func (s *switchWriter) Write(p []byte) (int, error) {
 	return s.w.Write(p)
 }
 
-// Background is a command that Run let go of; it keeps running in its process group.
 type Background struct {
 	Cmd    *exec.Cmd
 	done   <-chan error
@@ -175,7 +168,6 @@ type Background struct {
 	buffer *outputBuffer
 }
 
-// Redirect sends the output from now on to w, after the output kept so far.
 func (b *Background) Redirect(w io.Writer) {
 	b.out.mu.Lock()
 	defer b.out.mu.Unlock()
@@ -183,7 +175,6 @@ func (b *Background) Redirect(w io.Writer) {
 	b.out.w = w
 }
 
-// Wait waits for the command to end and its group to be killed, as Reap does.
 func (b *Background) Wait() error { return <-b.done }
 
 var lifeline struct {

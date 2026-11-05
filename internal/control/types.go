@@ -1,6 +1,3 @@
-// Package control coordinates turns for the terminal interface: turn state,
-// cancellation, the steering queue and session switching. Operations are plain
-// typed methods; events report what happened, in order.
 package control
 
 import (
@@ -13,8 +10,8 @@ import (
 // Event is one ordered notification from the controller. Consumers receive
 // events in emission order and must not call the controller from the callback.
 type Event struct {
-	Kind    string         // started, agent, notice, error, done or session
-	Agent   *agent.Event   // agent: the unmodified event from the agent
+	Kind    string // started, agent, notice, error, done or session
+	Agent   *agent.Event
 	Text    string         // started: the input text; notice and error: the text; done (ok): final assistant text
 	Status  string         // done: ok, error or cancelled
 	Error   string         // done: failure text
@@ -35,11 +32,10 @@ func fail(code, format string, args ...any) error {
 	return &Error{Code: code, Message: fmt.Sprintf(format, args...)}
 }
 
-// Status is a consistent snapshot of the active operation.
 type Status struct {
 	Busy       bool
 	Cancelling bool
 	Started    time.Time
 	Queued     []agent.Input
-	Tasks      int // background tasks running
+	Tasks      int
 }

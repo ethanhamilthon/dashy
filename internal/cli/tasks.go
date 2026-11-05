@@ -14,7 +14,6 @@ import (
 
 const tasksUsage = "usage: dashy tasks run [-s ID] COMMAND... | list [-s ID] | status [-s ID] TASK | stop [-s ID] TASK"
 
-// tasksCommand runs, lists, inspects and stops the background tasks of a session.
 func tasksCommand(args []string, out io.Writer) error {
 	if len(args) == 0 {
 		return errors.New(tasksUsage)
@@ -24,7 +23,6 @@ func tasksCommand(args []string, out io.Writer) error {
 	var rest []string
 	var err error
 	if args[0] == "run" {
-		// Flags only before the command, which may have its own.
 		err = set.Parse(args[1:])
 		rest = set.Args()
 	} else {

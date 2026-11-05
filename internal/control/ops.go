@@ -8,7 +8,6 @@ import (
 	"dashy/internal/agent"
 )
 
-// Input sends user input. An idle session starts a turn; a busy one queues it as steering.
 func (c *Controller) Input(input agent.Input) error {
 	var err error
 	c.view(func() {
@@ -20,7 +19,6 @@ func (c *Controller) Input(input agent.Input) error {
 		case c.active != nil:
 			err = c.queueLocked(input)
 		default:
-			// Through the queue, so input queued earlier (a task result) goes first.
 			if err = c.setupError(); err == nil {
 				if err = c.queueLocked(input); err == nil {
 					c.deliverLocked()
@@ -41,7 +39,6 @@ func (c *Controller) queueLocked(input agent.Input) error {
 	return nil
 }
 
-// Recall returns the newest instruction the agent has not accepted yet.
 func (c *Controller) Recall() (*agent.Input, error) {
 	var input agent.Input
 	var ok bool
@@ -66,8 +63,6 @@ func (c *Controller) Stop() {
 	})
 }
 
-// Quit closes the session now, or after the active operation has ended.
-// closed reports whether the session closed immediately.
 func (c *Controller) Quit() (closed bool, err error) {
 	c.view(func() {
 		if c.active != nil {
@@ -82,10 +77,8 @@ func (c *Controller) Quit() (closed bool, err error) {
 	return closed, err
 }
 
-// NewSession switches to a new session once the active operation ends.
 func (c *Controller) NewSession() error { return c.switchRequest("new", "") }
 
-// Resume switches to a saved session of this project once the active operation ends.
 func (c *Controller) Resume(sessionID string) error { return c.switchRequest("resume", sessionID) }
 
 func (c *Controller) switchRequest(kind, id string) error {
@@ -115,7 +108,6 @@ func (c *Controller) switchRequest(kind, id string) error {
 	return err
 }
 
-// Reload re-reads settings and DASHY.md; a running turn is not interrupted, it applies once it ends.
 func (c *Controller) Reload() {
 	c.view(func() {
 		if c.active != nil {
@@ -135,7 +127,6 @@ func (c *Controller) reloadLocked() {
 	c.publish(Event{Kind: "notice", Text: "Settings and DASHY.md reloaded; the prompt is rebuilt before the next request."})
 }
 
-// Rename sets the title of the current session; an empty name restores the first user message.
 func (c *Controller) Rename(title string) error {
 	var err error
 	c.view(func() {
@@ -156,13 +147,11 @@ func (c *Controller) Rename(title string) error {
 	return err
 }
 
-// Instructions lists the DASHY.md files of the session, in prompt order.
 func (c *Controller) Instructions() (paths []string) {
 	c.view(func() { paths = c.a.PromptFiles() })
 	return paths
 }
 
-// Models lists models of all configured providers; failures maps provider names to redacted errors.
 func (c *Controller) Models(ctx context.Context) (models []agent.ModelChoice, failures map[string]string, err error) {
 	var settings agent.Settings
 	c.view(func() {
@@ -185,7 +174,6 @@ func (c *Controller) Models(ctx context.Context) (models []agent.ModelChoice, fa
 	return models, failures, nil
 }
 
-// SelectModel sets the active provider, model and reasoning effort.
 func (c *Controller) SelectModel(provider, model, effort string) error {
 	var err error
 	c.view(func() {
@@ -198,7 +186,6 @@ func (c *Controller) SelectModel(provider, model, effort string) error {
 	return err
 }
 
-// SelectProvider sets the active provider, keeping its model when the selection allows.
 func (c *Controller) SelectProvider(name string) error {
 	var err error
 	c.view(func() {
@@ -219,8 +206,6 @@ func (c *Controller) selectLocked(provider, model, effort string) error {
 	return nil
 }
 
-// SaveProvider adds a provider (old is "") or edits the provider old, which may be
-// renamed; an empty key then keeps the stored one. The API key is never reported back.
 func (c *Controller) SaveProvider(old, name, baseURL, apiKey string) error {
 	var err error
 	c.view(func() {
@@ -238,7 +223,6 @@ func (c *Controller) SaveProvider(old, name, baseURL, apiKey string) error {
 	return err
 }
 
-// DeleteProvider removes a provider; a selection that used it is cleared.
 func (c *Controller) DeleteProvider(name string) error {
 	var err error
 	c.view(func() {
@@ -251,8 +235,6 @@ func (c *Controller) DeleteProvider(name string) error {
 	return err
 }
 
-// ProviderModels tests a provider before it is saved by listing its models. With an
-// empty key, the key of the stored provider old is used.
 func (c *Controller) ProviderModels(ctx context.Context, old, baseURL, apiKey string) ([]string, error) {
 	var p agent.Provider
 	var settings agent.Settings
@@ -271,13 +253,11 @@ func (c *Controller) ProviderModels(ctx context.Context, old, baseURL, apiKey st
 	return models, nil
 }
 
-// Tasks lists the background tasks of the session, oldest first.
 func (c *Controller) Tasks() (tasks []agent.Task, err error) {
 	c.view(func() { tasks, err = c.a.Tasks() })
 	return tasks, err
 }
 
-// StopTask kills a running background task; its result still arrives, with status stopped.
 func (c *Controller) StopTask(id string) error {
 	var err error
 	c.view(func() {
@@ -288,8 +268,6 @@ func (c *Controller) StopTask(id string) error {
 	return err
 }
 
-// ChangeSettings applies change to the settings and saves them. It is allowed while a
-// turn runs: that turn's next model request picks the change up.
 func (c *Controller) ChangeSettings(change func(*agent.Settings)) error {
 	var err error
 	c.view(func() {

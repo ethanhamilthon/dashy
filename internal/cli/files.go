@@ -15,8 +15,6 @@ import (
 	"strings"
 )
 
-// parseAll parses flags wherever they appear among the positional arguments, which it
-// returns. After "--" everything is positional.
 func parseAll(fs *flag.FlagSet, args []string) ([]string, error) {
 	var positional []string
 	for {
@@ -30,7 +28,6 @@ func parseAll(fs *flag.FlagSet, args []string) ([]string, error) {
 	}
 }
 
-// maxTextFile is the largest file read and grep load.
 const maxTextFile = 32 << 20
 
 var (
@@ -38,8 +35,6 @@ var (
 	errNotRegular = errors.New("not a regular file")
 )
 
-// textLines reads a text file as lines without their endings. Binary files, files
-// over maxTextFile and anything but regular files (devices, FIFOs) are refused.
 func textLines(path string) ([]string, error) {
 	info, err := os.Stat(path)
 	switch {
@@ -60,7 +55,6 @@ func textLines(path string) ([]string, error) {
 	return strings.Split(strings.TrimSuffix(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n"), "\n"), nil
 }
 
-// readCommand prints numbered lines of a file: dashy read [-o LINE] [-n COUNT] FILE.
 func readCommand(args []string, out io.Writer) error {
 	var offset, count int
 	set := flagSet("read", func(fs *flag.FlagSet) { fs.IntVar(&offset, "o", 1, ""); fs.IntVar(&count, "n", 2000, "") })
@@ -89,7 +83,6 @@ func cut(s string, n int) string {
 	return s
 }
 
-// writeCommand replaces or creates a file with stdin: dashy write FILE.
 func writeCommand(args []string, in io.Reader, out io.Writer) error {
 	if len(args) != 1 || strings.HasPrefix(args[0], "-") {
 		return errors.New("usage: dashy write FILE < CONTENT")
@@ -105,7 +98,6 @@ func writeCommand(args []string, in io.Reader, out io.Writer) error {
 	return nil
 }
 
-// writeFile syncs a replacement in the same directory before atomically renaming it.
 func writeFile(path string, data []byte) error {
 	if info, err := os.Lstat(path); err == nil && info.Mode()&fs.ModeSymlink != 0 {
 		path, err = filepath.EvalSymlinks(path)
@@ -148,7 +140,6 @@ func writeFile(path string, data []byte) error {
 	return errors.Join(directory.Sync(), directory.Close())
 }
 
-// patchCommand applies SEARCH/REPLACE blocks from stdin; each search text must occur exactly once.
 func patchCommand(args []string, in io.Reader, out io.Writer) error {
 	if len(args) != 1 || strings.HasPrefix(args[0], "-") {
 		return errors.New("usage: dashy patch FILE < BLOCKS (<<<<<<< SEARCH / ======= / >>>>>>> REPLACE)")
@@ -178,9 +169,6 @@ func patchCommand(args []string, in io.Reader, out io.Writer) error {
 	return nil
 }
 
-// grepCommand searches files for a Go regexp: dashy grep [-i] [-l] [-g GLOB] PATTERN [PATH...];
-// with --files it lists the files instead. Git controls exclusions in repositories;
-// the filesystem fallback skips hidden entries and node_modules.
 func grepCommand(args []string, out, diagnostics io.Writer) error {
 	var ignoreCase, names, list bool
 	var glob string
@@ -192,7 +180,7 @@ func grepCommand(args []string, out, diagnostics io.Writer) error {
 	})
 	rest, err := parseAll(set, args)
 	if list {
-		rest = append([]string{""}, rest...) // no pattern
+		rest = append([]string{""}, rest...)
 	}
 	if err != nil || len(rest) == 0 {
 		return errors.New("usage: dashy grep [-i] [-l] [-g GLOB] PATTERN [PATH...] | dashy grep --files [-g GLOB] [PATH...]")
@@ -256,8 +244,6 @@ func grepCommand(args []string, out, diagnostics io.Writer) error {
 	return nil
 }
 
-// searchFiles expands directories to their files: git's view when it has one, else a
-// walk without hidden entries. Unreadable directories of the walk are failures.
 func searchFiles(paths []string) (files, failures []string, err error) {
 	for _, root := range paths {
 		if info, err := os.Stat(root); err != nil {
@@ -278,10 +264,8 @@ func searchFiles(paths []string) (files, failures []string, err error) {
 	return files, failures, nil
 }
 
-// parseBlocks splits patch input into SEARCH/REPLACE pairs. Text outside blocks is
-// ignored; a marker out of order or an unclosed block rejects the whole patch.
 func parseBlocks(input string) (blocks [][2]string, err error) {
-	state, search := 0, "" // 0 outside, 1 in SEARCH, 2 in REPLACE
+	state, search := 0, ""
 	var cur []string
 	for i, line := range strings.Split(strings.ReplaceAll(input, "\r\n", "\n"), "\n") {
 		switch {
@@ -310,9 +294,6 @@ func parseBlocks(input string) (blocks [][2]string, err error) {
 	return blocks, nil
 }
 
-// applyBlock replaces the one occurrence of search in text. Line breaks in the search
-// match LF or CRLF, whichever the file has there; the replacement takes the same ones,
-// and the rest of the file stays byte for byte.
 func applyBlock(text, search, replace string) (string, error) {
 	if search == "" {
 		return "", errors.New("empty search text")
@@ -321,7 +302,7 @@ func applyBlock(text, search, replace string) (string, error) {
 	if strings.Contains(search, "\n") {
 		eols = []string{"\n", "\r\n"}
 	} else if i := strings.Index(text, search); i >= 0 {
-		eols = []string{lineBreakAt(text, i+len(search))} // a one-line search can match only once
+		eols = []string{lineBreakAt(text, i+len(search))}
 	} else {
 		eols = []string{"\n"}
 	}
@@ -329,7 +310,7 @@ func applyBlock(text, search, replace string) (string, error) {
 	for _, eol := range eols {
 		s, r := strings.ReplaceAll(search, "\n", eol), strings.ReplaceAll(replace, "\n", eol)
 		if r == "" && strings.Count(text, s+eol) == 1 {
-			s += eol // deleting whole lines takes their line break too
+			s += eol
 		}
 		if n := strings.Count(text, s); n > 0 {
 			total, from, to = total+n, s, r
@@ -341,8 +322,6 @@ func applyBlock(text, search, replace string) (string, error) {
 	return strings.Replace(text, from, to, 1), nil
 }
 
-// lineBreakAt is the line break ending the line that contains offset i: CRLF or LF;
-// on the last line, CRLF if the file uses it anywhere.
 func lineBreakAt(text string, i int) string {
 	if j := strings.IndexByte(text[i:], '\n'); j >= 0 {
 		if j > 0 && text[i+j-1] == '\r' || j == 0 && i > 0 && text[i-1] == '\r' {

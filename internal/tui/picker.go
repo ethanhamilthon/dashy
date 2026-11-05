@@ -12,20 +12,17 @@ import (
 	"dashy/internal/agent"
 )
 
-// Picker kinds. "settings" lists the display settings rows (/settings), "models" every
-// model with the reasoning effort (/models), "connect" the providers (/connect).
 const (
 	pickerSettings = "settings"
 	pickerModels   = "models"
 	pickerConnect  = "connect"
-	pickerTasks    = "tasks" // background tasks of the session (/tasks)
+	pickerTasks    = "tasks"
 )
 
 // actionAdd is the "Add provider" row. Settings rows have their name as action;
 // provider and model rows have none, so their names can be anything.
 const actionAdd = "add"
 
-// modelChoices carries the result of listing models for the models picker.
 type modelChoices struct {
 	generation int
 	models     []agent.ModelChoice
@@ -77,7 +74,6 @@ func (m *model) openPicker(kind string) tea.Cmd {
 	}
 }
 
-// rebuildSettingsMenu lists the display settings rows.
 func (m *model) rebuildSettingsMenu() {
 	s := m.ctl.Settings()
 	m.menu = nil
@@ -94,8 +90,6 @@ func (m *model) rebuildSettingsMenu() {
 	}
 }
 
-// rebuildModelsMenu lists the models known so far (of modelsFor only, when set) and
-// selects the current one.
 func (m *model) rebuildModelsMenu() {
 	s := m.ctl.Settings()
 	m.menu = nil
@@ -124,8 +118,6 @@ func (m *model) closePicker() {
 	m.input.Reset()
 }
 
-// pickerKey handles keys while a picker is open. Rejected operations keep the
-// picker open and show the reason.
 func (m model) pickerKey(key tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	if m.menuKind == "" {
 		return m, nil, false
@@ -146,7 +138,7 @@ func (m model) pickerKey(key tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			return m.showSelectedTask()
 		case "esc", "ctrl+c", "up", "down", "tab":
 		default:
-			return m, nil, true // the list has no filter: other keys do nothing
+			return m, nil, true
 		}
 	}
 	switch key.String() {
@@ -174,7 +166,6 @@ func (m model) pickerKey(key tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		}
 		effort := (m.effort + delta + len(agent.Efforts)) % len(agent.Efforts)
 		if s := m.ctl.Settings(); s.Provider != "" && s.Model != "" {
-			// A configured model's effort is applied and saved at once; a rejected change keeps the saved value.
 			if err := m.ctl.SelectModel(s.Provider, s.Model, agent.Efforts[effort]); err != nil {
 				next, cmd := m.reject(err)
 				return next, cmd, true
@@ -201,8 +192,6 @@ func (m model) pickerKey(key tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	return m, nil, true
 }
 
-// pickerEnter applies the selected row. Toggles keep the picker open; a rejected
-// toggle shows its reason. A chosen model or provider closes the picker.
 func (m model) pickerEnter() (tea.Model, tea.Cmd, bool) {
 	matches := m.completions()
 	if len(matches) == 0 {
@@ -210,7 +199,7 @@ func (m model) pickerEnter() (tea.Model, tea.Cmd, bool) {
 	}
 	chosen := matches[m.selected%len(matches)]
 	if m.menuKind == pickerSettings {
-		return m, nil, true // settings rows change with Left/Right
+		return m, nil, true
 	}
 	err := m.ctl.SelectModel(chosen.description, chosen.name, agent.Efforts[m.effort])
 	m.closePicker()
@@ -222,14 +211,12 @@ func (m model) pickerEnter() (tea.Model, tea.Cmd, bool) {
 	return m, nil, true
 }
 
-// tasksTick refreshes the open /tasks list: statuses and durations change while it is shown.
 type tasksTick struct{ generation int }
 
 func tasksTickAfter(generation int) tea.Cmd {
 	return tea.Tick(time.Second, func(time.Time) tea.Msg { return tasksTick{generation} })
 }
 
-// rebuildTasksMenu lists the tasks newest first, keeping the selected task selected.
 func (m *model) rebuildTasksMenu() {
 	var keep string
 	if len(m.menu) > 0 {
@@ -267,7 +254,6 @@ func (m model) selectedTask() (command, bool) {
 	return m.menu[m.selected%len(m.menu)], true
 }
 
-// stopSelectedTask kills the selected task if it runs; the list stays open.
 func (m model) stopSelectedTask() (tea.Model, tea.Cmd, bool) {
 	task, ok := m.selectedTask()
 	if !ok || task.description != "running" {
@@ -283,7 +269,6 @@ func (m model) stopSelectedTask() (tea.Model, tea.Cmd, bool) {
 	return m, nil, true
 }
 
-// showSelectedTask closes the list and shows the end of the task's output in the timeline.
 func (m model) showSelectedTask() (tea.Model, tea.Cmd, bool) {
 	task, ok := m.selectedTask()
 	if !ok {
@@ -295,8 +280,6 @@ func (m model) showSelectedTask() (tea.Model, tea.Cmd, bool) {
 	return m, nil, true
 }
 
-// settingRow is one /settings row: its values with the index of the current one (-1 when
-// the stored value is not one of them) and how a step left (delta < 0) or right changes it.
 type settingRow struct {
 	name    string
 	options func(agent.Settings) (options []string, current int)
@@ -332,8 +315,6 @@ var settingRows = []settingRow{
 			return options, current
 		},
 		func(delta int, s *agent.Settings) {
-			// Doubling steps; from a value off the grid, a step goes to the next grid value in
-			// that direction. 0 (no truncation) is not offered.
 			v := s.ShellOutput
 			switch {
 			case v == 0 && delta > 0:

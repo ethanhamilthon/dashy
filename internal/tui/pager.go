@@ -15,7 +15,6 @@ type pager struct {
 	lines                  []string
 }
 
-// SetLines replaces the content; the pager keeps lines without copying.
 func (p *pager) SetLines(lines []string) {
 	p.lines = lines
 	if p.YOffset > len(lines)-1 {
@@ -37,7 +36,6 @@ func (p *pager) ScrollUp(n int) { p.SetYOffset(p.YOffset - n) }
 
 func (p *pager) ScrollDown(n int) { p.SetYOffset(p.YOffset + n) }
 
-// Update scrolls by a page for PgUp/PgDn and by three rows for the mouse wheel.
 func (p pager) Update(msg tea.Msg) (pager, tea.Cmd) {
 	switch v := msg.(type) {
 	case tea.KeyMsg:
@@ -61,7 +59,6 @@ func (p pager) Update(msg tea.Msg) (pager, tea.Cmd) {
 	return p, nil
 }
 
-// View renders the visible rows padded and cut to the pager size.
 func (p pager) View() string {
 	top := min(max(0, p.YOffset), len(p.lines))
 	visible := p.lines[top:min(len(p.lines), top+p.Height)]

@@ -11,7 +11,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// terminalLink makes text an OSC 8 hyperlink to target when target is a plain http(s) URL.
 func terminalLink(target, text string) string {
 	u, err := url.Parse(target)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || strings.ContainsFunc(target, unicode.IsControl) {
@@ -66,17 +65,13 @@ func linkedRows(body string, width int) []string {
 var (
 	mdKey      any
 	mdRenderer *glamour.TermRenderer
-	// mdStable caches the rendered stable prefix of the message being streamed.
-	mdStable struct {
+	mdStable   struct {
 		key any
 		out string
 	}
 	urlToken = regexp.MustCompile(`(?i)(?:https?://|www\.)[^\s<>]+`)
 )
 
-// renderMarkdown renders assistant text with glamour at width. While the text is
-// still streaming, only the part after the last completed block is rendered again;
-// the blocks before it come from a cache, so a long reply costs linear time.
 func renderMarkdown(text string, width int, streaming bool) (string, bool) {
 	width = max(1, width)
 	if key := [2]any{width, lipgloss.ColorProfile()}; mdKey != key {
@@ -117,8 +112,6 @@ func renderGlamour(text string) (string, bool) {
 	return strings.TrimSpace(rendered), true
 }
 
-// stableSplit returns the end of the last blank line outside a code fence, so
-// text[:split] holds complete blocks; 0 when there is none.
 func stableSplit(text string) int {
 	split, fence, offset := 0, false, 0
 	for _, line := range strings.SplitAfter(text, "\n") {
@@ -132,7 +125,7 @@ func stableSplit(text string) int {
 		offset += len(line)
 	}
 	if strings.TrimSpace(text[split:]) == "" {
-		return 0 // nothing after the split yet: render as one piece
+		return 0
 	}
 	return split
 }
@@ -148,11 +141,11 @@ func protectHyphens(text string) string {
 	for i, line := range lines {
 		body := strings.TrimLeft(line, " \t>")
 		if strings.Trim(body, "-|:+ \t") == "" {
-			continue // thematic break, setext underline or table delimiter row
+			continue
 		}
 		head := len(line) - len(body)
 		if strings.HasPrefix(body, "- ") {
-			head++ // list marker
+			head++
 		}
 		var b strings.Builder
 		b.WriteString(line[:head])

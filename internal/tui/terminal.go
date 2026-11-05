@@ -75,7 +75,7 @@ func kittyKey(sequence string) (tea.Msg, bool) {
 			return nil, false
 		}
 		if len(modifiers) > 1 && modifiers[1] == "3" {
-			return nil, true // key release
+			return nil, true
 		}
 	}
 	return tea.KeyMsg{Type: tea.KeyEsc}, true

@@ -88,8 +88,6 @@ func findFileToken(text string, cursor int) (fileToken, bool) {
 	return fileToken{}, false
 }
 
-// parseFileToken parses the reference whose @ is at runes[at]. The cursor
-// (never negative, see findFileToken) limits the query for completion.
 func parseFileToken(runes []rune, at, cursor int) (fileToken, bool) {
 	if at > 0 && (unicode.IsLetter(runes[at-1]) || unicode.IsDigit(runes[at-1]) || strings.ContainsRune("._%+-\\/:", runes[at-1])) {
 		return fileToken{}, false

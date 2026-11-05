@@ -13,8 +13,6 @@ import (
 
 const listPage = 50
 
-// list pages through saved sessions, newest first. The opaque cursor is the last
-// returned session's update time and ID, so new activity never shifts a page.
 func (s *server) list(params json.RawMessage, reply replyFunc) {
 	var p struct {
 		Cwd    *string `json:"cwd"`
@@ -69,7 +67,6 @@ func (s *server) list(params json.RawMessage, reply replyFunc) {
 	})
 }
 
-// closeSession cancels any running work, waits for it, and releases the session lock.
 func (s *server) closeSession(params json.RawMessage, reply replyFunc) {
 	var p struct {
 		SessionID string `json:"sessionId"`
