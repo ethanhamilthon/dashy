@@ -23,6 +23,7 @@ type session struct {
 	cancel    context.CancelFunc
 	busy      bool
 	cancelled bool
+	models    map[string]agent.ModelChoice
 }
 type server struct {
 	peer               *peer
@@ -93,6 +94,8 @@ func (s *server) handle(ctx context.Context, method string, params json.RawMessa
 		s.newSession(ctx, params, reply)
 	case "session/prompt":
 		s.prompt(ctx, params, reply)
+	case "session/set_config_option":
+		s.setConfig(ctx, params, reply)
 	case "session/cancel":
 		var p struct {
 			SessionID string `json:"sessionId"`
@@ -163,10 +166,16 @@ func (s *server) newSession(ctx context.Context, params json.RawMessage, reply r
 			reply(nil, problem(-32000, "Configure a provider and model using the Dashy TUI before connecting"))
 			return
 		}
+		session.discoverModels(ctx)
+		if ctx.Err() != nil {
+			a.Close()
+			reply(nil, problem(-32800, "Request cancelled"))
+			return
+		}
 		s.mu.Lock()
 		s.sessions[a.SessionID()] = session
 		s.mu.Unlock()
-		reply(map[string]any{"sessionId": a.SessionID()}, nil)
+		reply(map[string]any{"sessionId": a.SessionID(), "configOptions": session.configOptions()}, nil)
 	})
 }
 func (s *server) lookup(id string) *session { s.mu.Lock(); defer s.mu.Unlock(); return s.sessions[id] }

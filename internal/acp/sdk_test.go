@@ -2,6 +2,7 @@ package acp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -55,13 +56,27 @@ func TestMaintainedSDKClientInteroperability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(session.ConfigOptions) != 2 {
+		t.Fatal("SDK did not receive model and effort selectors")
+	}
+	for _, change := range []struct{ id, value string }{{"model", "p/m2"}, {"effort", "high"}} {
+		data, _ := json.Marshal(map[string]any{"sessionId": session.SessionId, "configId": change.id, "value": change.value})
+		var params sdk.SetSessionConfigOptionRequest
+		if err := json.Unmarshal(data, &params); err != nil {
+			t.Fatal(err)
+		}
+		response, err := peer.SetSessionConfigOption(ctx, params)
+		if err != nil || len(response.ConfigOptions) != 2 {
+			t.Fatalf("config response: %+v %v", response, err)
+		}
+	}
 	result, err := peer.Prompt(ctx, sdk.PromptRequest{SessionId: session.SessionId, Prompt: []sdk.ContentBlock{sdk.TextBlock("hello")}})
 	if err != nil || result.StopReason != "end_turn" {
 		t.Fatalf("prompt: %+v %v", result, err)
 	}
 	callback.mu.Lock()
 	defer callback.mu.Unlock()
-	if len(callback.updates) != 1 {
+	if len(callback.updates) != 3 {
 		t.Fatalf("updates: %+v", callback.updates)
 	}
 	if callback.updates[0].SessionId != session.SessionId {

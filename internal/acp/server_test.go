@@ -29,6 +29,11 @@ func settings(t *testing.T, reply func(string) string) string {
 	home := t.TempDir()
 	t.Setenv("DASHY_HOME", home)
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"data":[{"id":"m"},{"id":"m2"}]}`)
+			return
+		}
 		data, _ := io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(w, reply(string(data)))

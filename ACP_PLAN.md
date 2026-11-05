@@ -8,7 +8,8 @@
   by the user. This supersedes section 9's approval gate and its acceptance tests.
 - Implementation is client-independent. Paseo 0.13.2 was used only for an external
   interoperability smoke test; no client-specific code or fixtures are included.
-- The first preview implements ACP v1 text/tools, cancellation and isolated sessions.
+- The first preview implements ACP v1 text/tools, cancellation, isolated sessions,
+  and standard session-scoped model/reasoning configuration selectors.
   Exact schema and SDK test-peer revisions and limitations are in `docs/ACP.md`.
 - Core runner is reused directly; TUI controller auto-delivery does not match ACP
   prompt ownership. TUI, task helpers, saved history and instruction snapshots remain.

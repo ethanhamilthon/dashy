@@ -11,13 +11,14 @@ contain an editor integration or depend on a particular editor. The old one-shot
 | Protocol | ACP **v1**, newline-delimited JSON-RPC 2.0 |
 | Schema | `agentclientprotocol/agent-client-protocol` revision `734309dc6ff8f5a3b93adca62826dd63cff85a26`, `schema/v1/schema.json` |
 | Independent test peer | `github.com/coder/acp-go-sdk` **v0.13.5**, revision `0845a3bb9eddda5bfc22a94dd3598c90cb842451` (tests only) |
-| Request flow | `initialize`, `session/new`, `session/prompt` |
+| Request flow | `initialize`, `session/new`, `session/prompt`, `session/set_config_option` |
 | Cancellation | `session/cancel` notification; `$/cancel_request` for individual requests |
 | Authentication | Existing Dashy provider settings / environment; no interactive ACP auth methods |
 | Execution policy | No approvals, matching the trusted local TUI policy |
 | Input | Text only; all blocks validated before mutating history |
-| Updates | Committed agent text, structured tools, terminal tool results |
-| Unsupported | ACP v2, MCP, additional roots, load/resume/replay/list/close, images/audio/resources, model/mode configuration, client filesystem/terminals |
+| Updates | Committed agent text, structured tools, terminal tool results, configuration changes |
+| Configuration | Session-local model/provider and reasoning effort selectors |
+| Unsupported | ACP v2, MCP, additional roots, load/resume/replay/list/close, images/audio/resources, mode configuration, client filesystem/terminals |
 
 An external interoperability smoke test with Paseo 0.13.2 completed a real tool turn
 and displayed its final answer. This was an external test using temporary state and
@@ -52,6 +53,21 @@ Other provider failures return errors with safe, nonempty diagnostics.
 
 Provider refusal text remains in history and is delivered as committed text with
 `end_turn`, rather than claiming ACP's context-discarding refusal semantics.
+
+## Model and reasoning selectors
+
+`session/new` returns standard select `configOptions`: `model` with category
+`model`, and `effort` with category `thought_level`. Model choices come from all
+configured providers, with a five-second discovery deadline and a 2,000-choice
+bound. The selected model remains available even when discovery fails. IDs encode
+the provider as well as the model to avoid ambiguity across providers.
+
+Use `session/set_config_option` to choose an offered model ID or effort value.
+The response and `config_option_update` notification include the complete current
+configuration. Changes are allowed between turns, are saved with session history,
+and never change another session or shared TUI defaults. The effort choices match
+the TUI; providers may reject levels unsupported by a particular model. `default`
+means omit the reasoning effort and use the provider's default.
 
 ## Trust and lifecycle
 
@@ -97,4 +113,4 @@ all owned tasks, saves recoverable history, and releases sessions and sockets.
 `make test` covers fake-provider behavior under `-race`, an independent SDK client,
 isolation, tools, cancellation, redaction, protocol errors, backpressure, fragmented/
 oversized frames, EOF, and actual binary signal handling. Persistence/replay, richer
-input and session configuration remain follow-up milestones, not advertised features.
+input and additional configuration remain follow-up milestones, not advertised features.
