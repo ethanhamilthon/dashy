@@ -422,7 +422,7 @@ func (a *Agent) request(ctx context.Context, emit func(Event)) (items []json.Raw
 		return nil, err
 	}
 	if completed == nil {
-		return nil, fmt.Errorf("provider stream ended without a completed response")
+		return nil, errIncompleteStream
 	}
 	return completed, nil
 }

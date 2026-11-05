@@ -9,7 +9,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
-	"strings"
+	"syscall"
 	"time"
 )
 
@@ -35,13 +35,15 @@ func retryable(err error) bool {
 	if errors.As(err, &network) {
 		return true
 	}
-	for _, text := range []string{"connection reset", "connection refused", "unexpected EOF", "provider stream ended"} {
-		if strings.Contains(err.Error(), text) {
+	for _, target := range []error{syscall.ECONNRESET, syscall.ECONNREFUSED, io.ErrUnexpectedEOF, io.EOF, errIncompleteStream} {
+		if errors.Is(err, target) {
 			return true
 		}
 	}
-	return errors.Is(err, io.EOF)
+	return false
 }
+
+var errIncompleteStream = errors.New("provider stream ended without a completed response")
 
 func delay(attempt int, err error) time.Duration {
 	wait := min(retryMax, retryBase<<attempt)
