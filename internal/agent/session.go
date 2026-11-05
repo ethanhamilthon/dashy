@@ -13,7 +13,7 @@ import (
 func (a *Agent) lockPath() string { return filepath.Join(a.home, "locks", a.id+".lock") }
 
 // acquire takes the exclusive per-session lock and opens the session socket. Every session has
-// its own socket, a dashy -p sub-agent too, so tasks and view from its shell reach it.
+// its own socket, so tasks and view from its shell reach the correct session.
 func (a *Agent) acquire() error {
 	if err := os.MkdirAll(filepath.Dir(a.lockPath()), 0700); err != nil {
 		return err
@@ -146,8 +146,8 @@ func (a *Agent) changeSession(id string) error {
 }
 
 func (a *Agent) mode() string {
-	if a.opts.Print {
-		return "print"
+	if a.opts.Mode == "acp" {
+		return "acp"
 	}
 	return "tui"
 }

@@ -134,6 +134,9 @@ func blockFailure(reason string, out *blockOutputs) string {
 // runBlock executes one dashy block. A block failure is returned as prompt text;
 // only cancellation of the turn is an error, because the turn itself must stop.
 func (a *Agent) runBlock(turn context.Context, script, mode, source string) (string, error) {
+	execution := Execution{ID: fmt.Sprintf("instructions-%d", time.Now().UnixNano()), Kind: "instructions", Command: script, Started: time.Now()}
+	a.observe(execution, "pending", shell.Result{})
+	a.observe(execution, "in_progress", shell.Result{})
 	ctx, cancel := context.WithTimeout(turn, blockTimeout)
 	defer cancel()
 	env := a.shellEnv()
@@ -145,6 +148,17 @@ func (a *Agent) runBlock(turn context.Context, script, mode, source string) (str
 	if err = cmd.Start(); err == nil {
 		err = shell.Reap(cmd)
 	}
+	code := 0
+	if err != nil {
+		code = 1
+	}
+	if ctx.Err() != nil {
+		code = 124
+	}
+	if turn.Err() != nil {
+		code = 130
+	}
+	a.completed(execution, shell.Result{Output: string(out.stdout), ExitCode: code, Error: code != 0})
 	if turn.Err() != nil {
 		return "", turn.Err()
 	}

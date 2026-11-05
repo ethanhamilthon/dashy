@@ -130,7 +130,7 @@ func (t *tasks) start(command string, launch func(*os.File) (*exec.Cmd, func() e
 		t.finish(id, status, exit)
 		result := Input{Text: taskResult(id, command, status, exit, time.Since(started), logPath), Notice: true}
 		// The result is queued before the task stops counting as running, so a waiting
-		// dashy -p never sees neither.
+		// consumer cannot observe neither a task nor its result.
 		t.mu.Lock()
 		if !t.closed {
 			t.queue.PushNotice(result)

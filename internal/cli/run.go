@@ -12,10 +12,10 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/mattn/go-isatty"
 
+	"dashy/internal/acp"
 	"dashy/internal/agent"
 	"dashy/internal/shell"
 	"dashy/internal/tui"
@@ -100,6 +100,21 @@ func (f *failedWriter) Write(p []byte) (int, error) {
 // progress and errors. ctx ends everything: a cancelled run exits 130. A failed
 // write of the results fails the run.
 func Run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.Writer) error {
+	if len(args) > 0 && args[0] == "acp" {
+		var opts acp.Options
+		fs := flagSet("acp", func(fs *flag.FlagSet) {
+			fs.StringVar(&opts.Config, "config", "", "project instructions")
+			fs.BoolVar(&opts.NoGlobal, "no-global", false, "skip global instructions")
+		})
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if fs.NArg() > 0 {
+			return errors.New("usage: dashy acp [--config FILE] [--no-global]")
+		}
+		opts.Version = tui.Version
+		return cancelledOr(ctx, acp.Run(ctx, in, out, opts))
+	}
 	w := &failedWriter{w: out}
 	err := run(ctx, args, in, w, diagnostics)
 	if err == nil && w.err != nil {
@@ -225,118 +240,35 @@ func modelsCommand(ctx context.Context, args []string, out, diagnostics io.Write
 	return nil
 }
 
-// sessionCommand is the TUI (no -p) or one-shot print mode (-p).
+// sessionCommand starts the interactive TUI. ACP has its own stdio entry point.
 func sessionCommand(ctx context.Context, args []string, in io.Reader, out, diagnostics io.Writer) error {
-	var prompt, config, resume, provider, model, effort string
-	var noGlobal, global bool
-	printMode := false
+	var config, resume string
+	var noGlobal bool
 	fs := flagSet("dashy", func(fs *flag.FlagSet) {
-		fs.StringVar(&config, "config", "", "DASHY.md file to use instead of ./DASHY.md")
+		fs.StringVar(&config, "config", "", "project instructions")
 		fs.StringVar(&config, "c", "", "alias for --config")
-		fs.BoolVar(&noGlobal, "no-global", false, "do not read ~/.dashy/DASHY.md")
-		fs.BoolVar(&global, "global", false, "read ~/.dashy/DASHY.md in -p mode (the TUI always does unless --no-global)")
-		fs.StringVar(&resume, "resume", "", "resume a session ID of this project")
-		fs.StringVar(&provider, "provider", "", "provider for this -p run")
-		fs.StringVar(&model, "model", "", "model for this -p run")
-		fs.StringVar(&effort, "effort", "", "reasoning effort for this -p run")
-		fs.Func("p", "run one task and print the final answer", func(v string) error {
-			printMode, prompt = true, v
-			return nil
-		})
+		fs.BoolVar(&noGlobal, "no-global", false, "skip global instructions")
+		fs.StringVar(&resume, "resume", "", "resume a project session")
 	})
-	err := fs.Parse(args)
-	if err != nil && len(args) > 0 && args[len(args)-1] == "-p" {
-		// A bare -p has no value: the prompt is empty, which is valid when stdin has text.
-		err = fs.Parse(append(args, ""))
-	}
-	if err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			fmt.Fprint(out, helpText)
-			return nil
-		}
+	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("%w (see dashy --help)", err)
 	}
 	if fs.NArg() > 0 {
-		return fmt.Errorf("unexpected arguments: %s (see dashy --help)", strings.Join(fs.Args(), " "))
+		return fmt.Errorf("unexpected arguments: %s", strings.Join(fs.Args(), " "))
+	}
+	if !isTerminal(in) || !isTerminal(out) {
+		return errors.New("the interactive TUI needs a terminal; editors should use dashy acp")
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
 	}
-	if !printMode && provider+model+effort != "" {
-		return errors.New("--provider, --model and --effort need -p; use /models in the TUI")
-	}
-	if provider != "" && model == "" {
-		return errors.New("--provider needs --model (see dashy models)")
-	}
-	if global && noGlobal {
-		return errors.New("--global and --no-global contradict each other")
-	}
-	// A one-shot run skips the global DASHY.md unless --global asks for it.
-	opts := agent.Options{Config: config, NoGlobal: noGlobal || (printMode && !global), Resume: resume, Print: printMode, Provider: provider, Model: model, Effort: effort}
-	if !printMode {
-		if !isTerminal(in) || !isTerminal(out) {
-			return errors.New("the interactive TUI needs a terminal; use dashy -p \"TASK\" for scripts")
-		}
-		a, err := agent.New(cwd, opts)
-		if err != nil {
-			return err
-		}
-		defer a.Close()
-		if err := tui.Run(ctx, a, cwd); err != nil {
-			return err
-		}
-		if ctx.Err() != nil {
-			return cancelled
-		}
-		return nil
-	}
-	if in != nil && !isTerminal(in) {
-		data, err := readStdin(ctx, in)
-		if err != nil {
-			return cancelledOr(ctx, err)
-		}
-		if text := strings.TrimRight(data, "\r\n"); text != "" {
-			if prompt != "" {
-				prompt += "\n\n"
-			}
-			prompt += text
-		}
-	}
-	if prompt == "" {
-		return errors.New("prompt is required")
-	}
-	if ctx.Err() != nil {
-		return cancelled
-	}
-	a, err := agent.New(cwd, opts)
+	a, err := agent.New(cwd, agent.Options{Config: config, NoGlobal: noGlobal, Resume: resume})
 	if err != nil {
 		return err
 	}
 	defer a.Close()
-	if a.Settings().SetupHint() != "" {
-		return errors.New("no provider or model configured: run dashy and choose one in /models")
-	}
-	return runPrint(ctx, a, prompt, out, diagnostics)
-}
-
-// readStdin reads all of in, giving up when ctx ends.
-func readStdin(ctx context.Context, in io.Reader) (string, error) {
-	type result struct {
-		data []byte
-		err  error
-	}
-	done := make(chan result, 1)
-	go func() {
-		data, err := io.ReadAll(in)
-		done <- result{data, err}
-	}()
-	select {
-	case r := <-done:
-		return string(r.data), r.err
-	case <-ctx.Done():
-		return "", ctx.Err()
-	}
+	return cancelledOr(ctx, tui.Run(ctx, a, cwd))
 }
 
 // cancelledOr maps an interrupted wait to the cancelled exit; other errors pass through.
@@ -345,69 +277,4 @@ func cancelledOr(ctx context.Context, err error) error {
 		return cancelled
 	}
 	return err
-}
-
-// runPrint runs the task without a TUI. Task results and dashy view images that arrive
-// while it works are taken as steering; those still queued when the task ends run as
-// further turns. It waits for running background tasks, then closes the socket so
-// nothing arrives unanswered.
-// Only the final answer goes to out; progress goes to diagnostics.
-func runPrint(ctx context.Context, a *agent.Agent, prompt string, out, diagnostics io.Writer) error {
-	emit := func(e agent.Event) {
-		switch {
-		case e.Kind == "code" && e.Final && !e.Provisional:
-			fmt.Fprintf(diagnostics, "$ %s\n", strings.TrimRight(e.Text, "\r\n"))
-		case (e.Kind == "output" || e.Kind == "error") && e.Final:
-			if s := shortResult(e.Text, 4); s != "" {
-				fmt.Fprintln(diagnostics, s)
-			}
-		case e.Kind == "notice" && strings.TrimSpace(e.Text) != "":
-			fmt.Fprintln(diagnostics, agent.NoticeSummary(strings.TrimSpace(e.Text)))
-		}
-	}
-	err := a.Run(ctx, prompt, emit)
-	for err == nil && ctx.Err() == nil {
-		next, ok := a.Queue().Pop()
-		if !ok {
-			if a.RunningTasks() > 0 { // a task result is still to come
-				select {
-				case <-ctx.Done():
-				case <-time.After(100 * time.Millisecond):
-				}
-				continue
-			}
-			if a.StopNotifications() {
-				continue // the socket is closed now: look once more for input that just arrived
-			}
-			break
-		}
-		err = a.RunInput(ctx, next, emit)
-	}
-	if ctx.Err() != nil {
-		fmt.Fprintf(diagnostics, "session: %s\n", a.SessionID())
-		return cancelled
-	}
-	if err != nil {
-		fmt.Fprintln(diagnostics, err)
-		fmt.Fprintf(diagnostics, "session: %s\n", a.SessionID())
-		return &ExitError{Code: 1, Err: err, Reported: true}
-	}
-	if final := a.FinalText(); final != "" {
-		if !strings.HasSuffix(final, "\n") {
-			final += "\n"
-		}
-		fmt.Fprint(out, final)
-	}
-	fmt.Fprintf(diagnostics, "session: %s\n", a.SessionID())
-	return nil
-}
-
-// shortResult keeps the first lines of a tool result for progress output.
-func shortResult(s string, maxLines int) string {
-	s = strings.TrimRight(s, "\r\n")
-	lines := strings.Split(s, "\n")
-	if len(lines) > maxLines {
-		return strings.Join(lines[:maxLines], "\n") + "\n..."
-	}
-	return s
 }

@@ -127,7 +127,7 @@ func TestInvalidSettingsKeepOld(t *testing.T) {
 	}
 }
 
-// -p overrides win over the stored settings before and after a reload.
+// launch overrides win over the stored settings before and after a reload.
 func TestOverridesSurviveReload(t *testing.T) {
 	a, fp := reloadAgent(t, Options{Model: "cli-model", Effort: "low"}, func(a *Agent) {
 		editFile(t, a, func(s *Settings) { s.Model, s.Effort, s.ReasoningSummary = "file-model", "high", false })

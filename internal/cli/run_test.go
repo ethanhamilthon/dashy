@@ -14,7 +14,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -77,84 +76,6 @@ func runCLI(t *testing.T, stdin string, args ...string) (stdout, stderr string, 
 	var out, diag bytes.Buffer
 	err = Run(context.Background(), args, strings.NewReader(stdin), &out, &diag)
 	return out.String(), diag.String(), err
-}
-
-// The one-shot answer is the committed final text, exactly once: never the streamed deltas or the item-done event as well.
-func TestPrintStdoutIsTheCommittedAnswerOnce(t *testing.T) {
-	s := &stub{reply: func(int) string { return streamOf("UNIQUE FINAL") }}
-	srv := httptest.NewServer(s)
-	defer srv.Close()
-	setup(t, srv.URL)
-	stdout, stderr, err := runCLI(t, "", "-p", "say it")
-	if err != nil || stdout != "UNIQUE FINAL\n" {
-		t.Fatalf("stdout %q, err %v", stdout, err)
-	}
-	if !strings.Contains(stderr, "session: ") {
-		t.Fatalf("stderr lacks the session line: %q", stderr)
-	}
-}
-
-func TestPrintKeepsEveryFinalMessageItem(t *testing.T) {
-	srv := httptest.NewServer(&stub{reply: func(int) string { return streamOf("first part", "second part") }})
-	defer srv.Close()
-	setup(t, srv.URL)
-	stdout, _, err := runCLI(t, "", "-p", "two items")
-	if err != nil || stdout != "first part\nsecond part\n" {
-		t.Fatalf("stdout %q, err %v", stdout, err)
-	}
-}
-
-// Stdin is appended after a blank line; a prompt may be empty only when stdin has text.
-func TestPrintAppendsStdin(t *testing.T) {
-	s := &stub{reply: func(int) string { return streamOf("ok") }}
-	srv := httptest.NewServer(s)
-	defer srv.Close()
-	setup(t, srv.URL)
-	if _, _, err := runCLI(t, "from stdin\n", "-p", "task"); err != nil {
-		t.Fatal(err)
-	}
-	if body := s.bodies[0]; !strings.Contains(body, `task\n\nfrom stdin`) {
-		t.Fatalf("stdin not appended: %s", body)
-	}
-	if _, _, err := runCLI(t, "", "-p="); err == nil || !strings.Contains(err.Error(), "prompt is required") {
-		t.Fatalf("empty prompt: %v", err)
-	}
-}
-
-// The value of -p is the prompt literally, even when it starts with a hyphen or is itself "-p".
-func TestPrintTakesHyphenPromptLiterally(t *testing.T) {
-	s := &stub{reply: func(int) string { return streamOf("ok") }}
-	srv := httptest.NewServer(s)
-	defer srv.Close()
-	setup(t, srv.URL)
-	for i, prompt := range []string{"-explain this", "--help", "-p"} {
-		if _, _, err := runCLI(t, "", "-p", prompt); err != nil {
-			t.Fatalf("%q: %v", prompt, err)
-		}
-		if !strings.Contains(s.bodies[i], prompt) {
-			t.Fatalf("prompt %q not sent: %s", prompt, s.bodies[i])
-		}
-	}
-}
-
-func TestPrintFailureExitsWithErrorAndNoStdout(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, `{"error":{"message":"nope"}}`, http.StatusBadRequest)
-	}))
-	defer srv.Close()
-	setup(t, srv.URL)
-	stdout, _, err := runCLI(t, "", "-p", "fail")
-	if err == nil || ExitCode(err) != 1 || stdout != "" {
-		t.Fatalf("failure: stdout %q, code %d, err %v", stdout, ExitCode(err), err)
-	}
-}
-
-func TestPrintWithoutModelIsASetupError(t *testing.T) {
-	setup(t, "http://127.0.0.1:1")
-	t.Setenv("DASHY_HOME", t.TempDir())
-	if _, _, err := runCLI(t, "", "-p", "x"); err == nil || !strings.Contains(err.Error(), "no provider or model") {
-		t.Fatalf("err = %v", err)
-	}
 }
 
 // The command grammar: each subcommand accepts only its own flags and positionals.
@@ -331,76 +252,6 @@ func waitExit(t *testing.T, cmd *exec.Cmd, sig syscall.Signal, wait func()) (int
 	return -1, 0
 }
 
-// A signal while the one-shot run waits for stdin (an open pipe) exits 130 at once.
-func TestSignalWhileReadingStdinExits130(t *testing.T) {
-	bin := build(t)
-	home := setup(t, "http://127.0.0.1:1")
-	for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM} {
-		reader, writer, err := os.Pipe()
-		if err != nil {
-			t.Fatal(err)
-		}
-		cmd := start(t, bin, t.TempDir(), home, reader, "-p", "x")
-		// Give the child time to reach main and install its signal handling before signalling.
-		code, took := waitExit(t, cmd, sig, func() { time.Sleep(time.Second) })
-		writer.Close()
-		reader.Close()
-		if code != 130 || took > 5*time.Second {
-			t.Fatalf("%v: exit %d after %s", sig, code, took)
-		}
-	}
-}
-
-// A signal while a dashy block runs cancels the block (its process group) and exits 130.
-func TestSignalDuringDashyBlockExits130(t *testing.T) {
-	bin := build(t)
-	for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM} {
-		project := t.TempDir()
-		marker := filepath.Join(project, "started")
-		if err := os.WriteFile(filepath.Join(project, "DASHY.md"), []byte("```dashy\ntouch started; sleep 60\n```\n"), 0600); err != nil {
-			t.Fatal(err)
-		}
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			<-r.Context().Done()
-		}))
-		home := setup(t, srv.URL)
-		cmd := start(t, bin, project, home, strings.NewReader(""), "-p", "x")
-		code, took := waitExit(t, cmd, sig, func() {
-			deadline := time.Now().Add(10 * time.Second)
-			for {
-				if _, err := os.Stat(marker); err == nil {
-					return
-				}
-				if time.Now().After(deadline) {
-					t.Fatal("the dashy block never started")
-				}
-				time.Sleep(20 * time.Millisecond)
-			}
-		})
-		srv.Close()
-		if code != 130 || took > 10*time.Second {
-			t.Fatalf("%v during a dashy block: exit %d after %s", sig, code, took)
-		}
-	}
-}
-
-// A bare -p (no value) takes its prompt from stdin; with empty stdin there is no prompt at all.
-func TestPrintBareFlagTakesPromptFromStdin(t *testing.T) {
-	s := &stub{reply: func(int) string { return streamOf("ok") }}
-	srv := httptest.NewServer(s)
-	defer srv.Close()
-	setup(t, srv.URL)
-	if _, _, err := runCLI(t, "from stdin\n", "-p"); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(s.bodies[0], "from stdin") {
-		t.Fatalf("stdin not sent as the prompt: %s", s.bodies[0])
-	}
-	if _, _, err := runCLI(t, "", "-p"); err == nil || !strings.Contains(err.Error(), "prompt is required") {
-		t.Fatalf("bare -p with empty stdin: %v", err)
-	}
-}
-
 // The interactive TUI needs a terminal; piped input is refused before any session is created.
 func TestTUIRefusesNonTerminalStdin(t *testing.T) {
 	home := setup(t, "http://127.0.0.1:1")
@@ -409,34 +260,6 @@ func TestTUIRefusesNonTerminalStdin(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(filepath.Join(home, "projects")); len(entries) != 0 {
 		t.Fatalf("a session was created: %v", entries)
-	}
-}
-
-// --provider, --model and --effort apply to one -p run and are not saved.
-func TestPrintSelectionFlagsOverrideSettingsForOneRun(t *testing.T) {
-	s := &stub{reply: func(int) string { return streamOf("ok") }}
-	srv := httptest.NewServer(s)
-	defer srv.Close()
-	home := setup(t, srv.URL)
-	before, _ := agent.LoadSettings(home)
-	if _, _, err := runCLI(t, "", "-p", "x", "--provider", "p", "--model", "other-model", "--effort", "low"); err != nil {
-		t.Fatal(err)
-	}
-	if body := s.bodies[0]; !strings.Contains(body, `"model":"other-model"`) || !strings.Contains(body, `"effort":"low"`) {
-		t.Fatalf("request body: %s", body)
-	}
-	if after, _ := agent.LoadSettings(home); !reflect.DeepEqual(before, after) {
-		t.Fatalf("settings changed: %+v", after)
-	}
-	for _, args := range [][]string{
-		{"-p", "x", "--effort", "huge"},
-		{"-p", "x", "--provider", "missing", "--model", "m"},
-		{"-p", "x", "--provider", "p"},
-		{"--model", "m"},
-	} {
-		if _, _, err := runCLI(t, "", args...); err == nil {
-			t.Errorf("accepted %v", args)
-		}
 	}
 }
 
@@ -462,55 +285,5 @@ func TestModelsListsExactIDs(t *testing.T) {
 	setup(t, "http://127.0.0.1:1")
 	if _, stderr, err := runCLI(t, "", "models"); ExitCode(err) != 1 || !strings.HasPrefix(stderr, "p: ") {
 		t.Fatalf("stderr %q, err %v", stderr, err)
-	}
-}
-
-// -p skips the global DASHY.md unless --global is given; --no-global stays valid and is
-// refused together with --global.
-func TestPrintGlobalInstructionsNeedGlobalFlag(t *testing.T) {
-	for _, tc := range []struct {
-		args []string
-		want bool
-	}{
-		{[]string{"-p", "x"}, false},
-		{[]string{"-p", "x", "--no-global"}, false},
-		{[]string{"-p", "x", "--global"}, true},
-	} {
-		s := &stub{reply: func(int) string { return streamOf("ok") }}
-		srv := httptest.NewServer(s)
-		home := setup(t, srv.URL)
-		if err := os.WriteFile(filepath.Join(home, "DASHY.md"), []byte("GLOBAL-MARKER"), 0600); err != nil {
-			t.Fatal(err)
-		}
-		t.Chdir(t.TempDir())
-		if _, _, err := runCLI(t, "", tc.args...); err != nil {
-			t.Fatalf("%v: %v", tc.args, err)
-		}
-		srv.Close()
-		if got := strings.Contains(s.bodies[0], "GLOBAL-MARKER"); got != tc.want {
-			t.Errorf("%v: global instructions sent = %v, want %v", tc.args, got, tc.want)
-		}
-	}
-	if _, _, err := runCLI(t, "", "-p", "x", "--global", "--no-global"); err == nil {
-		t.Error("--global with --no-global was accepted")
-	}
-}
-
-// A helper blocked on stdin (an open pipe) ends at once on SIGTERM.
-func TestSignalEndsBlockedHelper(t *testing.T) {
-	bin := build(t)
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer writer.Close()
-	defer reader.Close()
-	dir := t.TempDir()
-	cmd := start(t, bin, dir, t.TempDir(), reader, "write", filepath.Join(dir, "out.txt"))
-	if _, took := waitExit(t, cmd, syscall.SIGTERM, func() { time.Sleep(time.Second) }); took > 5*time.Second {
-		t.Fatalf("exit after %s", took)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "out.txt")); err == nil {
-		t.Fatal("an interrupted write created the file")
 	}
 }

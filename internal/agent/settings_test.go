@@ -107,7 +107,7 @@ func TestShellOutputSetting(t *testing.T) {
 	if err := a.ChangeSettings(func(s *Settings) { s.ShellOutput = 100 }); err != nil {
 		t.Fatal(err)
 	}
-	res := a.runTool(context.Background(), "bash", `{"command":"head -c 1000 /dev/zero | tr '\\0' x","timeout":null,"max_output":null}`, func(Event) {})
+	res := a.runTool(context.Background(), "test", "bash", `{"command":"head -c 1000 /dev/zero | tr '\\0' x","timeout":null,"max_output":null}`, func(Event) {})
 	if !strings.Contains(res.Output, "output truncated") || len(res.Output) > 400 {
 		t.Fatalf("limit not applied: %q", res.Output)
 	}

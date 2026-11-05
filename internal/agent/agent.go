@@ -54,9 +54,10 @@ type Options struct {
 	Config   string // --config FILE, relative to the project directory
 	NoGlobal bool   // --no-global
 	Resume   string // --resume ID; "" starts a new session
-	Print    bool   // -p: one task without a TUI, DASHY_MODE=print
+	Mode     string // "acp" for editor sessions; empty means TUI
 	// Provider, Model and Effort override the saved selection for this run only; "" keeps it.
 	Provider, Model, Effort string
+	Observe                 func(ExecutionEvent)
 }
 
 // Agent holds one session: its history, settings, prompt and ownership lock.
@@ -79,7 +80,7 @@ type Agent struct {
 	promptSource string // startup, new or resume (DASHY_SOURCE)
 	title        string // custom title set by /rename; "" means the default title
 	lastRequest  Metadata
-	sock         *sessionSocket // nil in print mode
+	sock         *sessionSocket // the active session notification endpoint
 	queue        *Steering      // one ordered queue of input for the running turn, shared with the socket
 	slots        *imageSlots    // shared allowance of new images per model request
 	tasks        *tasks         // background tasks of the session; nil until it is acquired
@@ -242,7 +243,7 @@ func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event)) (er
 			}
 			calls++
 			started := time.Now()
-			result := a.runTool(ctx, call.Name, call.Arguments, emit)
+			result := a.runTool(ctx, call.CallID, call.Name, call.Arguments, emit)
 			output := callOutput(call.CallID, result)
 			a.History = append(a.History, output)
 			m := Metadata{Duration: time.Since(started), At: time.Now()}
@@ -282,9 +283,17 @@ func callOutput(callID string, result shell.Result) json.RawMessage {
 // runTool executes one function call; failures become an error result for the model.
 // Input typed by the user meanwhile does not wait for the command: it moves to the
 // background as a task, and calls that have not started yet are skipped.
-func (a *Agent) runTool(ctx context.Context, name, arguments string, emit func(Event)) shell.Result {
+func (a *Agent) runTool(ctx context.Context, callID, name, arguments string, emit func(Event)) (result shell.Result) {
+	var args struct {
+		Command string `json:"command"`
+		Timeout *int64 `json:"timeout"`
+	}
+	err := json.Unmarshal([]byte(arguments), &args)
+	execution := Execution{ID: fmt.Sprintf("%d:%s", len(a.History), callID), Kind: "bash", Command: args.Command, Started: time.Now()}
+	a.observe(execution, "pending", shell.Result{})
+	defer func() { a.completed(execution, result) }()
 	if ctx.Err() != nil {
-		return shell.Result{Output: ctx.Err().Error(), Error: true}
+		return shell.Result{Output: ctx.Err().Error(), ExitCode: 130, Error: true}
 	}
 	if a.queue.hasTyped() {
 		return shell.Result{Output: "Skipped: the user sent a new message before this call started. Read it first; run the command again if it is still needed."}
@@ -292,13 +301,8 @@ func (a *Agent) runTool(ctx context.Context, name, arguments string, emit func(E
 	if name != "bash" {
 		return shell.Result{Output: "Unknown tool: " + name, Error: true}
 	}
-	var args struct {
-		Command string `json:"command"`
-		Timeout *int64 `json:"timeout"`
-	}
 	timeout := time.Duration(ShellTimeout) * time.Second
 	limit := a.Settings().ShellOutput
-	err := json.Unmarshal([]byte(arguments), &args)
 	if err == nil && args.Timeout != nil {
 		if *args.Timeout <= 0 || *args.Timeout > ShellMaxTimeout {
 			err = fmt.Errorf("timeout must be 1..%d seconds", ShellMaxTimeout)
@@ -309,8 +313,9 @@ func (a *Agent) runTool(ctx context.Context, name, arguments string, emit func(E
 	if err != nil {
 		return shell.Result{Output: err.Error(), ExitCode: 2, Error: true}
 	}
+	a.observe(execution, "in_progress", shell.Result{})
 	var detach <-chan struct{}
-	if a.tasks != nil {
+	if a.tasks != nil && a.opts.Mode != "acp" {
 		a.queue.drainTyped()
 		detach = a.queue.typedSignal()
 	}

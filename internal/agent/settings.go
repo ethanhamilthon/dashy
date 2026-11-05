@@ -276,7 +276,7 @@ type settingsState struct {
 	mu      sync.Mutex
 	base    Settings  // as stored: shared by all sessions, its selection is the default for new ones
 	sel     selection // of this session; an empty model follows base
-	s       Settings  // effective: base with the session selection and the -p overrides
+	s       Settings  // effective: base with the session selection and launch overrides
 	client  *client
 	version int64 // of the stored settings when s was loaded or saved
 	warned  int64 // last version whose reload failed, reported once
@@ -285,7 +285,7 @@ type settingsState struct {
 // selection is the provider, model and reasoning effort of one session.
 type selection struct{ Provider, Model, Effort string }
 
-// effectiveLocked is base with the session selection and the -p overrides applied, validated.
+// effectiveLocked is base with the session selection and launch overrides applied, validated.
 func (a *Agent) effectiveLocked(base Settings) (Settings, error) {
 	s := base
 	s.Providers = maps.Clone(base.Providers)
@@ -327,7 +327,7 @@ func (a *Agent) fixSelection(sel selection) {
 		c.sel = selection{}
 		_ = a.applyLocked(c.base, c.version)
 	}
-	// The session keeps what it runs with, -p overrides included.
+	// The session keeps what it runs with, launch overrides included.
 	if c.s.Model != "" {
 		c.sel = selection{c.s.Provider, c.s.Model, c.s.Effort}
 	}

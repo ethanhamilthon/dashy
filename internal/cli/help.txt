@@ -1,9 +1,8 @@
-dashy - minimal AI coding agent (TUI and one-shot mode)
+dashy - minimal AI coding agent (TUI and ACP editor integration)
 
 USAGE
   dashy [--config FILE|-c FILE] [--no-global] [--resume ID]
-  dashy -p "TASK" [--config FILE] [--global] [--resume ID]
-                  [--provider NAME] [--model ID] [--effort LEVEL]
+  dashy acp [--config FILE] [--no-global]
   dashy models [--provider NAME]
   dashy tasks run [-s ID] COMMAND...
   dashy tasks list|status|stop [-s ID] [TASK]
@@ -17,129 +16,62 @@ USAGE
   dashy --help | -h | help
 
 FLAGS & COMMANDS
-  -p "TASK"       Run a single task in one-shot mode and exit. Final assistant text
-                  goes to stdout, progress to stderr. Piped stdin appends to TASK.
-  --config, -c    Path to local DASHY.md instructions (replaces ./DASHY.md).
-  --no-global     Skip loading global instructions from $DASHY_HOME/DASHY.md. The TUI
-                  loads them by default; -p already skips them, so this changes nothing there.
-  --global        Load $DASHY_HOME/DASHY.md in -p mode, which skips it by default. The TUI
-                  always loads it unless --no-global. Cannot be combined with --no-global.
-  --resume ID     Resume an existing session by ID from the project session store.
-  --provider NAME Provider for this -p run (needs --model). Not saved to settings.
-  --model ID      Model for this -p run, an exact ID from 'dashy models'. Not saved.
-  --effort LEVEL  Reasoning effort for this -p run: none, minimal, low, medium, high,
-                  xhigh or max. Not saved.
-  -s ID           Target session ID for tasks/view (defaults to the session of this shell).
+  --config, -c    Project instructions instead of ./DASHY.md (-c is TUI only).
+  --no-global     Skip $DASHY_HOME/DASHY.md. Both TUI and ACP load it by default.
+  --resume ID     Resume a saved project session in the TUI.
+  --provider NAME Restrict the models listing to one provider.
+  -s ID           Target a running session for tasks/view; defaults to DASHY_ENDPOINT.
   --help, -h      Show this help reference.
-  tasks run       Start COMMAND (bash -c, project directory) as a background task of a
-                  running session and print its ID (t1, t2, ...). Output goes to a log file.
-                  When it ends, the session receives <task-result id status exit_code
-                  duration> with the command and the last 40 lines: an idle session starts a
-                  turn at once, a busy one takes it after the running response. A message
-                  typed in the TUI while a bash call runs makes that call a task too.
-                  Closing the session stops its running tasks, and they die with dashy even
-                  if it crashes; dashy -p waits for them before it exits.
-  tasks list      List the session's tasks: ID, status (running, done, failed: nonzero
-                  exit or no start, stopped, lost), duration, command.
-  tasks status    Show one task with the end of its output and the log path.
-  tasks stop      Kill a running task (its whole process group); its result reports stopped.
-  view            Send PNG/JPEG images to a running session: they go with its next
-                  model request (at most 4 new images per request).
-  models          List exact model IDs as 'PROVIDER<TAB>MODEL' for the configured
-                  providers (or only --provider NAME). Failed providers go to stderr
-                  and make the exit code 1.
-  read            Print numbered lines of a text file: -n COUNT (default 2000) from -o LINE.
-  grep            Search files for a Go regexp (-i ignores case, -l lists files, -g filters
-                  names by glob). In git projects, uses tracked and unignored files (including
-                  hidden files); otherwise skips hidden entries and node_modules recursively.
-                  Prints FILE:LINE:TEXT, at most 200 matches; no match exits 1.
-                  --files lists the files instead (at most 500), like find.
-  write           Replace or create FILE with stdin, keeping its mode; parent dirs are created.
-  patch           Apply SEARCH/REPLACE blocks from stdin to FILE. Each search text must occur
-                  exactly once, else nothing changes. Block format:
-                    <<<<<<< SEARCH
-                    old lines
-                    =======
-                    new lines
-                    >>>>>>> REPLACE
-  version         Print the dashy version.
+  acp             Local ACP v1 preview over newline-delimited JSON-RPC on stdin/stdout.
+                  Configure provider/model in the TUI first. Text prompts only. Commands,
+                  instruction blocks and task helpers run freely, exactly as in the TUI.
+                  No permission prompts or sandbox. Use only trusted projects; see docs/ACP.md.
+                  The former -p / one-shot mode has been removed.
+  models          Print PROVIDER<TAB>MODEL for configured providers. Errors go to stderr.
+  tasks run       Start a background command in a running TUI session. Output goes to a
+                  private log. The session receives a <task-result> when it ends.
+  tasks list      List background tasks of the target session.
+  tasks status    Show one task's state and output log.
+  tasks stop      Stop a running task and its process group.
+  view            Queue PNG/JPEG images in the target session without blocking its turn.
+  read            Numbered text lines, -n COUNT (default 2000), starting at -o LINE.
+  grep            Go regexp search; -i ignores case, -l lists matching file names,
+                  -g filters names by glob. --files lists files (at most 500).
+                  Git projects include tracked and unignored hidden files; the fallback
+                  skips hidden entries and node_modules. At most 200 matches; no match exits 1.
+  write           Atomically replace/create FILE with stdin; preserve existing permissions.
+  patch           Apply blocks from stdin, each search occurring exactly once:
+                  <<<<<<< SEARCH
+                  old text
+                  =======
+                  replacement text
+                  >>>>>>> REPLACE
+                  Invalid/ambiguous blocks leave the file unchanged.
+  version         Print the version.
 
-SYSTEM PROMPT (DASHY.md)
-  The system prompt is assembled from DASHY.md files:
-  1. $DASHY_HOME/DASHY.md (default ~/.dashy/DASHY.md). The TUI loads it unless --no-global;
-     dashy -p skips it unless --global.
-  2. Local file: --config FILE if given, otherwise ./DASHY.md (missing is fine)
-  Each file is added under a '# <absolute path>' header, separated by a blank line.
-  The prompt is assembled lazily before the first model request of a session and
-  then kept. /new, /resume and /reload read settings and DASHY.md again and reassemble it.
-  Settings changed in the TUI apply at once, even while a turn runs: the running turn
-  continues and its next request uses the new values. Changes saved by another dashy
-  process are picked up before the next model request. --provider/--model/--effort keep priority.
-  Provider, model and effort belong to the session: /models changes them for this session and
-  makes them the default for new sessions; other open or saved sessions keep theirs.
-
-BASH TOOL
-  The model's only tool runs /bin/bash --noprofile --norc in the project directory.
-  - Each call is a fresh process: variables, functions, aliases and the working
-    directory do not persist. There is no TTY and stdin is empty.
-  - Result: {output, exit_code}; stdout and stderr are merged.
-  - timeout: seconds, default 120, maximum 600. A timeout (exit 124) or
-    cancellation (exit 130) kills the whole process group.
-  - Output limit: the shell_output setting (/settings), default 8192
-    bytes, 0 = no truncation; the model cannot change it. When output is cut, the middle
-    is removed and the first and last halves are kept.
-  - Background processes do not outlive the call; for long work use 'dashy tasks run'.
-  - It runs with the user's permissions and is not a sandbox.
+INSTRUCTIONS & SETTINGS
+  Instructions load from $DASHY_HOME/DASHY.md and ./DASHY.md (or --config FILE).
+  The assembled prompt is stored in session history. /resume reuses it;
+  /reload assembles and stores a new snapshot. Instructions are never user input.
+  Settings live in $DASHY_HOME/dashy.db. TUI commands /connect, /models and /settings
+  configure providers, model, reasoning, display, and shell_output (default 8192 bytes).
+  Changes apply before the next model request; sessions keep their own model selection.
 
 DASHY BLOCKS
-  Fenced code blocks in DASHY.md with info string 'dashy' (```dashy) execute sequentially
-  using 'bash -c' in the project directory when the prompt is assembled.
-  - Execution limits: 30 s timeout, 64 KiB stdout limit.
-  - On failure, replaced by '[dashy block failed: <reason>]' with a stderr tail.
-  - Output replaces the block verbatim (trailing newline trimmed).
-  - Environment passed to blocks: DASHY_MODE, DASHY_SOURCE, DASHY_SESSION_ID,
-    DASHY_ENDPOINT, DASHY_HOME.
-  - Blocks run each time the prompt is assembled (see above), not on every request.
+  Fenced blocks with info string 'dashy' run with bash -c in the session directory.
+  Timeout: 30 seconds; stdout: 64 KiB. Review blocks in untrusted projects first.
+  Blocks execute automatically in both the TUI and ACP.
+  API keys are not exported as settings, but subprocesses inherit the user's environment.
+  Shell execution has the user's permissions and network access; it is not a sandbox.
 
 ENVIRONMENT VARIABLES
-  DASHY_HOME        Base directory for dashy state and settings (default: ~/.dashy).
-  DASHY_SESSION_ID  ID of active session; exported to bash tool and dashy blocks.
-  DASHY_ENDPOINT    Unix socket path of the session; exported to the bash tool and blocks.
-                    Every session has its own, a dashy -p sub-agent too; it is never
-                    inherited from a parent dashy.
-  DASHY_MODE        Execution mode in dashy blocks: 'tui' or 'print'.
-  DASHY_SOURCE      Assembly source in dashy blocks: 'startup', 'new', 'resume' or 'reload'.
-
-SUB-AGENT RECIPES
-  Sub-agents run via 'dashy -p' from the bash tool or terminal. A sub-agent has its own
-  socket while it works: tasks and view from its shell reach the sub-agent itself, and
-  input still queued when it finishes runs before it exits. To report to another
-  session, pass -s with that session's ID (the parent can put its $DASHY_SESSION_ID
-  into TASK):
-  - A -p sub-agent does not read the global DASHY.md by default, so a role-specific
-    reviewer needs only a custom prompt:
-      dashy -p "Review diff against main" --config .dashy/reviewer.md
-  - Sub-agent that should follow your global instructions too:
-      dashy -p "Refactor the parser" --global
-  - Cheaper or stronger model for one task (IDs from 'dashy models'):
-      dashy -p "Summarize the changes" --model MODEL_ID --effort low
-  - Parallel background tasks with wait:
-      dashy -p "Task A" > a.out 2> a.err &
-      dashy -p "Task B" > b.out 2> b.err &
-      wait
-  - Long background task; the result arrives as <task-result> when it ends:
-      dashy tasks run make test
-
-FILES
-  $DASHY_HOME/dashy.db                   SQLite database: settings (providers, models, reasoning,
-                                         display and shell_output, the bash output bytes kept per
-                                         call, default 8192) and sessions with their history items and tasks.
-  $DASHY_HOME/locks/<id>.lock            flock held while a session is open.
-  $DASHY_HOME/attachments/               Saved images from clipboard paste or dashy view.
-  $DASHY_HOME/tasks/<id>-<task>.log      Output of background tasks.
-  $DASHY_HOME/run/<id>.sock              Unix socket for tasks/view. Paths over the macOS limit (~104 bytes)
-                                         use a 16-hex hash name; if DASHY_HOME is too long for that,
-                                         the socket is /tmp/dashy-<hash>.sock.
+  DASHY_HOME        State directory (default ~/.dashy), including dashy.db, locks/,
+                    run/ sockets, attachments/, and private tasks/ output logs.
+  DASHY_SESSION_ID  Active session ID, exported to the bash tool and instruction blocks.
+  DASHY_ENDPOINT    This session's Unix socket for tasks/view; never inherited from a parent.
+  DASHY_MODE        Instruction block mode: 'tui' or 'acp'.
+  DASHY_SOURCE      Instruction assembly source: 'startup', 'new', 'resume', or 'reload'.
 
 TERMINAL STATUS
-  In TUI mode, dashy emits OSC 7501 program status reports (state, app, title, msg).
+  The TUI emits OSC 7501 reports. ACP emits only protocol frames on stdout;
+  diagnostics and process failures go to stderr.
