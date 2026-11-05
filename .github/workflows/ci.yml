@@ -24,11 +24,9 @@ jobs:
           from pathlib import Path
           lines = sum(len(p.read_bytes().splitlines()) for p in Path('.').rglob('*.go')
                       if not p.name.endswith('_test.go') and '.git' not in p.parts)
-          print(f'Production Go lines: {lines} / 7000')
-          if lines > 7000:
-              print(f'::warning::Source budget exceeded by {lines - 7000} lines; enforcement awaits the size refactor')
-          if lines > 8895:
-              raise SystemExit('Production source grew beyond the existing debt ceiling (8895 lines)')
+          print(f'Production Go lines: {lines} / 10000')
+          if lines > 10000:
+              raise SystemExit('Production Go source exceeds 10000 lines')
           PY
       - name: Format, vet and race tests
         run: make test

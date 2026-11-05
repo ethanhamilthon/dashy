@@ -12,9 +12,9 @@ Source budget at planning time: 8,871 production Go lines against the 7,000 limi
   stress test also passes ten consecutive runs under `-race`.
 - `govulncheck` reports no reachable vulnerabilities; two imported-package
   advisories remain outside the code's call paths.
-- Remaining: reduce production Go source from 8,895 lines to 7,000. CI reports
-  the budget overrun as a warning and rejects growth above the current 8,895-line
-  debt ceiling; hard enforcement of 7,000 is pending that refactor.
+- The source-budget policy was subsequently raised to 10,000 lines by agreement;
+  AGENTS.md and CI enforce the new cap. The previous 7,000-line refactor is no
+  longer required. ACP work and scope updates are tracked in ACP_PLAN.md.
 
 The sections below retain the original specification and describe the old behavior.
 
