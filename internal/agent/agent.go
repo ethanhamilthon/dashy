@@ -414,6 +414,7 @@ func (a *Agent) request(ctx context.Context, emit func(Event)) (items []json.Raw
 				a.lastRequest.Usage = &Usage{Input: n, Output: u.OutputTokens, Cached: cached}
 			}
 			completed = append([]json.RawMessage{}, event.Response.Output...)
+			return errStreamDone
 		case "response.failed", "response.incomplete", "error":
 			return streamFailure(event)
 		}

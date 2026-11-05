@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // fakeProvider answers requests. reply gets the request number (from 1) and the
@@ -19,6 +20,7 @@ type fakeProvider struct {
 	bodies []string
 	reply  func(n int, body string) string
 	status func(n int) int // optional: HTTP status of request n; 0 means 200
+	hold   bool            // keep the connection open after the reply
 }
 
 func (f *fakeProvider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -38,6 +40,10 @@ func (f *fakeProvider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 	}
 	fmt.Fprint(w, out)
+	if f.hold {
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}
 }
 
 func (f *fakeProvider) requests() []string {
@@ -195,5 +201,30 @@ func TestRequestCarriesStaticToolDescription(t *testing.T) {
 	}
 	if len(body.Tools) != 1 || body.Tools[0].Name != "bash" || body.Tools[0].Description != BashToolDescription || !body.Tools[0].Strict {
 		t.Fatalf("tools: %+v", body.Tools)
+	}
+}
+
+// A completed response counts even if the provider keeps the stream open afterwards.
+func TestCompletedResponseWithoutStreamClose(t *testing.T) {
+	a := newTestAgent(t, &fakeProvider{hold: true, reply: func(int, string) string { return textReply("hi") }}, Options{})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := a.Run(ctx, "hello", func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.FinalText(); got != "hi" {
+		t.Fatalf("final %q", got)
+	}
+}
+
+// A provider that returns the same page forever does not hang the model listing.
+func TestModelsStopOnRepeatedPage(t *testing.T) {
+	fp := &fakeProvider{reply: func(int, string) string {
+		return `{"data":[{"id":"a"},{"id":"b"}],"has_more":true}`
+	}}
+	a := newTestAgent(t, fp, Options{})
+	choices, errs := AllModels(context.Background(), a.Settings().Providers)
+	if len(errs) != 0 || len(choices) != 2 || len(fp.requests()) != 2 {
+		t.Fatalf("choices %v errs %v requests %d", choices, errs, len(fp.requests()))
 	}
 }

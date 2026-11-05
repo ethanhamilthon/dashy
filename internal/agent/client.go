@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -77,10 +78,12 @@ func (c *client) send(ctx context.Context, method, path string, body any) (*http
 	return resp, nil
 }
 
-// models lists the model IDs of the provider, following pagination.
+// models lists the model IDs of the provider, following pagination. A page that
+// brings no new model ends the listing, so a looping provider cannot hang it.
 func (c *client) models(ctx context.Context) ([]string, error) {
 	var ids []string
-	for after := ""; ; {
+	seen := map[string]bool{}
+	for after, pages := "", 0; pages < maxModelPages; pages++ {
 		path := "/models"
 		if after != "" {
 			path += "?after=" + url.QueryEscape(after)
@@ -93,20 +96,28 @@ func (c *client) models(ctx context.Context) ([]string, error) {
 			Data    []struct{ ID string }
 			HasMore bool `json:"has_more"`
 		}
-		err = json.NewDecoder(resp.Body).Decode(&page)
+		err = json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(&page)
 		resp.Body.Close()
 		if err != nil {
 			return nil, fmt.Errorf("models: %w", err)
 		}
+		fresh := 0
 		for _, m := range page.Data {
-			ids = append(ids, m.ID)
+			if !seen[m.ID] {
+				seen[m.ID] = true
+				ids = append(ids, m.ID)
+				fresh++
+			}
 		}
-		if !page.HasMore || len(page.Data) == 0 {
+		if !page.HasMore || fresh == 0 {
 			return ids, nil
 		}
 		after = page.Data[len(page.Data)-1].ID
 	}
+	return ids, nil
 }
+
+const maxModelPages = 100
 
 // streamEvent holds the fields of a Responses stream event that dashy reads.
 type streamEvent struct {
@@ -136,8 +147,12 @@ type streamEvent struct {
 	} `json:"response"`
 }
 
+// errStreamDone, returned by a stream callback, ends the stream successfully: a
+// provider may keep the connection open after its terminal event.
+var errStreamDone = errors.New("stream done")
+
 // stream posts a streamed /responses request and calls fn for every event until
-// the stream ends, fn fails or ctx is done.
+// the stream ends, fn fails or returns errStreamDone, or ctx is done.
 func (c *client) stream(ctx context.Context, body map[string]any, fn func(streamEvent) error) error {
 	body["stream"] = true
 	resp, err := c.send(ctx, http.MethodPost, "/responses", body)
@@ -166,7 +181,9 @@ func (c *client) stream(ctx context.Context, body map[string]any, fn func(stream
 			return fmt.Errorf("provider stream: invalid event: %w", err)
 		}
 		data.Reset()
-		if err := fn(event); err != nil {
+		if err := fn(event); errors.Is(err, errStreamDone) {
+			return nil
+		} else if err != nil {
 			return err
 		}
 	}
