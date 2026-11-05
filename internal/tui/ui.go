@@ -95,7 +95,7 @@ func newModel(a *agent.Agent, cwd string) model {
 	input.SetHeight(1)
 	input.Focus()
 	input.KeyMap.InsertNewline.SetKeys("alt+enter", "ctrl+j")
-	base := lipgloss.NewStyle().Foreground(foreground)
+	base := lipgloss.NewStyle().Foreground(foreground).Background(inputBackground)
 	style := textarea.Style{Base: base, CursorLine: base, Text: base, Placeholder: base.Foreground(muted), EndOfBuffer: base}
 	input.FocusedStyle, input.BlurredStyle = style, style
 	events := newEventQueue()

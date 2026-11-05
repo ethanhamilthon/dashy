@@ -13,17 +13,18 @@ import (
 )
 
 var (
-	cyan           = lipgloss.Color("#79d9ff")
-	foreground     = lipgloss.Color("#d5ddeb")
-	muted          = lipgloss.Color("#8794a8")
-	codeGray       = lipgloss.Color("#a0a0a0")
-	darkGray       = lipgloss.Color("#606060")
-	inputBlue      = lipgloss.Color("#8aadff")
-	assistantColor = lipgloss.Color("#9bdef5")
-	errorColor     = lipgloss.Color("#f09eac")
-	warnColor      = lipgloss.Color("#e5c07b")
-	infoColor      = lipgloss.Color("#d7c38b")
-	markdownStyle  = fmt.Sprintf(markdownTemplate, assistantColor, cyan, warnColor, muted,
+	cyan            = lipgloss.Color("#79d9ff")
+	foreground      = lipgloss.Color("#d5ddeb")
+	muted           = lipgloss.Color("#8794a8")
+	codeGray        = lipgloss.Color("#a0a0a0")
+	darkGray        = lipgloss.Color("#606060")
+	inputBlue       = lipgloss.Color("#8aadff")
+	inputBackground = lipgloss.Color("#202020")
+	assistantColor  = lipgloss.Color("#9bdef5")
+	errorColor      = lipgloss.Color("#f09eac")
+	warnColor       = lipgloss.Color("#e5c07b")
+	infoColor       = lipgloss.Color("#d7c38b")
+	markdownStyle   = fmt.Sprintf(markdownTemplate, assistantColor, cyan, warnColor, muted,
 		infoColor, errorColor, inputBlue, inputBlue)
 )
 
@@ -149,9 +150,10 @@ func bodyColor(kind string) lipgloss.TerminalColor {
 
 func renderRail(text string, width int) string {
 	lines := strings.Split(text, "\n")
-	rail := lipgloss.NewStyle().Foreground(inputBlue).Render("▌")
+	rail := lipgloss.NewStyle().Foreground(inputBlue).Background(inputBackground).Render("▌")
 	for i, line := range lines {
-		lines[i] = ansi.Truncate(rail+paint(" "+line, max(1, width-1), lipgloss.NoColor{}, foreground), max(1, width), "")
+		row := ansi.Truncate(rail+" "+line, max(1, width), "")
+		lines[i] = paint(row, max(1, width), inputBackground, foreground)
 	}
 	return strings.Join(lines, "\n")
 }
