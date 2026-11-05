@@ -48,25 +48,26 @@ func awaitInput(t *testing.T, a *Agent) []Input {
 	return nil
 }
 
-// A task runs in the project directory with the session's variables, is listed while it
-// runs, and its result (escaped command and output, exit code) arrives as a notice.
+// A task runs in the project directory with the session's variables (its endpoint too),
+// is listed while it runs, and its result (escaped command and output, exit code) arrives
+// as a notice. A nonzero exit is failed.
 func TestTaskRunsAndReportsItsResult(t *testing.T) {
 	a := newTestAgent(t, &fakeProvider{}, Options{})
-	id, err := Send(a.sock.path, Message{Task: &TaskRequest{Op: "run", Command: `echo "<$DASHY_SESSION_ID>" && pwd && exit 3`}})
+	id, err := Send(a.sock.path, Message{Task: &TaskRequest{Op: "run", Command: `echo "<$DASHY_SESSION_ID>" "[$DASHY_ENDPOINT]" && pwd && exit 3`}})
 	if err != nil || id != "t1" {
 		t.Fatalf("run: %q %v", id, err)
 	}
 	got := awaitInput(t, a)
 	text := got[0].Text
-	if len(got) != 1 || !got[0].Notice || !strings.HasPrefix(text, `<task-result id="t1" status="done" exit_code="3"`) ||
-		!strings.Contains(text, "&lt;"+a.SessionID()+"&gt;") || !strings.Contains(text, a.Shell.Dir) || !strings.Contains(text, `$ echo "&lt;$DASHY_SESSION_ID&gt;"`) {
+	if len(got) != 1 || !got[0].Notice || !strings.HasPrefix(text, `<task-result id="t1" status="failed" exit_code="3"`) ||
+		!strings.Contains(text, "&lt;"+a.SessionID()+"&gt; ["+a.sock.path+"]") || !strings.Contains(text, a.Shell.Dir) || !strings.Contains(text, `$ echo "&lt;$DASHY_SESSION_ID&gt;"`) {
 		t.Fatalf("result %+v", got)
 	}
-	if s := NoticeSummary(text); !strings.HasPrefix(s, "task t1 done · exit 3 · ") || !strings.HasSuffix(s, `$ echo "<$DASHY_SESSION_ID>" && pwd && exit 3`) {
+	if s := NoticeSummary(text); !strings.HasPrefix(s, "task t1 failed · exit 3 · ") || !strings.HasSuffix(s, `$ echo "<$DASHY_SESSION_ID>" "[$DASHY_ENDPOINT]" && pwd && exit 3`) {
 		t.Fatalf("summary %q", s)
 	}
 	list, err := SessionTasks(a.home, a.SessionID())
-	if err != nil || len(list) != 1 || list[0].Status != "done" || *list[0].ExitCode != 3 {
+	if err != nil || len(list) != 1 || list[0].Status != "failed" || *list[0].ExitCode != 3 {
 		t.Fatalf("list %+v %v", list, err)
 	}
 }

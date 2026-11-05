@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -38,7 +39,15 @@ func Command(ctx context.Context, dir string, extra map[string]string, script st
 			bash = p
 		}
 	}
+	var extraFiles []*os.File
+	if r := lifelineReader(); r != nil {
+		// A watcher in the command's group waits on a pipe only this process writes to.
+		// When this process dies, even by SIGKILL, the read ends and the group is killed.
+		script = "{ read -r -u 3 _; kill -KILL 0; } >/dev/null 2>&1 & exec 3<&-; " + script
+		extraFiles = []*os.File{r}
+	}
 	cmd := exec.CommandContext(ctx, bash, "--noprofile", "--norc", "-c", script)
+	cmd.ExtraFiles = extraFiles
 	cmd.Dir = dir
 	path := os.Getenv("PATH")
 	if exe, err := os.Executable(); err == nil {
@@ -126,4 +135,20 @@ func (r *Runner) Execute(ctx context.Context, command string, timeout time.Durat
 	result.Output = out.Text()
 	result.Error = result.ExitCode != 0
 	return result
+}
+
+var lifeline struct {
+	once sync.Once
+	r, w *os.File // w stays open for the life of the process
+}
+
+// lifelineReader is the read end of a pipe whose write end this process holds
+// until it exits; nil if the pipe could not be made.
+func lifelineReader() *os.File {
+	lifeline.once.Do(func() {
+		if r, w, err := os.Pipe(); err == nil {
+			lifeline.r, lifeline.w = r, w
+		}
+	})
+	return lifeline.r
 }

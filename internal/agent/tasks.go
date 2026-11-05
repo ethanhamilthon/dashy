@@ -33,7 +33,7 @@ const (
 type tasks struct {
 	db                *sql.DB
 	session, dir, log string
-	env               map[string]string
+	env               map[string]string // set again once the session socket is open
 	queue             *Steering
 	mu                sync.Mutex
 	running           map[string]*exec.Cmd
@@ -98,7 +98,7 @@ func (t *tasks) run(command string) (string, error) {
 		switch {
 		case stopped:
 			status = "stopped"
-		case err != nil && code <= 0:
+		case err != nil || code != 0:
 			status = "failed"
 		}
 		exit := &code

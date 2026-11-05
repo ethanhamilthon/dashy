@@ -36,6 +36,11 @@ func (a *Agent) acquire() error {
 		a.release()
 		return err
 	}
+	// Tasks see the session endpoint, so dashy commands in them find their session.
+	env := a.shellEnv()
+	a.tasks.mu.Lock()
+	a.tasks.env = env
+	a.tasks.mu.Unlock()
 	return nil
 }
 

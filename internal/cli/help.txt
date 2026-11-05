@@ -36,8 +36,10 @@ FLAGS & COMMANDS
                   When it ends, the session receives <task-result id status exit_code
                   duration> with the command and the last 40 lines: an idle session starts a
                   turn at once, a busy one takes it as steering. Closing the session stops
-                  its running tasks; dashy -p waits for them before it exits.
-  tasks list      List the session's tasks: ID, status, duration, command.
+                  its running tasks, and they die with dashy even if it crashes; dashy -p
+                  waits for them before it exits.
+  tasks list      List the session's tasks: ID, status (running, done, failed: nonzero
+                  exit or no start, stopped, lost), duration, command.
   tasks status    Show one task with the end of its output and the log path.
   tasks stop      Kill a running task (its whole process group); its result reports stopped.
   view            Send PNG/JPEG images to a running session: they go with its next
