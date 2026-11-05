@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -13,6 +14,12 @@ type providerError struct {
 
 func (e *providerError) Error() string { return e.text }
 func (e *providerError) Unwrap() error { return e.cause }
+
+// AuthenticationRequired distinguishes credential failures without parsing display text.
+func AuthenticationRequired(err error) bool {
+	var api *apiError
+	return errors.As(err, &api) && (api.Status == 401 || api.Status == 403)
+}
 
 // safeError is the form of err that events, records, and callers see: configured
 // keys removed, and an HTTP failure reduced to its status and message.
@@ -31,10 +38,16 @@ func (a *Agent) safeError(err error) error {
 func streamFailure(event streamEvent) error {
 	fields := []string{event.Code, event.Message}
 	switch {
+	case event.Error != nil:
+		fields = []string{event.Error.Code, event.Error.Message}
 	case event.Type == "response.failed" && event.Response.Error != nil:
 		fields = []string{event.Response.Error.Code, event.Response.Error.Message}
 	case event.Type == "response.incomplete" && event.Response.IncompleteDetails != nil:
 		fields = []string{event.Response.IncompleteDetails.Reason}
 	}
-	return fmt.Errorf("provider stream %s: %s", event.Type, strings.TrimSpace(strings.Join(fields, " ")))
+	detail := strings.TrimSpace(strings.Join(fields, " "))
+	if detail == "" {
+		detail = "provider reported a failure without details"
+	}
+	return fmt.Errorf("provider stream %s: %s", event.Type, detail)
 }

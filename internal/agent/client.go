@@ -121,13 +121,14 @@ const maxModelPages = 100
 
 // streamEvent holds the fields of a Responses stream event that dashy reads.
 type streamEvent struct {
-	Type        string          `json:"type"`
-	OutputIndex int64           `json:"output_index"`
-	Delta       string          `json:"delta"`
-	Arguments   string          `json:"arguments"`
-	Item        json.RawMessage `json:"item"`
-	Code        string          `json:"code"`
-	Message     string          `json:"message"`
+	Type        string                          `json:"type"`
+	OutputIndex int64                           `json:"output_index"`
+	Delta       string                          `json:"delta"`
+	Arguments   string                          `json:"arguments"`
+	Item        json.RawMessage                 `json:"item"`
+	Code        string                          `json:"code"`
+	Message     string                          `json:"message"`
+	Error       *struct{ Code, Message string } `json:"error"`
 	Response    struct {
 		Output []json.RawMessage `json:"output"`
 		Usage  *struct {
