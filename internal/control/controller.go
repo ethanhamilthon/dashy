@@ -50,11 +50,13 @@ type deferredAction struct {
 // New returns a controller for a. The agent must outlive the controller.
 func New(a *agent.Agent, emit func(Event)) *Controller {
 	c := &Controller{a: a, emit: emit, journal: a.Records(), closed: make(chan struct{})}
-	// Input pushed while idle (a task result, dashy view) starts a turn at once.
-	a.Queue().OnPush(func() { go c.view(func() { c.deliverLocked() }) })
 	c.custom = a.CustomTitle()
 	c.first = a.DefaultTitle()
 	c.ctx = a.ContextTokens()
+	// Input pushed while idle (a task result, dashy view) starts a turn at once;
+	// input queued before the controller existed starts one now.
+	a.Queue().OnPush(func() { go c.view(func() { c.deliverLocked() }) })
+	c.view(c.deliverLocked)
 	return c
 }
 

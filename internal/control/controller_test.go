@@ -71,6 +71,12 @@ type harness struct {
 
 func newHarness(t *testing.T, model *fakeModel) *harness {
 	t.Helper()
+	return newHarnessWith(t, model, nil)
+}
+
+// newHarnessWith is newHarness with pre run on the agent before the controller exists.
+func newHarnessWith(t *testing.T, model *fakeModel, pre func(*agent.Agent)) *harness {
+	t.Helper()
 	home, dir := t.TempDir(), t.TempDir()
 	t.Setenv("DASHY_HOME", home)
 	server := httptest.NewServer(model)
@@ -84,6 +90,9 @@ func newHarness(t *testing.T, model *fakeModel) *harness {
 	a, err := agent.New(dir, agent.Options{})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if pre != nil {
+		pre(a)
 	}
 	h := &harness{t: t, a: a, model: model, dir: dir}
 	h.ctl = New(a, func(e Event) {
@@ -473,5 +482,22 @@ func TestReloadRebuildsPromptAfterTurn(t *testing.T) {
 	}
 	if events := h.log(); !slices.ContainsFunc(events, func(e Event) bool { return strings.Contains(e.Text, "after the current turn") }) {
 		t.Fatalf("no deferred reload notice: %s", describe(events))
+	}
+}
+
+// Input queued before the controller exists starts a turn at once, ahead of newer input.
+func TestPrequeuedInputGoesFirst(t *testing.T) {
+	model := &fakeModel{}
+	h := newHarnessWith(t, model, func(a *agent.Agent) {
+		a.Queue().PushNotice(agent.Input{Text: "NOTICE-A", Notice: true})
+	})
+	h.await("the prequeued turn", func(events []Event) bool { return len(doneEvents(events)) == 1 })
+	if err := h.ctl.Input(agent.Input{Text: "B"}); err != nil {
+		t.Fatal(err)
+	}
+	h.await("the second turn", func(events []Event) bool { return len(doneEvents(events)) == 2 })
+	bodies := model.requests()
+	if len(bodies) < 2 || !strings.Contains(bodies[0], "NOTICE-A") || strings.Contains(bodies[0], `"B"`) {
+		t.Fatalf("requests %q", bodies)
 	}
 }

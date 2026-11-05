@@ -21,8 +21,11 @@ func (c *Controller) Input(input agent.Input) error {
 		case c.active != nil:
 			err = c.queueLocked(input)
 		default:
+			// Through the queue, so input queued earlier (a task result) goes first.
 			if err = c.setupError(); err == nil {
-				c.beginTurnLocked(input)
+				if err = c.queueLocked(input); err == nil {
+					c.deliverLocked()
+				}
 			}
 		}
 	})
