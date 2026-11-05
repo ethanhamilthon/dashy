@@ -6,6 +6,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -20,6 +21,7 @@ const (
 	pickerModels   = "models"
 	pickerConnect  = "connect"
 	pickerSetup    = "setup" // provider prompts after "Add provider"
+	pickerTasks    = "tasks" // background tasks of the session (/tasks)
 )
 
 // actionAdd is the "Add provider" row. Settings rows have a control.Setting* action;
@@ -56,6 +58,10 @@ func (m *model) openPicker(kind string) tea.Cmd {
 	if kind == pickerSettings {
 		m.rebuildSettingsMenu()
 		return nil
+	}
+	if kind == pickerTasks {
+		m.rebuildTasksMenu()
+		return tasksTickAfter(m.menuGeneration)
 	}
 	m.effort = slices.Index(agent.Efforts, m.ctl.Settings().Effort)
 	m.pickerModels = nil
@@ -118,6 +124,17 @@ func (m *model) closePicker() {
 func (m model) pickerKey(key tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	if m.menuKind == "" {
 		return m, nil, false
+	}
+	if m.menuKind == pickerTasks {
+		switch key.String() {
+		case "k":
+			return m.stopSelectedTask()
+		case "enter":
+			return m.showSelectedTask()
+		case "esc", "ctrl+c", "up", "down", "tab":
+		default:
+			return m, nil, true // the list has no filter: other keys do nothing
+		}
 	}
 	switch key.String() {
 	case "esc", "ctrl+c":
@@ -229,6 +246,79 @@ func (m model) finishSetup() (tea.Model, tea.Cmd, bool) {
 		next, cmd := m.reject(err)
 		return next, cmd, true
 	}
+	m.refresh(true)
+	return m, nil, true
+}
+
+// tasksTick refreshes the open /tasks list: statuses and durations change while it is shown.
+type tasksTick struct{ generation int }
+
+func tasksTickAfter(generation int) tea.Cmd {
+	return tea.Tick(time.Second, func(time.Time) tea.Msg { return tasksTick{generation} })
+}
+
+// rebuildTasksMenu lists the tasks newest first, keeping the selected task selected.
+func (m *model) rebuildTasksMenu() {
+	var keep string
+	if len(m.menu) > 0 {
+		keep = m.menu[m.selected%len(m.menu)].name
+	}
+	tasks, err := m.ctl.Tasks()
+	if err != nil {
+		m.setFlash("error", err.Error())
+	}
+	m.menu, m.selected = nil, 0
+	for i := len(tasks) - 1; i >= 0; i-- {
+		t := tasks[i]
+		status := t.Status
+		if t.ExitCode != nil && *t.ExitCode != 0 {
+			status += fmt.Sprintf(" (%d)", *t.ExitCode)
+		}
+		end := t.Ended
+		if end.IsZero() {
+			end = time.Now()
+		}
+		took := end.Sub(t.Started).Round(time.Second).String()
+		line := strings.Join(strings.Fields(t.Command), " ")
+		m.menu = append(m.menu, command{name: t.ID, description: t.Status, action: t.Log,
+			label: fmt.Sprintf("%-4s %-12s %7s  $ %s", t.ID, status, took, line)})
+		if t.ID == keep {
+			m.selected = len(m.menu) - 1
+		}
+	}
+}
+
+func (m model) selectedTask() (command, bool) {
+	if len(m.menu) == 0 {
+		return command{}, false
+	}
+	return m.menu[m.selected%len(m.menu)], true
+}
+
+// stopSelectedTask kills the selected task if it runs; the list stays open.
+func (m model) stopSelectedTask() (tea.Model, tea.Cmd, bool) {
+	task, ok := m.selectedTask()
+	if !ok || task.description != "running" {
+		return m, nil, true
+	}
+	if err := m.ctl.StopTask(task.name); err != nil {
+		next, cmd := m.reject(err)
+		return next, cmd, true
+	}
+	m.setFlash("notice", "Task "+task.name+" stopped.")
+	m.rebuildTasksMenu()
+	m.refresh(true)
+	return m, nil, true
+}
+
+// showSelectedTask closes the list and shows the end of the task's output in the timeline.
+func (m model) showSelectedTask() (tea.Model, tea.Cmd, bool) {
+	task, ok := m.selectedTask()
+	if !ok {
+		return m, nil, true
+	}
+	m.closePicker()
+	m.add("info", task.label+"\n\n"+agent.TaskOutput(agent.Task{Log: task.action})+"\n\nlog: "+task.action)
 	m.refresh(true)
 	return m, nil, true
 }

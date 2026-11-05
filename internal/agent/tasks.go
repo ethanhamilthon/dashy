@@ -245,6 +245,21 @@ func SessionTasks(home, session string) ([]Task, error) {
 		return nil, err
 	}
 	defer db.Close()
+	return sessionTasks(db, session)
+}
+
+// Tasks lists the tasks of this session, oldest first.
+func (a *Agent) Tasks() ([]Task, error) { return sessionTasks(a.db, a.id) }
+
+// StopTask kills a running task of this session; its result reports stopped.
+func (a *Agent) StopTask(id string) error {
+	if a.tasks == nil {
+		return fmt.Errorf("task %s is not running", id)
+	}
+	return a.tasks.stop(id)
+}
+
+func sessionTasks(db *sql.DB, session string) ([]Task, error) {
 	rows, err := db.Query(`SELECT id, command, status, log, exit_code, started, ended FROM tasks WHERE session = ? ORDER BY started`, session)
 	if err != nil {
 		return nil, err

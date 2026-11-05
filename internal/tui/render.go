@@ -166,6 +166,11 @@ func (m model) inputBlock() string {
 	return renderRail(m.input.View(), m.width)
 }
 
+// pickerHints are the keys of a picker, shown under its list.
+var pickerHints = map[string]string{
+	pickerTasks: "Enter: show output · k: stop · Esc: close",
+}
+
 // timeline renders the whole timeline at once; the interface uses timelineRows.
 func (m *model) timeline() string { return strings.Join(m.timelineRows(0), "\n") }
 
@@ -280,7 +285,7 @@ func (m *model) timelineRows(budget time.Duration) []string {
 		} else {
 			cmd := matches[i]
 			row = fmt.Sprintf("%s%-2s %-9s %s", marker, cmd.icon, cmd.name, cmd.description)
-			if m.menuKind == pickerSettings || m.menuKind == pickerModels {
+			if m.menuKind == pickerSettings || m.menuKind == pickerModels || m.menuKind == pickerTasks {
 				if cmd.label != "" {
 					row = marker + cmd.label
 				} else if cmd.description != "" {
@@ -293,6 +298,9 @@ func (m *model) timelineRows(budget time.Duration) []string {
 			}
 		}
 		screen.add("\n" + paint(ansi.Truncate(row, m.width, "…"), m.width, bg, fg))
+	}
+	if hint := pickerHints[m.menuKind]; hint != "" && !fileMode {
+		screen.add("\n" + paint(ansi.Truncate("  "+hint, m.width, "…"), m.width, lipgloss.NoColor{}, muted))
 	}
 	screen.add("\n\n" + m.bottomBar())
 	return screen

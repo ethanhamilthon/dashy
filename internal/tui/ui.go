@@ -259,6 +259,13 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.refresh(true)
 		return m, nil
+	case tasksTick:
+		if m.menuKind != pickerTasks || v.generation != m.menuGeneration {
+			return m, nil
+		}
+		m.rebuildTasksMenu()
+		m.refresh(false)
+		return m, tasksTickAfter(v.generation)
 	case redraw:
 		m.redrawScheduled = false
 		if m.dirty || m.renderPending {

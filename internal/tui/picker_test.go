@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -183,5 +184,42 @@ func TestConnectMenuAddRowRendersOnce(t *testing.T) {
 	view := ansi.Strip(openPickerCmd(t, m, "/connect").View())
 	if !strings.Contains(view, "+ Add provider") || strings.Contains(view, "+ +") {
 		t.Fatalf("add row: %q", view)
+	}
+}
+
+// /tasks lists the session's tasks newest first; k stops the selected running one,
+// and Enter shows its output in the timeline.
+func TestTasksPickerStopsAndShows(t *testing.T) {
+	m, a := freshModel(t)
+	if next, _ := m.runCommand("/tasks"); next.(model).menuKind != "" {
+		t.Fatal("empty task list opened")
+	}
+	for _, command := range []string{"echo first-output", "sleep 30"} {
+		if _, err := agent.RunTask(a.Shell.Dir, a.SessionID(), command); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m = openPickerCmd(t, m, "/tasks")
+	rows := m.completions()
+	if m.menuKind != pickerTasks || len(rows) != 2 || rows[0].name != "t2" || rows[0].description != "running" {
+		t.Fatalf("rows %+v", rows)
+	}
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "k: stop") || !strings.Contains(view, "$ sleep 30") {
+		t.Fatalf("view:\n%s", view)
+	}
+	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
+	for deadline := time.Now().Add(5 * time.Second); m.completions()[0].description == "running"; time.Sleep(20 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("task not stopped")
+		}
+		m.rebuildTasksMenu()
+	}
+	if got := m.completions()[0].description; got != "stopped" {
+		t.Fatalf("status %q", got)
+	}
+	m = key(m, tea.KeyMsg{Type: tea.KeyDown})
+	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.menuKind != "" || !strings.Contains(ansi.Strip(m.timeline()), "first-output") {
+		t.Fatalf("output not shown:\n%s", ansi.Strip(m.timeline()))
 	}
 }

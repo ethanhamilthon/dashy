@@ -52,6 +52,7 @@ var commandList = []CommandInfo{
 	{"/reload", "~", "Re-read settings and DASHY.md for the next request"},
 	{"/rename", "#", "Rename this session; empty name restores the default"},
 	{"/events", "i", "Show notices and errors of this session"},
+	{"/tasks", "&", "Show background tasks; k stops the selected one"},
 	{"/settings", "*", "Configure display and bash output options"},
 	{"/models", "*", "Select the model and reasoning effort"},
 	{"/connect", "+", "Select or create a provider"},

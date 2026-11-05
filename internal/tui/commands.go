@@ -164,6 +164,15 @@ func (m model) runCommand(name string) (tea.Model, tea.Cmd) {
 		cmd := m.openPicker(kind)
 		m.refresh(true)
 		return m, cmd
+	case "/tasks":
+		if tasks, err := m.ctl.Tasks(); err != nil {
+			return m.stop("error", err.Error())
+		} else if len(tasks) == 0 {
+			return m.stop("notice", "No background tasks in this session.")
+		}
+		cmd := m.openPicker(pickerTasks)
+		m.refresh(true)
+		return m, cmd
 
 	case "/rename":
 		if name == "/rename" {

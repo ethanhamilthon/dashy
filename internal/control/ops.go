@@ -234,6 +234,23 @@ func (c *Controller) AddProvider(name, baseURL, apiKey string) error {
 	return err
 }
 
+// Tasks lists the background tasks of the session, oldest first.
+func (c *Controller) Tasks() (tasks []agent.Task, err error) {
+	c.view(func() { tasks, err = c.a.Tasks() })
+	return tasks, err
+}
+
+// StopTask kills a running background task; its result still arrives, with status stopped.
+func (c *Controller) StopTask(id string) error {
+	var err error
+	c.view(func() {
+		if err = c.a.StopTask(id); err != nil {
+			err = fail("invalid", "%s", err.Error())
+		}
+	})
+	return err
+}
+
 // Settings rows that ChangeSetting toggles or cycles.
 const (
 	SettingReasoning   = "reasoning"
