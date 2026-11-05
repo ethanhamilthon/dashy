@@ -162,31 +162,19 @@ func (m *model) add(kind, text string) {
 }
 
 func (m *model) setFlash(kind, text string) {
-	m.flash, m.flashAt = entry{Kind: kind, Text: shortEvent(kind, text)}, time.Now()
+	m.flash, m.flashAt = entry{Kind: kind, Text: shortEvent(text)}, time.Now()
 }
 
-// flashLabels maps the start of an event to its status bar label; /events keeps the full text.
-var flashLabels = [][2]string{
-	{"Copied", "copied"}, {"Copy failed", "copy failed"}, {"Selected ", "model changed"},
-	{"Provider created", "provider added"}, {"Session renamed", "renamed"}, {"Session title reset", "renamed"},
-	{"Turn cancelled", "cancelled"}, {"Retrying", "retrying"}, {"Settings and DASHY.md reloaded", "reloaded"},
-	{"Instructions will reload", "reload queued"}, {"No provider", "no provider"}, {"No model selected", "no model"},
-	{"No models", "no models"}, {"Some providers failed", "models failed"}, {"Could not list models", "models failed"},
-	{"No saved sessions", "no sessions"}, {"Unknown command", "unknown command"}, {"Unexpected command", "bad arguments"},
-	{"Command moved to the background", "moved to background"}, {"Provider saved", "provider saved"}, {"Provider deleted", "provider deleted"},
-	{"Task ", "task stopped"}, {"Clipboard read", "pasting"}, {"Steering queue is full", "queue full"}, {"Session is changing", "busy"},
-	{"Wait for", "busy"}, {"That instruction was already", "already sent"}, {"Stored settings changed", "settings error"},
-	{"session not found", "not found"}, {"clipboard", "paste failed"},
-}
-
-// shortEvent is the one or two word label of a notice or error for the status bar.
-func shortEvent(kind, text string) string {
-	for _, l := range flashLabels {
-		if strings.HasPrefix(text, l[0]) {
-			return l[1]
-		}
+// shortEvent is the first clause of a notice or error; /events keeps the full text.
+func shortEvent(text string) string {
+	short := strings.TrimSuffix(strings.TrimSpace(text), ".")
+	for _, sep := range []string{"\n", ". ", "; ", ": "} {
+		short, _, _ = strings.Cut(short, sep)
 	}
-	return map[bool]string{true: "error", false: "notice"}[kind == "error"] + " · /events"
+	if short != strings.TrimSuffix(strings.TrimSpace(text), ".") {
+		short += " · /events"
+	}
+	return short
 }
 
 type flashExpired struct{ at time.Time }

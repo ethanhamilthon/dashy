@@ -216,7 +216,7 @@ func (c *Controller) selectLocked(provider, model, effort string) error {
 	if err := c.a.Select(provider, model, effort); err != nil {
 		return fail("failed", "%s", agent.Redact(c.a.Settings(), err.Error()))
 	}
-	c.publish(Event{Kind: "notice", Text: "Selected " + provider + " · " + model + "/" + effort + " (saved to " + c.a.DBPath() + ")"})
+	c.publish(Event{Kind: "notice", Text: "Selected " + provider + " · " + model + "/" + effort + "; saved to " + c.a.DBPath() + "."})
 	return nil
 }
 

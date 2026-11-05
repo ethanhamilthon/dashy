@@ -20,7 +20,7 @@ func TestEventsGoToStatusBar(t *testing.T) {
 	if len(m.entries) != 0 {
 		t.Fatalf("an error reached the chat: %+v", m.entries)
 	}
-	if bar := ansi.Strip(m.bottomBar()); !strings.Contains(bar, "no provider") || len(bar) > 200 {
+	if bar := ansi.Strip(m.bottomBar()); !strings.Contains(bar, "No provider configured") || len(bar) > 200 {
 		t.Fatalf("status bar: %q", bar)
 	}
 	next, _ := m.Update(flashExpired{m.flashAt.Add(-time.Second)})
@@ -40,8 +40,8 @@ func TestEventsGoToStatusBar(t *testing.T) {
 }
 
 func TestShortEventsAndTaskCount(t *testing.T) {
-	for text, want := range map[string]string{"Copied 3 lines to the clipboard.": "copied", "Selected p · m/high (saved to x)": "model changed", "weird": "notice · /events"} {
-		if got := shortEvent("notice", text); got != want {
+	for text, want := range map[string]string{"Copied 3 lines to the clipboard.": "Copied 3 lines to the clipboard", "Selected p · gpt-5.1/high; saved to x.": "Selected p · gpt-5.1/high · /events", "Copy failed: no tool": "Copy failed · /events"} {
+		if got := shortEvent(text); got != want {
 			t.Errorf("%q: got %q, want %q", text, got, want)
 		}
 	}
