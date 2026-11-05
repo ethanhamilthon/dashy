@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"dashy/internal/agent"
+
 	sdk "github.com/coder/acp-go-sdk"
 )
 

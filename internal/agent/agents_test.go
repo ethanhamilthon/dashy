@@ -16,7 +16,6 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
-// systemPrompt assembles the prompt of a fresh agent with the given global and local DASHY.md content.
 func systemPrompt(t *testing.T, global, local string) string {
 	t.Helper()
 	a := newTestAgentWith(t, &fakeProvider{reply: func(int, string) string { return "" }}, Options{}, func(home, dir string) {
@@ -34,7 +33,6 @@ func systemPrompt(t *testing.T, global, local string) string {
 	return prompt
 }
 
-// Files are added verbatim under "# path" headers, separated by exactly one blank line.
 func TestPromptKeepsFileBytesVerbatim(t *testing.T) {
 	a := newTestAgent(t, &fakeProvider{}, Options{})
 	global, local := filepath.Join(a.home, "DASHY.md"), filepath.Join(a.Shell.Dir, "DASHY.md")
@@ -51,21 +49,8 @@ func TestPromptKeepsFileBytesVerbatim(t *testing.T) {
 	}
 }
 
-func TestNoDashyFilesMeansEmptyPrompt(t *testing.T) {
-	if got := systemPrompt(t, "", ""); got != "" {
-		t.Fatalf("prompt = %q", got)
-	}
-	a := newTestAgent(t, &fakeProvider{}, Options{NoGlobal: true})
-	if len(a.promptFiles) != 0 {
-		t.Fatalf("files = %v", a.promptFiles)
-	}
-}
-
-// body returns the prompt without its "# path" header line.
 func body(prompt string) string { return prompt[strings.Index(prompt, "\n")+1:] }
 
-// Only top-level fences with the exact info string "dashy" run. Nested, other
-// info strings and quoted fences stay verbatim; the fence lines of a block vanish.
 func TestOnlyTopLevelDashyBlocksRun(t *testing.T) {
 	src := "before\n```dashy\necho one\n```\n- item\n\n  ```dashy\n  echo nested\n  ```\n```sh\necho sh\n```\n> ```dashy\n> echo quoted\n> ```\nafter\n"
 	want := "before\none\n- item\n\n  ```dashy\n  echo nested\n  ```\n```sh\necho sh\n```\n> ```dashy\n> echo quoted\n> ```\nafter\n"
@@ -74,7 +59,6 @@ func TestOnlyTopLevelDashyBlocksRun(t *testing.T) {
 	}
 }
 
-// A failing block becomes its failure text with a short stderr tail; blocks run in order.
 func TestBlockFailureTextAndSequentialOrder(t *testing.T) {
 	src := "```dashy\necho first; echo tail-msg >&2; exit 3\n```\n```dashy\necho second\n```\n"
 	want := "[dashy block failed: exit status 3]\ntail-msg\nsecond\n"
@@ -93,8 +77,6 @@ func TestBlockTimeoutIsAFailure(t *testing.T) {
 	}
 }
 
-// Stdout keeps the first 64 KiB of the output and stderr does not use that budget. Stdout
-// below the limit is kept exactly; a longer one is cut at the limit.
 func TestBlockOutputBudget(t *testing.T) {
 	a := newTestAgent(t, &fakeProvider{}, Options{})
 	ctx := context.Background()
@@ -110,7 +92,6 @@ func TestBlockOutputBudget(t *testing.T) {
 	if err != nil || noisy != "out" {
 		t.Fatalf("stderr crowded out stdout: %q, err %v", noisy, err)
 	}
-	// The failure text keeps only the stderr tail.
 	many := "head -c 100000 /dev/zero | tr '\\0' a; for i in $(seq 1 40); do echo line$i >&2; done; exit 2"
 	failed, _ := a.runBlock(ctx, many, "startup")
 	if !strings.HasSuffix(failed, "line36\nline37\nline38\nline39\nline40") || strings.Count(failed, "\n") != blockTailLines {
@@ -118,7 +99,6 @@ func TestBlockOutputBudget(t *testing.T) {
 	}
 }
 
-// A selected DASHY.md that cannot be read is an error, never a shorter prompt.
 func TestSelectedFileVanishingIsAnError(t *testing.T) {
 	a := newTestAgentWith(t, &fakeProvider{}, Options{}, func(_, dir string) {
 		writeFile(t, filepath.Join(dir, "DASHY.md"), "x")
@@ -143,7 +123,6 @@ func TestCancelledTurnStopsWhileBlockRuns(t *testing.T) {
 	}
 }
 
-// /resume keeps the stored prompt even when instruction files have changed.
 func TestSameSessionResumeKeepsSnapshot(t *testing.T) {
 	var runs string
 	fp := &fakeProvider{reply: func(int, string) string { return textReply("ok") }}

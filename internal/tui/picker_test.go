@@ -15,7 +15,6 @@ import (
 	"dashy/internal/agent"
 )
 
-// openPickerCmd runs a slash command that opens a picker and applies the list it fetches.
 func openPickerCmd(t *testing.T, m model, name string) model {
 	t.Helper()
 	next, cmd := m.runCommand(name)
@@ -27,7 +26,6 @@ func openPickerCmd(t *testing.T, m model, name string) model {
 	return m
 }
 
-// selectRow moves the picker selection to the row called name.
 func selectRow(t *testing.T, m model, name string) model {
 	t.Helper()
 	for i, c := range m.completions() {
@@ -40,7 +38,6 @@ func selectRow(t *testing.T, m model, name string) model {
 	return m
 }
 
-// modelServer answers every request with list, as a provider's /models does.
 func modelServer(t *testing.T, list string) string {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -51,8 +48,6 @@ func modelServer(t *testing.T, list string) string {
 	return server.URL
 }
 
-// /settings toggles display options; /models lists the models of every provider and
-// applies and saves the effort and a chosen model at once.
 func TestSettingsAndModelsPickers(t *testing.T) {
 	m, a := freshModel(t)
 	if err := a.SaveProvider("", "p", agent.Provider{BaseURL: modelServer(t, `{"data":[{"id":"m1"},{"id":"m2"}]}`)}); err != nil {
@@ -85,8 +80,8 @@ func TestSettingsAndModelsPickers(t *testing.T) {
 	}
 	m = key(m, tea.KeyMsg{Type: tea.KeyEsc})
 	m = openPickerCmd(t, m, "/models")
-	m = key(m, tea.KeyMsg{Type: tea.KeyRight}) // effort: "" -> none
-	m = key(m, tea.KeyMsg{Type: tea.KeyRight}) // none -> minimal
+	m = key(m, tea.KeyMsg{Type: tea.KeyRight})
+	m = key(m, tea.KeyMsg{Type: tea.KeyRight})
 	m = selectRow(t, m, "m3")
 	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.menuKind != "" || a.Settings().Provider != "q" || a.Settings().Model != "m3" || a.Settings().Effort != "minimal" {
@@ -94,8 +89,6 @@ func TestSettingsAndModelsPickers(t *testing.T) {
 	}
 }
 
-// keyRun sends a key and applies the message its command returns (a connection test
-// or a models listing), as the program would.
 func keyRun(t *testing.T, m model, k tea.KeyMsg) model {
 	t.Helper()
 	next, cmd := m.Update(k)
@@ -111,14 +104,11 @@ func keyRun(t *testing.T, m model, k tea.KeyMsg) model {
 	return m
 }
 
-// typeField replaces the active field of the provider form.
 func typeField(m model, value string) model {
 	m.input.SetValue(value)
 	return m
 }
 
-// /connect adds a provider through one form: the connection test lists its models,
-// which open next. The key is never shown.
 func TestConnectAddsProviderWithoutShowingKey(t *testing.T) {
 	m, a := freshModel(t)
 	url := modelServer(t, `{"data":[{"id":"m1"},{"id":"m2"}]}`)
@@ -155,8 +145,6 @@ func TestConnectAddsProviderWithoutShowingKey(t *testing.T) {
 	}
 }
 
-// A missing field takes the focus; a failed connection test stays in the form and
-// Enter again saves anyway.
 func TestProviderFormValidatesAndSavesAnyway(t *testing.T) {
 	m, a := freshModel(t)
 	m.openProviderForm("", true)
@@ -179,7 +167,6 @@ func TestProviderFormValidatesAndSavesAnyway(t *testing.T) {
 	}
 }
 
-// e edits a provider (a rename keeps the key when none is typed); d twice deletes it.
 func TestConnectEditsAndDeletesProvider(t *testing.T) {
 	m, a := freshModel(t)
 	url := modelServer(t, `{"data":[{"id":"m1"}]}`)
@@ -210,7 +197,6 @@ func TestConnectEditsAndDeletesProvider(t *testing.T) {
 	}
 }
 
-// selectModel moves the picker selection to the model row called name (not an action row).
 func selectModel(t *testing.T, m model, name string) model {
 	t.Helper()
 	for i, c := range m.completions() {
@@ -223,8 +209,6 @@ func selectModel(t *testing.T, m model, name string) model {
 	return m
 }
 
-// Provider and model names equal to action labels are ordinary choices: they never
-// open the provider setup and never change a setting.
 func TestPickerNamesThatMatchActionsAreChoices(t *testing.T) {
 	m, a := freshModel(t)
 	url := modelServer(t, `{"data":[{"id":"Reasoning summary"},{"id":"Show lines"}]}`)
@@ -254,7 +238,6 @@ func TestPickerNamesThatMatchActionsAreChoices(t *testing.T) {
 	}
 }
 
-// With a configured model, Left/Right saves the effort at once: Escape keeps it.
 func TestEffortChangeIsSavedBeforeEscape(t *testing.T) {
 	m, a := freshModel(t)
 	if err := a.SaveProvider("", "p", agent.Provider{BaseURL: modelServer(t, `{"data":[{"id":"m1"}]}`)}); err != nil {
@@ -264,7 +247,7 @@ func TestEffortChangeIsSavedBeforeEscape(t *testing.T) {
 		t.Fatal(err)
 	}
 	m = openPickerCmd(t, m, "/models")
-	m = key(m, tea.KeyMsg{Type: tea.KeyRight}) // effort: "" -> none
+	m = key(m, tea.KeyMsg{Type: tea.KeyRight})
 	m = key(m, tea.KeyMsg{Type: tea.KeyEsc})
 	saved, err := agent.LoadSettings(filepath.Dir(a.DBPath()))
 	if m.menuKind != "" || a.Settings().Effort != "none" || err != nil || saved.Effort != "none" {
@@ -272,17 +255,6 @@ func TestEffortChangeIsSavedBeforeEscape(t *testing.T) {
 	}
 }
 
-// The /connect menu shows its add row once, as "+ Add provider".
-func TestConnectMenuAddRowRendersOnce(t *testing.T) {
-	m, _ := freshModel(t)
-	view := ansi.Strip(openPickerCmd(t, m, "/connect").View())
-	if !strings.Contains(view, "+ Add provider") || strings.Contains(view, "+ +") {
-		t.Fatalf("add row: %q", view)
-	}
-}
-
-// /tasks lists the session's tasks newest first; k stops the selected running one,
-// and Enter shows its output in the timeline.
 func TestTasksPickerStopsAndShows(t *testing.T) {
 	m, a := freshModel(t)
 	if next, _ := m.runCommand("/tasks"); next.(model).menuKind != "" {

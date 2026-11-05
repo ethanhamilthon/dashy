@@ -7,7 +7,6 @@ import (
 	"testing"
 )
 
-// editFile simulates another dashy process changing the stored settings while the agent works.
 func editFile(t *testing.T, a *Agent, change func(*Settings)) {
 	t.Helper()
 	s, err := LoadSettings(a.home)
@@ -20,7 +19,6 @@ func editFile(t *testing.T, a *Agent, change func(*Settings)) {
 	}
 }
 
-// storeRaw stores settings data as a new version without validating it.
 func storeRaw(t *testing.T, a *Agent, data string) {
 	t.Helper()
 	if _, err := a.db.Exec(`UPDATE settings SET data = ?, version = version + 1 WHERE id = 1`, data); err != nil {
@@ -28,8 +26,6 @@ func storeRaw(t *testing.T, a *Agent, data string) {
 	}
 }
 
-// reloadAgent makes a provider whose first reply runs a tool call after hook has run: the
-// edit happens while the turn is in flight, so the second request is the first to see it.
 func reloadAgent(t *testing.T, opts Options, hook func(a *Agent)) (*Agent, *fakeProvider) {
 	t.Helper()
 	var a *Agent
@@ -45,8 +41,6 @@ func reloadAgent(t *testing.T, opts Options, hook func(a *Agent)) (*Agent, *fake
 	return a, fp
 }
 
-// Settings saved by another process during a turn do not stop it; the next request uses
-// the new shared values but keeps this session's model and effort.
 func TestFileEditDuringTurnAppliesToNextRequest(t *testing.T) {
 	a, fp := reloadAgent(t, Options{}, func(a *Agent) {
 		editFile(t, a, func(s *Settings) { s.Model, s.Effort, s.ReasoningSummary = "new-model", "high", false })
@@ -61,13 +55,11 @@ func TestFileEditDuringTurnAppliesToNextRequest(t *testing.T) {
 	if !strings.Contains(reqs[1], `"model":"m"`) || strings.Contains(reqs[1], `"effort"`) || strings.Contains(reqs[1], `"summary"`) {
 		t.Fatalf("second request: %s", reqs[1])
 	}
-	// A new session starts with the new default.
 	if err := a.NewSession(); err != nil || a.Settings().Model != "new-model" {
 		t.Fatalf("new session model %q, %v", a.Settings().Model, err)
 	}
 }
 
-// A change made through the agent (the TUI path) during a turn is used by the next request too.
 func TestChangeDuringTurnAppliesToNextRequest(t *testing.T) {
 	a, fp := reloadAgent(t, Options{}, func(a *Agent) {
 		if err := a.Select("p", "picked", "low"); err != nil {
@@ -82,7 +74,6 @@ func TestChangeDuringTurnAppliesToNextRequest(t *testing.T) {
 	}
 }
 
-// Broken stored JSON keeps the old settings, warns once, and a later fix is picked up.
 func TestBrokenSettingsKeepOldAndWarnOnce(t *testing.T) {
 	a, fp := reloadAgent(t, Options{}, func(a *Agent) {
 		storeRaw(t, a, `{"model": `)
@@ -117,7 +108,6 @@ func providersJSON(a *Agent) string {
 	return `{"p":{"base_url":"` + a.Settings().Providers["p"].BaseURL + `"}}`
 }
 
-// Invalid but well-formed settings (unknown show_lines) are treated like broken JSON.
 func TestInvalidSettingsKeepOld(t *testing.T) {
 	a := newTestAgent(t, &fakeProvider{}, Options{})
 	storeRaw(t, a, `{"show_lines":"bogus"}`)
@@ -127,7 +117,6 @@ func TestInvalidSettingsKeepOld(t *testing.T) {
 	}
 }
 
-// launch overrides win over the stored settings before and after a reload.
 func TestOverridesSurviveReload(t *testing.T) {
 	a, fp := reloadAgent(t, Options{Model: "cli-model", Effort: "low"}, func(a *Agent) {
 		editFile(t, a, func(s *Settings) { s.Model, s.Effort, s.ReasoningSummary = "file-model", "high", false })
@@ -145,7 +134,6 @@ func TestOverridesSurviveReload(t *testing.T) {
 	}
 }
 
-// The system prompt is built once per session: editing DASHY.md or settings mid-turn does not change it.
 func TestPromptStaysFrozenWhileSettingsReload(t *testing.T) {
 	var a *Agent
 	fp := &fakeProvider{}
@@ -167,7 +155,6 @@ func TestPromptStaysFrozenWhileSettingsReload(t *testing.T) {
 	}
 }
 
-// Changes from other goroutines (the TUI) and file edits race with a running turn; run with -race.
 func TestConcurrentSettingsChangesDuringTurn(t *testing.T) {
 	a, _ := reloadAgent(t, Options{}, func(a *Agent) {
 		var wg sync.WaitGroup

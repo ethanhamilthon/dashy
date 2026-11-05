@@ -13,8 +13,6 @@ import (
 	"dashy/internal/shell"
 )
 
-// Steering is accepted after the outputs of the running response, so every call
-// keeps its output next to it and the instruction comes after them.
 func TestSteeringIsAcceptedAfterToolOutputs(t *testing.T) {
 	fp := &fakeProvider{reply: func(n int, body string) string {
 		if n == 1 {
@@ -47,7 +45,6 @@ func TestSteeringIsAcceptedAfterToolOutputs(t *testing.T) {
 	}
 }
 
-// A queued instruction can be recalled until it is accepted; accepted ones cannot.
 func TestSteeringRecallUntilAccepted(t *testing.T) {
 	s := &Steering{}
 	s.Push(Input{Text: "first"})
@@ -63,8 +60,6 @@ func TestSteeringRecallUntilAccepted(t *testing.T) {
 	}
 }
 
-// A message typed while a bash call runs moves the call to the background as a task and
-// skips the calls that have not started; the message goes to the model at once.
 func TestTypedInputMovesRunningCallToBackground(t *testing.T) {
 	fp := &fakeProvider{reply: func(n int, body string) string {
 		if n == 1 {

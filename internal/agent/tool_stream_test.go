@@ -5,8 +5,6 @@ import (
 	"testing"
 )
 
-// While a bash call streams, the display shows the complete prefix of its command;
-// escapes and multi-byte characters split by a delta are withheld until complete.
 func TestPartialCodeShowsCompletePrefix(t *testing.T) {
 	cases := map[string]string{
 		`{"command":"echo hi`:         "echo hi",
@@ -22,7 +20,6 @@ func TestPartialCodeShowsCompletePrefix(t *testing.T) {
 	}
 }
 
-// Streamed argument deltas are display-only: the call is saved once, when its item completes.
 func TestToolCallStreamingIsDisplayOnly(t *testing.T) {
 	fp := &fakeProvider{reply: func(n int, body string) string {
 		if n > 1 {

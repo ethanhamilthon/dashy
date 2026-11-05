@@ -14,7 +14,6 @@ func TestLoadRejectsBusySessionAndCanRetry(t *testing.T) {
 		<-gate
 		return answer("done")
 	})
-	// Release before server cleanup even if an assertion fails.
 	defer release.Do(func() { close(gate) })
 	w := connect(t)
 	t.Cleanup(func() { release.Do(func() { close(gate) }) })

@@ -50,7 +50,6 @@ func TestImagePromptsReachProviderAndReplay(t *testing.T) {
 	if !strings.Contains(body, "input_image") || !strings.Contains(body, data) || strings.Count(body, "input_image") != 1 {
 		t.Fatalf("provider did not receive exactly the image: %.400s", body)
 	}
-	// An image-only prompt is valid input.
 	w.request(t, 4, "session/prompt", map[string]any{"sessionId": id, "prompt": []any{image("image/png", data)}})
 	if f := w.response(t, 4); f.Error != nil {
 		t.Fatal(f.Error)

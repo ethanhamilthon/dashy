@@ -18,7 +18,6 @@ func pngURL() string {
 	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(tinyPNG())
 }
 
-// The session socket refuses empty requests, empty task commands and images that do not decode.
 func TestSocketValidates(t *testing.T) {
 	a := newTestAgent(t, &fakeProvider{reply: func(int, string) string { return "" }}, Options{})
 	for _, m := range []Message{
@@ -37,7 +36,6 @@ func TestSocketValidates(t *testing.T) {
 	}
 }
 
-// awaitInput waits until the session queue holds input and takes it.
 func awaitInput(t *testing.T, a *Agent) []Input {
 	t.Helper()
 	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
@@ -49,9 +47,6 @@ func awaitInput(t *testing.T, a *Agent) []Input {
 	return nil
 }
 
-// A task runs in the project directory with the session's variables (its endpoint too),
-// is listed while it runs, and its result (escaped command and output, exit code) arrives
-// as a notice. A nonzero exit is failed.
 func TestTaskRunsAndReportsItsResult(t *testing.T) {
 	a := newTestAgent(t, &fakeProvider{}, Options{})
 	id, err := Send(a.sock.path, Message{Task: &TaskRequest{Op: "run", Command: `echo "<$DASHY_SESSION_ID>" "[$DASHY_ENDPOINT]" && pwd && exit 3`}})
@@ -73,7 +68,6 @@ func TestTaskRunsAndReportsItsResult(t *testing.T) {
 	}
 }
 
-// A stopped task reports stopped; closing the session stops running tasks without a result.
 func TestTaskStopAndSessionClose(t *testing.T) {
 	a := newTestAgent(t, &fakeProvider{}, Options{})
 	if _, err := Send(a.sock.path, Message{Task: &TaskRequest{Op: "run", Command: "sleep 30"}}); err != nil {
@@ -103,7 +97,6 @@ func TestTaskStopAndSessionClose(t *testing.T) {
 	}
 }
 
-// Images reserved for a request and dashy view images share one allowance of four per request.
 func TestImageAllowanceIsSharedWithView(t *testing.T) {
 	a := newTestAgent(t, &fakeProvider{reply: func(int, string) string { return "" }}, Options{})
 	if !a.slots.reserve(2) {
@@ -122,7 +115,6 @@ func TestImageAllowanceIsSharedWithView(t *testing.T) {
 	}
 }
 
-// Images queued by dashy view reach exactly one model request and then stay in history.
 func TestViewedImageReachesNextRequestOnce(t *testing.T) {
 	fp := &fakeProvider{reply: func(n int, body string) string {
 		if n == 1 {
@@ -143,9 +135,6 @@ func TestViewedImageReachesNextRequestOnce(t *testing.T) {
 	}
 }
 
-// Images are counted from admission until the request that carries them is sent.
-// Admissions made after the input is in the history but before that request is sent,
-// or while it is in flight, are measured against the same allowance.
 func TestImagesInHistoryCountUntilSent(t *testing.T) {
 	fp := &fakeProvider{reply: func(int, string) string { return textReply("ok") }}
 	a := newTestAgent(t, fp, Options{})
@@ -166,14 +155,11 @@ func TestImagesInHistoryCountUntilSent(t *testing.T) {
 	if got := strings.Count(fp.requests()[0], "input_image"); got != 3 {
 		t.Fatalf("request carried %d images", got)
 	}
-	// The fourth image is still queued for the following request: one more slot is free.
 	if pendingImages(a) != 1 || a.slots.reserve(4) || !a.slots.reserve(3) {
 		t.Fatalf("after sending: pending %d", pendingImages(a))
 	}
 }
 
-// A connection accepted before /new is retired with its session: the image it completes
-// after the switch is refused and never queued in the new session.
 func TestConnectionAcceptedBeforeNewSessionIsRetired(t *testing.T) {
 	a := newTestAgent(t, &fakeProvider{reply: func(int, string) string { return "" }}, Options{})
 	payload, err := json.Marshal(Message{Image: &shell.Image{URL: pngURL()}})
@@ -212,7 +198,6 @@ func TestConnectionAcceptedBeforeNewSessionIsRetired(t *testing.T) {
 	}
 }
 
-// A socket file left by a crashed session (also in the /tmp fallback) does not block listening.
 func TestStaleSocketIsReplaced(t *testing.T) {
 	a := newTestAgent(t, &fakeProvider{}, Options{})
 	path := a.sock.path
@@ -237,14 +222,13 @@ func pendingImages(a *Agent) int {
 	return a.slots.reserved + a.slots.committed
 }
 
-// The end of a huge log comes from its last bytes only, cut at a line start.
 func TestTailOfHugeLog(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "log")
 	file, err := os.Create(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := file.Truncate(1 << 30); err != nil { // sparse: 1 GiB of zero bytes
+	if err := file.Truncate(1 << 30); err != nil {
 		t.Fatal(err)
 	}
 	file.WriteAt([]byte("\nlast line\n"), 1<<30)

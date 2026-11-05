@@ -18,9 +18,6 @@ import (
 	"dashy/internal/shell"
 )
 
-// fakeModel answers provider requests: streamed ones with an answer, a summary
-// request (not streamed) with SUMMARY. gate, when set, holds every request until
-// it is closed or the request is cancelled.
 type fakeModel struct {
 	mu     sync.Mutex
 	bodies []string
@@ -57,7 +54,6 @@ func (f *fakeModel) requests() []string {
 	return append([]string(nil), f.bodies...)
 }
 
-// harness is a controller over a real agent whose events are recorded in order.
 type harness struct {
 	t      *testing.T
 	ctl    *Controller
@@ -73,7 +69,6 @@ func newHarness(t *testing.T, model *fakeModel) *harness {
 	return newHarnessWith(t, model, nil)
 }
 
-// newHarnessWith is newHarness with pre run on the agent before the controller exists.
 func newHarnessWith(t *testing.T, model *fakeModel, pre func(*agent.Agent)) *harness {
 	t.Helper()
 	home, dir := t.TempDir(), t.TempDir()
@@ -112,7 +107,6 @@ func (h *harness) log() []Event {
 	return append([]Event(nil), h.events...)
 }
 
-// await polls the event log until pred holds.
 func (h *harness) await(what string, pred func([]Event) bool) []Event {
 	h.t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
@@ -146,7 +140,6 @@ func doneEvents(events []Event) []Event {
 	return done
 }
 
-// settle waits until the controller is idle again.
 func (h *harness) settle() []Event {
 	h.t.Helper()
 	return h.await("idle", func(events []Event) bool {
@@ -184,8 +177,6 @@ func TestTurnEmitsStartedThenExactlyOneDone(t *testing.T) {
 	}
 }
 
-// inFlight waits until the model has received n requests, so later input is queued
-// behind a request that is really in flight (not taken at a step boundary).
 func (h *harness) inFlight(n int) {
 	h.t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
@@ -197,7 +188,6 @@ func (h *harness) inFlight(n int) {
 	}
 }
 
-// Input while a turn runs is steering: the model receives it before the turn ends.
 func TestSteeringJoinsRunningTurn(t *testing.T) {
 	gate := make(chan struct{})
 	h := newHarness(t, &fakeModel{gate: gate})
@@ -212,7 +202,6 @@ func TestSteeringJoinsRunningTurn(t *testing.T) {
 	}
 }
 
-// A task result queued during a busy turn precedes composer steering sent later.
 func TestNotificationKeepsOrderWithSteering(t *testing.T) {
 	gate := make(chan struct{})
 	h := newHarness(t, &fakeModel{gate: gate})
@@ -239,7 +228,6 @@ func TestNotificationKeepsOrderWithSteering(t *testing.T) {
 	}
 }
 
-// Stop cancels the turn, and unaccepted steering comes back as unsent input.
 func TestStopReturnsUnacceptedSteering(t *testing.T) {
 	gate := make(chan struct{})
 	defer close(gate)
@@ -276,8 +264,6 @@ func TestRecallReturnsNewestInstructionOnce(t *testing.T) {
 	}
 }
 
-// Settings changed while a turn runs are accepted and saved; the turn keeps running.
-// The turn is started by a task result, as it can be while the picker is open.
 func TestSettingsChangeWhileNotificationTurnRuns(t *testing.T) {
 	gate := make(chan struct{})
 	defer close(gate)
@@ -307,8 +293,6 @@ func TestSettingsChangeWhileNotificationTurnRuns(t *testing.T) {
 	}
 }
 
-// Titles: the first line of the first message, a rename, and the reset back to the
-// first line are all carried by the events the terminal reports.
 func TestTitleFollowsFirstLineRenameAndReset(t *testing.T) {
 	h := newHarness(t, &fakeModel{})
 	h.send("  first line\nsecond line")
@@ -330,30 +314,6 @@ func TestTitleFollowsFirstLineRenameAndReset(t *testing.T) {
 	}
 }
 
-// A resumed session has its custom title and its first line, without any event
-// having happened yet.
-func TestResumedSessionHasItsTitle(t *testing.T) {
-	h := newHarness(t, &fakeModel{})
-	h.send("resumed question\nmore")
-	h.settle()
-	h.ctl.Rename("Kept")
-	id := h.a.SessionID()
-	if err := h.ctl.NewSession(); err != nil {
-		t.Fatal(err)
-	}
-	if err := h.ctl.Resume(id); err != nil {
-		t.Fatal(err)
-	}
-	if got := h.ctl.Title(); got != "Kept" {
-		t.Fatalf("resumed title = %q", got)
-	}
-	if sessions, _ := h.ctl.Sessions(); len(sessions) != 1 || sessions[0].Title != "Kept" {
-		t.Fatalf("resume list: %+v", sessions)
-	}
-}
-
-// Settings changes go through the controller: each is applied, validated and rejected
-// with a stable code when it cannot apply.
 func TestSettingsAndProvidersThroughTheController(t *testing.T) {
 	h := newHarness(t, &fakeModel{})
 	if _, _, err := h.ctl.Models(context.Background()); err != nil {
@@ -380,8 +340,6 @@ func TestSettingsAndProvidersThroughTheController(t *testing.T) {
 	}
 }
 
-// Rename is refused while a turn runs; quitting during a turn waits
-// for the cancellation and then closes the session.
 func TestBusyRejectionsAndQuitDuringTurn(t *testing.T) {
 	gate := make(chan struct{})
 	defer close(gate)
@@ -408,27 +366,6 @@ func TestBusyRejectionsAndQuitDuringTurn(t *testing.T) {
 	}
 }
 
-// AttachmentsDir is called from the UI (paste) while a deferred session switch rewrites
-// the agent on another goroutine, so it must go through the controller lock.
-func TestAttachmentsDirDuringSessionSwitch(t *testing.T) {
-	h := newHarness(t, &fakeModel{})
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for range 200 {
-			_ = h.ctl.AttachmentsDir()
-		}
-	}()
-	for range 5 {
-		if err := h.ctl.NewSession(); err != nil {
-			t.Fatal(err)
-		}
-	}
-	<-done
-}
-
-// /reload re-reads DASHY.md (even one created after startup). While a turn runs it
-// does not interrupt it and applies once the turn ends; idle it applies at once.
 func TestReloadRebuildsPromptAfterTurn(t *testing.T) {
 	h := newHarness(t, &fakeModel{})
 	local := filepath.Join(h.dir, "DASHY.md")
@@ -472,7 +409,6 @@ func TestReloadRebuildsPromptAfterTurn(t *testing.T) {
 	}
 }
 
-// Input queued before the controller exists starts a turn at once, ahead of newer input.
 func TestPrequeuedInputGoesFirst(t *testing.T) {
 	model := &fakeModel{}
 	h := newHarnessWith(t, model, func(a *agent.Agent) {

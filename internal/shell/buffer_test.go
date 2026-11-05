@@ -33,10 +33,10 @@ func TestOutputBufferKeepsMultibyteStraddlingHeadTailSplit(t *testing.T) {
 		limit int
 		text  string
 	}{
-		{4, "a€"},  // at the limit; € crosses byte 2
-		{5, "ab€"}, // at the limit; € crosses byte 2
-		{6, "ab€"}, // below the limit; € crosses byte 3
-		{8192, strings.Repeat("x", 4095) + "€"}, // default limit; € crosses byte 4096
+		{4, "a€"},
+		{5, "ab€"},
+		{6, "ab€"},
+		{8192, strings.Repeat("x", 4095) + "€"},
 	} {
 		whole := newOutputBuffer(tc.limit)
 		whole.Write([]byte(tc.text))

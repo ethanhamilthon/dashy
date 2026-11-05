@@ -7,7 +7,6 @@ import (
 	"time"
 )
 
-// A transient server error is retried; the user sees a notice and the turn succeeds.
 func TestRetrySucceedsAfterTransientFailure(t *testing.T) {
 	fp := &fakeProvider{
 		reply:  func(int, string) string { return textReply("ok") },
@@ -27,7 +26,6 @@ func TestRetrySucceedsAfterTransientFailure(t *testing.T) {
 	}
 }
 
-// Client errors and persistent server errors are not retried beyond the attempt limit.
 func TestRetryStopsWhereItShould(t *testing.T) {
 	client := &fakeProvider{reply: func(int, string) string { return textReply("ok") },
 		status: func(int) int { return http.StatusBadRequest }}
@@ -41,7 +39,6 @@ func TestRetryStopsWhereItShould(t *testing.T) {
 	}
 }
 
-// Once output has been shown, a failed stream is never retried, so text is not duplicated.
 func TestRetryDoesNotDuplicateStreamedOutput(t *testing.T) {
 	fp := &fakeProvider{reply: func(int, string) string {
 		return sse(`{"type":"response.output_text.delta","output_index":0,"delta":"partial"}`)
@@ -52,8 +49,6 @@ func TestRetryDoesNotDuplicateStreamedOutput(t *testing.T) {
 	}
 }
 
-// The pause doubles from one second and never exceeds eight seconds, even when the
-// provider asks for longer (Retry-After is clamped, so huge values cannot overflow).
 func TestRetryDelayIsBounded(t *testing.T) {
 	if got := delay(0, nil); got != time.Second {
 		t.Fatalf("first pause %s", got)

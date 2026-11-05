@@ -33,7 +33,6 @@ func TestReadWritePatch(t *testing.T) {
 	if data, _ := os.ReadFile(path); string(data) != "one\n2\nthree\n" {
 		t.Fatalf("patched: %q", data)
 	}
-	// A failing block leaves the file as it was, earlier blocks included.
 	if _, err := runTool(t, "<<<<<<< SEARCH\none\n=======\n1\n>>>>>>> REPLACE\n<<<<<<< SEARCH\nmissing\n=======\nx\n>>>>>>> REPLACE\n", "patch", path); err == nil || !strings.Contains(err.Error(), "block 2") {
 		t.Fatalf("missing search: %v", err)
 	}
@@ -83,7 +82,6 @@ func TestGrep(t *testing.T) {
 	}
 }
 
-// Malformed or empty blocks change nothing; untouched line endings stay as they were.
 func TestPatchRejectsMalformedAndKeepsLineEndings(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "a.txt")
 	patch := func(file, blocks string) (string, error) {
@@ -125,7 +123,6 @@ type brokenWriter struct{}
 
 func (brokenWriter) Write([]byte) (int, error) { return 0, errors.New("disk full") }
 
-// A result that cannot be written fails the command.
 func TestOutputFailureIsAnError(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "a.txt")
 	os.WriteFile(path, []byte("x\n"), 0600)
@@ -135,7 +132,6 @@ func TestOutputFailureIsAnError(t *testing.T) {
 	}
 }
 
-// After -- every argument is positional, even dash-prefixed ones.
 func TestGrepDoubleDash(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "a.txt")
@@ -146,7 +142,6 @@ func TestGrepDoubleDash(t *testing.T) {
 	}
 }
 
-// Special and huge files are refused; unreadable files make grep fail instead of looking like no match.
 func TestReadRefusesSpecialFilesAndGrepReportsFailures(t *testing.T) {
 	if _, err := runTool(t, "", "read", "/dev/zero"); err == nil || !strings.Contains(err.Error(), "not a regular file") {
 		t.Fatalf("read /dev/zero: %v", err)

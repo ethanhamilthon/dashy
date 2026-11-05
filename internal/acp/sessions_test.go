@@ -26,7 +26,6 @@ func TestResumeRestoresWithoutReplay(t *testing.T) {
 
 	w2 := connect(t)
 	w2.initialize(t)
-	// mcpServers is optional for resume.
 	w2.request(t, 2, "session/resume", map[string]any{"sessionId": id, "cwd": dir})
 	f := w2.response(t, 2)
 	if f.Error != nil {
@@ -148,7 +147,6 @@ func TestCloseCancelsTurnAndReleasesSession(t *testing.T) {
 	if f := w.response(t, 6); f.Error == nil || f.Error.Code != -32002 {
 		t.Fatal(f)
 	}
-	// The lock is released: the same connection can open the session again.
 	if f := load(t, w, 7, id, filepath.Clean(dir)); f.Error != nil {
 		t.Fatal(f.Error)
 	}

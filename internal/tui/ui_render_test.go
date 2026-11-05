@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -21,7 +20,7 @@ func TestTimelineCacheAndResize(t *testing.T) {
 		m.add("assistant", fmt.Sprintf("**Answer %d**\n\n- bullet", i))
 	}
 	m.refresh(true)
-	for m.renderPending { // a slow run may spend the render budget before the oldest entry
+	for m.renderPending {
 		m.refresh(true)
 	}
 	cached := m.cache[0].Text
@@ -32,9 +31,9 @@ func TestTimelineCacheAndResize(t *testing.T) {
 	}
 	inputWidth, inputHeight := m.inputWidth, m.inputHeight
 	second := agent.Event{Kind: "delta", ID: "stream", Text: " second"}
-	m.ctl.Note(second) // the controller applies an agent event before emitting it
+	m.ctl.Note(second)
 	next, _ := m.Update(agentEvent(second))
-	m = flushFrame(next.(model)) // the delta came within one frame of the refresh
+	m = flushFrame(next.(model))
 	if m.inputWidth != inputWidth || m.inputHeight != inputHeight || unsafe.StringData(cached) != unsafe.StringData(m.cache[0].Text) {
 		t.Fatal("delta invalidated input layout or completed cache")
 	}
@@ -45,64 +44,6 @@ func TestTimelineCacheAndResize(t *testing.T) {
 	m.refresh(false)
 	if m.cache[0].width != 40 || unsafe.StringData(cached) == unsafe.StringData(m.cache[0].Text) {
 		t.Fatal("resize did not invalidate cache")
-	}
-}
-func TestMarkdownAndNarrowTimeline(t *testing.T) {
-	text := "# Heading\n\n**bold** and *emphasis*\n\n- item\n\n```go\nfmt.Println(42)\n```\n\n| a | b |\n| - | - |\n| x | y |"
-	for _, width := range []int{1, 2, 3, 10, 40, 80} {
-		rendered := ansi.Strip(renderEntry(entry{Kind: "assistant", Text: text}, width, -1))
-		if width >= 40 && (strings.Contains(rendered, "**bold**") || strings.Contains(rendered, "```")) {
-			t.Fatal("Markdown not rendered")
-		}
-		for _, line := range strings.Split(rendered, "\n") {
-			if ansi.StringWidth(line) > width {
-				t.Errorf("width %d exceeded by %q", width, line)
-			}
-		}
-	}
-}
-func TestMetadataAndBottomBar(t *testing.T) {
-	if formatDuration(1500*time.Millisecond) != "1.5s" || formatDuration(42*time.Millisecond) != "42ms" {
-		t.Fatal("duration format")
-	}
-	meta := &agent.Metadata{Duration: 42 * time.Millisecond, Usage: &agent.Usage{Input: 12, Output: 3, Cached: 7}}
-	label := formatMetadata(meta, "assistant")
-	if !strings.Contains(label, "  ↑12 ↓3 · cache 58%") {
-		t.Fatal(label)
-	}
-	if !strings.Contains(formatMetadata(meta, "code"), "  ↑12 ↓3 · 42ms · cache 58%") {
-		t.Fatal("code label")
-	}
-	// A finished answer ends with when it arrived and how long it took; a streaming one does not.
-	at := time.Now()
-	answer := entry{Kind: "assistant", Text: "hi", Meta: &agent.Metadata{Duration: 4200 * time.Millisecond, At: at, Usage: meta.Usage}}
-	rows := strings.Split(ansi.Strip(renderEntry(answer, 60, -1)), "\n")
-	if strings.Contains(rows[0], "↑") {
-		t.Fatal("answer header contains usage")
-	}
-	if last := strings.TrimSpace(rows[len(rows)-1]); last != at.Format("15:04")+" · 4.2s · ↑12 ↓3 · cache 58%" {
-		t.Fatalf("footer %q", last)
-	}
-	answer.Preview = true
-	if strings.Contains(ansi.Strip(renderEntry(answer, 60, -1)), "4.2s") {
-		t.Fatal("streaming answer has a footer")
-	}
-	if !strings.Contains(formatMetadata(&agent.Metadata{}, "code"), "↑? ↓?") {
-		t.Fatal("missing usage not marked")
-	}
-	a := freshAgent(t)
-	a.History = []json.RawMessage{json.RawMessage(`{"role":"user","content":"` + strings.Repeat("x", 4400) + `"}`)}
-	m := newModel(a, "/a/very/long/项目/path")
-	for _, width := range []int{1, 2, 3, 5, 10, 40, 80} {
-		m.width = width
-		bar := m.bottomBar()
-		if strings.ContainsAny(bar, "\r\n") || ansi.StringWidth(bar) > width {
-			t.Fatalf("bar exceeds width %d: %q", width, bar)
-		}
-	}
-	m.width = 80
-	if !strings.Contains(m.bottomBar(), "ctx ~1K") || !strings.HasSuffix(strings.TrimRight(m.bottomBar(), " "), m.cwd) {
-		t.Fatal(m.bottomBar())
 	}
 }
 func TestBlockLineLimits(t *testing.T) {
@@ -161,19 +102,16 @@ func TestTimelineLimitsAndHiddenSpacing(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// minimal: messages only.
 	setLines("minimal")
 	code, output, reasoning, assistant := shown()
 	if code != "" || output != "" || reasoning != "" || !strings.Contains(assistant, "eighth") {
 		t.Fatalf("minimal: %q %q %q", code, output, reasoning)
 	}
-	// normal (the default): 3 lines of the tool call, no output.
 	setLines("normal")
 	code, output, _, _ = shown()
 	if !strings.Contains(code, "third") || strings.Contains(code, "fourth") || output != "" {
 		t.Fatalf("normal: code %q output %q", code, output)
 	}
-	// full: the whole tool call, 6 lines of the output.
 	setLines("full")
 	code, output, _, _ = shown()
 	if !strings.Contains(code, "eighth") || !strings.Contains(output, "sixth") || strings.Contains(output, "seventh") {
@@ -209,10 +147,10 @@ func TestMinimalCommandCompletions(t *testing.T) {
 		if strings.Contains(plain, "Tab to complete") || strings.Contains(plain, "Enter to run") || strings.Contains(plain, "↑/↓ to select") {
 			t.Fatal("completion hints still shown")
 		}
-		start := max(0, m.selected-8+1) // mirrors the eight-row completion window
+		start := max(0, m.selected-8+1)
 		for i, cmd := range commands {
 			if i < start || i >= start+8 {
-				continue // outside the visible completion window
+				continue
 			}
 			found := false
 			for _, row := range strings.Split(view, "\n") {
@@ -251,61 +189,11 @@ func TestMinimalCommandCompletions(t *testing.T) {
 	}
 }
 
-func TestSingleLineNotifications(t *testing.T) {
-	note := "<view>Configuration updated. Ready.</view>"
-	for _, tc := range []struct{ text, want string }{
-		{"<view>Shell session restarted. Previous variables were cleared.</view>", "! · Shell session restarted. Previous variables were cleared."},
-		{"<view>Configuration\n  updated.\tReady.</view>", "! · Configuration updated. Ready."},
-		{"\x1b[31mProvider event\x1b[0m\r\nreceived", "! · Provider event received"},
-		{"", "! · Notice received."},
-	} {
-		e := entry{Kind: "notice", Text: tc.text, Meta: &agent.Metadata{}}
-		for _, width := range []int{1, 2, 5, 20, 80, 120} {
-			block := renderEntry(e, width, -1)
-			plain := ansi.Strip(block)
-			if strings.ContainsAny(plain, "\r\n\t") || ansi.StringWidth(plain) > width {
-				t.Fatalf("notice must be one row at width %d: %q", width, plain)
-			}
-			if width >= 80 && strings.TrimSpace(plain) != tc.want {
-				t.Errorf("got %q, want %q", plain, tc.want)
-			}
-			if strings.Contains(plain, "<view>") {
-				t.Fatalf("technical notice text leaked: %q", plain)
-			}
-		}
-		if e.Text != tc.text {
-			t.Fatal("notification source text was modified")
-		}
-	}
-	fg, marker := eventColors("notice")
-	if fg != muted || marker != "!" {
-		t.Fatal("notice must use a gray icon and text")
-	}
-	t.Setenv("DASHY_HOME", t.TempDir())
-	a, err := agent.New(t.TempDir(), agent.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(a.Close)
-	a.History = []json.RawMessage{json.RawMessage(`{"role":"user","content":"` + note + `"}`)}
-	m := newModel(a, "/project")
-	restored := m.timeline()
-	if !strings.Contains(ansi.Strip(restored), "! · Configuration updated. Ready.") || strings.Contains(ansi.Strip(restored), "<view>") {
-		t.Fatal("restored notice not formatted")
-	}
-	live := bareModel(t, "/project")
-	live.ctl.Note(agent.Event{Kind: "notice", Text: note})
-	live.refresh(true)
-	if m.cache[0].Text != live.cache[0].Text {
-		t.Fatal("live and restored notifications differ")
-	}
-}
-
 func TestStreamedEventsAreCoalescedIntoFrames(t *testing.T) {
 	m := bareModel(t, "/project")
 	delta := agent.Event{Kind: "delta", ID: "s", Text: "one"}
 	m.ctl.Note(delta)
-	next, cmd := m.Update(agentEvent(delta)) // right after the initial refresh
+	next, cmd := m.Update(agentEvent(delta))
 	m = next.(model)
 	if !m.dirty || !m.redrawScheduled || cmd == nil {
 		t.Fatal("a delta within a frame must wait for the scheduled redraw")

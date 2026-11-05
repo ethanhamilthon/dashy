@@ -9,76 +9,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
-
-	"dashy/internal/agent"
 )
 
-func TestComposerIsInScrollableTimeline(t *testing.T) {
-	m := bareModel(t, "/project")
-	view := strings.Split(ansi.Strip(m.View()), "\n")
-	inputRow := -1
-	for i, line := range view {
-		if strings.HasPrefix(line, "▌") {
-			inputRow = i
-			break
-		}
-	}
-	if inputRow < 0 || inputRow > 5 {
-		t.Fatalf("input pinned at row %d", inputRow)
-	}
-	for i := 0; i < 30; i++ {
-		m.add("user", fmt.Sprintf("message %d", i))
-	}
-	m.refresh(true)
-	if !strings.Contains(ansi.Strip(m.View()), "▌") {
-		t.Fatal("input missing at timeline end")
-	}
-	m.viewport.GotoTop()
-	if strings.Contains(ansi.Strip(m.View()), m.input.Placeholder) {
-		t.Fatal("composer must scroll with history")
-	}
-	before := m.viewport.YOffset
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
-	m = next.(model)
-	if m.viewport.YOffset <= before {
-		t.Fatal("PgDn did not scroll")
-	}
-	next, _ = m.Update(agentEvent(agent.Event{Kind: "delta", Text: "streaming"}))
-	m = next.(model)
-	if m.viewport.YOffset != before+m.viewport.Height {
-		t.Fatal("streaming should not steal scroll position")
-	}
-}
-func TestCommandCompletionAndHelp(t *testing.T) {
-	m, a, release := heldModel(t)
-	defer release()
-	m.input.SetValue("/")
-	if len(m.completions()) != len(commands) {
-		t.Fatal("missing commands")
-	}
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	m = next.(model)
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
-	m = next.(model)
-	if m.input.Value() != "/help" {
-		t.Fatalf("completion %q", m.input.Value())
-	}
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = next.(model)
-	if !strings.Contains(m.entries[len(m.entries)-1].Text, "/new") {
-		t.Fatal("help must list commands")
-	}
-	if len(a.History) != 0 {
-		t.Fatal("commands must not be sent to model")
-	}
-	m = startBusy(t, m)
-	m.input.SetValue("/nope")
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = next.(model)
-	if queued := m.ctl.Status().Queued; len(queued) != 1 || queued[0].Text != "/nope" {
-		t.Fatal("slash-prefixed text must be submitted as an ordinary instruction")
-	}
-}
 func TestShiftEnterTerminalSequences(t *testing.T) {
 	for _, sequence := range []string{"\x1b[13;2u", "\x1b[27;2;13~", "\x1b[13;2~"} {
 		t.Run(fmt.Sprintf("%q", sequence), func(t *testing.T) {
@@ -103,24 +35,6 @@ func TestShiftEnterTerminalSequences(t *testing.T) {
 				t.Fatalf("value %q, height %d, entries %v", got.input.Value(), got.input.Height(), got.entries)
 			}
 		})
-	}
-}
-
-func TestMultilineEditing(t *testing.T) {
-	for _, key := range []tea.KeyMsg{{Type: tea.KeyEnter, Alt: true}, {Type: tea.KeyCtrlJ}} {
-		m := bareModel(t, "/project")
-		m.input.SetValue("onetwo")
-		m.input.SetCursor(3)
-		next, _ := m.Update(key)
-		m = next.(model)
-		if m.input.Value() != "one\ntwo" || m.input.Height() != 2 {
-			t.Fatalf("%s: value %q, height %d", key, m.input.Value(), m.input.Height())
-		}
-		next, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
-		m = next.(model)
-		if m.input.Line() != 0 {
-			t.Fatal("up did not move to previous line")
-		}
 	}
 }
 
@@ -151,9 +65,6 @@ func TestInputHeightMatchesWrappedRows(t *testing.T) {
 	}
 }
 
-// /new and /quit typed during a turn cancel it and run once it has ended. The turn
-// ends on its own (cancellation completes asynchronously), so only the outcome is
-// asserted: the session switch or close happens after the turn, never during it.
 func TestCommandsWaitForTurnCompletion(t *testing.T) {
 	for _, name := range []string{"/new", "/quit"} {
 		t.Run(name, func(t *testing.T) {

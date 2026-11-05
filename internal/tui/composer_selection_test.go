@@ -10,7 +10,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// composerModel returns a model whose composer holds value, sized to width x height.
 func composerModel(t *testing.T, value string, width, height int) model {
 	t.Helper()
 	m := bareModel(t, "/project")
@@ -20,23 +19,12 @@ func composerModel(t *testing.T, value string, width, height int) model {
 	return m
 }
 
-// composerPoint returns the screen cell of visual composer row r at text column c.
-// The two-cell rail precedes the text.
 func composerPoint(m model, r, c int) (int, int) {
 	return 2 + c, m.inputTop - m.viewport.YOffset + r
 }
 
 func mouseAt(action tea.MouseAction, x, y int) tea.MouseMsg {
 	return tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonLeft, Action: action}
-}
-
-// dragComposer selects the composer text between two visual cells.
-func dragComposer(m *model, fromRow, fromCol, toRow, toCol int) {
-	x, y := composerPoint(*m, fromRow, fromCol)
-	m.mouseSelection(mouseAt(tea.MouseActionPress, x, y))
-	x, y = composerPoint(*m, toRow, toCol)
-	m.mouseSelection(mouseAt(tea.MouseActionMotion, x, y))
-	m.mouseSelection(mouseAt(tea.MouseActionRelease, x, y))
 }
 
 func update(m model, msg tea.Msg) model {
@@ -85,7 +73,6 @@ func TestComposerLayoutWrapsLikeTextarea(t *testing.T) {
 	}
 }
 
-// probeLayout is the textarea based layout that composerLayout replaced; it is the reference.
 func probeLayout(value string, width int) []composerRow {
 	if value == "" {
 		return nil

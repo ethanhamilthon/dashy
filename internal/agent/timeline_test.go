@@ -6,8 +6,6 @@ import (
 	"testing"
 )
 
-// A turn displays as the records derived from its saved history, which is what a resumed
-// session shows.
 func TestRecordsDerivedFromHistory(t *testing.T) {
 	fp := &fakeProvider{reply: func(n int, body string) string {
 		if n == 1 {
@@ -29,7 +27,6 @@ func TestRecordsDerivedFromHistory(t *testing.T) {
 	}
 }
 
-// Reasoning items keep their summary text, which is what the display shows.
 func TestReasoningSummaryIsKept(t *testing.T) {
 	item := json.RawMessage(`{"type":"reasoning","summary":[{"type":"summary_text","text":"weighed the options"}]}`)
 	records := RecordsForItem(item)

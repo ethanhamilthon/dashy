@@ -18,18 +18,15 @@ import (
 	"dashy/internal/control"
 )
 
-// fixture is a TUI model over a real agent and provider stub.
 type fixture struct {
 	m       model
 	a       *agent.Agent
-	fail    atomic.Bool // answer every request with HTTP 400
+	fail    atomic.Bool
 	hold    atomic.Pointer[chan struct{}]
-	reached chan struct{} // one value per streamed request that reached the provider
+	reached chan struct{}
 	project string
 }
 
-// newFixture builds a model whose provider answers "answer" after the hold channel
-// (when set) is closed. home is DASHY_HOME; providers are saved as settings.
 func newFixture(t *testing.T, providers bool) *fixture {
 	t.Helper()
 	f := &fixture{project: t.TempDir(), reached: make(chan struct{}, 64)}
@@ -90,7 +87,6 @@ func newFixture(t *testing.T, providers bool) *fixture {
 	return f
 }
 
-// pump applies the controller events queued so far, as the program would.
 func (f *fixture) pump() {
 	for {
 		e, ok := f.m.events.TryPop()
@@ -103,7 +99,6 @@ func (f *fixture) pump() {
 	}
 }
 
-// settle pumps events until the controller is idle again.
 func (f *fixture) settle(t *testing.T) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
@@ -120,7 +115,6 @@ func (f *fixture) settle(t *testing.T) {
 	}
 }
 
-// run sends text through the composer path and waits for the turn to finish.
 func (f *fixture) run(t *testing.T, text string) {
 	t.Helper()
 	next, _ := f.m.sendInput(agent.Input{Text: text})
@@ -128,7 +122,6 @@ func (f *fixture) run(t *testing.T, text string) {
 	f.settle(t)
 }
 
-// command executes a slash command as the composer does.
 func (f *fixture) command(t *testing.T, name string) {
 	t.Helper()
 	next, _ := f.m.runCommand(name)
@@ -136,7 +129,6 @@ func (f *fixture) command(t *testing.T, name string) {
 	f.pump()
 }
 
-// flushFrame applies a refresh that the frame throttle deferred.
 func flushFrame(m model) model {
 	if m.dirty {
 		next, _ := m.Update(redraw{})
@@ -145,18 +137,14 @@ func flushFrame(m model) model {
 	return m
 }
 
-// key sends one key press to the model, as the program would.
 func (f *fixture) key(k tea.KeyMsg) {
 	if next, _, handled := f.m.pickerKey(k); handled {
 		f.m = next.(model)
 	}
 }
 
-// requestSignals maps a test controller to the channel that receives one value per
-// streamed provider request, so tests can wait until a turn is really in flight.
 var requestSignals sync.Map
 
-// heldFixture is a fixture whose provider answers only after the returned release is called.
 func heldFixture(t *testing.T) (*fixture, func()) {
 	t.Helper()
 	f := newFixture(t, true)
@@ -168,21 +156,12 @@ func heldFixture(t *testing.T) (*fixture, func()) {
 	return f, release
 }
 
-// testModel returns a model over a real agent whose provider answers at once.
-func testModel(t *testing.T) (model, *agent.Agent) {
-	t.Helper()
-	f := newFixture(t, true)
-	return f.m, f.a
-}
-
-// heldModel returns a model whose provider answers only after release is called.
 func heldModel(t *testing.T) (model, *agent.Agent, func()) {
 	t.Helper()
 	f, release := heldFixture(t)
 	return f.m, f.a, release
 }
 
-// awaitRequest blocks until the provider has received a streamed request for m.
 func awaitRequest(t *testing.T, m model) {
 	t.Helper()
 	signals, ok := requestSignals.Load(m.ctl)
@@ -196,7 +175,6 @@ func awaitRequest(t *testing.T, m model) {
 	}
 }
 
-// busyModel starts a turn whose answer waits for release, so the model is busy as during a real request.
 func busyModel(t *testing.T) (model, func()) {
 	t.Helper()
 	m, _, release := heldModel(t)
@@ -204,7 +182,6 @@ func busyModel(t *testing.T) (model, func()) {
 	return m, release
 }
 
-// startBusy begins a held turn through the controller without touching the composer.
 func startBusy(t *testing.T, m model) model {
 	t.Helper()
 	if err := m.ctl.Input(agent.Input{Text: "busy"}); err != nil {
@@ -214,7 +191,6 @@ func startBusy(t *testing.T, m model) model {
 	return settle(m)
 }
 
-// awaitIdle waits for the active operation to finish, applying its events.
 func awaitIdle(t *testing.T, m model) model {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
@@ -230,7 +206,6 @@ func awaitIdle(t *testing.T, m model) model {
 	}
 }
 
-// settle applies the controller events already emitted and returns the updated model.
 func settle(m model) model {
 	for {
 		event, ok := m.events.TryPop()
@@ -242,16 +217,13 @@ func settle(m model) model {
 	}
 }
 
-// key sends one key press and applies the controller events it caused.
 func key(m model, k tea.KeyMsg) model {
 	next, _ := m.Update(k)
 	return settle(next.(model))
 }
 
-// agentEvent wraps an agent event as the controller delivers it.
 func agentEvent(e agent.Event) control.Event { return control.Event{Kind: "agent", Agent: &e} }
 
-// freshAgent opens a new project agent with an empty DASHY_HOME and no providers.
 func freshAgent(t *testing.T) *agent.Agent {
 	t.Helper()
 	t.Setenv("DASHY_HOME", t.TempDir())
@@ -263,14 +235,12 @@ func freshAgent(t *testing.T) *agent.Agent {
 	return a
 }
 
-// freshModel is a model over freshAgent.
 func freshModel(t *testing.T) (model, *agent.Agent) {
 	t.Helper()
 	a := freshAgent(t)
 	return newModel(a, a.Shell.Dir), a
 }
 
-// bareModel is a model over freshAgent in the given working directory.
 func bareModel(t *testing.T, cwd string) model {
 	t.Helper()
 	m, _ := freshModel(t)

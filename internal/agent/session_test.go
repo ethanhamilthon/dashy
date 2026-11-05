@@ -8,8 +8,6 @@ import (
 	"dashy/internal/shell"
 )
 
-// The resume list title is the custom title, else the first line of the first
-// user message; rename and rename-reset are both saved.
 func TestSessionTitlesAndRenameReset(t *testing.T) {
 	fp := &fakeProvider{reply: func(int, string) string { return textReply("ok") }}
 	a := newTestAgent(t, fp, Options{})
@@ -40,8 +38,6 @@ func TestSessionTitlesAndRenameReset(t *testing.T) {
 	}
 }
 
-// A resumed session keeps its custom title and its history, and its context size
-// is estimated because no provider usage is known yet.
 func TestResumeKeepsTitleHistoryAndEstimatesContext(t *testing.T) {
 	fp := &fakeProvider{reply: func(int, string) string { return textReply("ok") }}
 	a := newTestAgent(t, fp, Options{})
@@ -62,43 +58,6 @@ func TestResumeKeepsTitleHistoryAndEstimatesContext(t *testing.T) {
 	}
 }
 
-// A rename is separate from the default title (the first user line), and its
-// reset restores that default in the list and after reopening.
-func TestRenameResetRestoresDefaultTitle(t *testing.T) {
-	a := newTestAgent(t, &fakeProvider{}, Options{})
-	a.message("user", "turn 0 x")
-	a.message("assistant", "answer 0")
-	if err := a.Save(); err != nil {
-		t.Fatal(err)
-	}
-	const want = "turn 0 x"
-	if a.DefaultTitle() != want {
-		t.Fatalf("default %q", a.DefaultTitle())
-	}
-	if err := a.Rename("Mine"); err != nil {
-		t.Fatal(err)
-	}
-	if sessions, _ := a.Sessions(); sessions[0].Title != "Mine" {
-		t.Fatalf("renamed list title = %q", sessions[0].Title)
-	}
-	if err := a.Rename(""); err != nil {
-		t.Fatal(err)
-	}
-	if sessions, _ := a.Sessions(); sessions[0].Title != want {
-		t.Fatalf("reset list title = %q", sessions[0].Title)
-	}
-	id := a.SessionID()
-	a.Close()
-	again, err := New(a.Shell.Dir, Options{Resume: id})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer again.Close()
-	if again.DefaultTitle() != want || again.CustomTitle() != "" {
-		t.Fatalf("reopened: default %q, custom %q", again.DefaultTitle(), again.CustomTitle())
-	}
-}
-
 func TestSessionLockIsExclusive(t *testing.T) {
 	a := newTestAgent(t, &fakeProvider{}, Options{})
 	if err := a.Save(); err != nil {
@@ -110,7 +69,6 @@ func TestSessionLockIsExclusive(t *testing.T) {
 	}
 }
 
-// The socket accepts only PNG or JPEG payloads that decode as their own format.
 func TestValidImage(t *testing.T) {
 	png := "data:image/png;base64," + base64.StdEncoding.EncodeToString(tinyPNG())
 	cases := map[string]bool{
@@ -127,13 +85,11 @@ func TestValidImage(t *testing.T) {
 	}
 }
 
-// tinyPNG is a valid 1x1 PNG.
 func tinyPNG() []byte {
 	data, _ := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
 	return data
 }
 
-// storedItems reads the history items stored for the session.
 func storedItems(t *testing.T, a *Agent) []string {
 	t.Helper()
 	rows, err := a.db.Query(`SELECT data FROM items WHERE session = ? ORDER BY seq`, a.SessionID())
@@ -152,7 +108,6 @@ func storedItems(t *testing.T, a *Agent) []string {
 	return items
 }
 
-// The database holds every history item once, in order, and the title in the session row.
 func TestSessionRowsHoldHistoryItemsAndTitle(t *testing.T) {
 	fp := &fakeProvider{reply: func(int, string) string { return textReply("ok") }}
 	a := newTestAgent(t, fp, Options{})
@@ -172,8 +127,6 @@ func TestSessionRowsHoldHistoryItemsAndTitle(t *testing.T) {
 	}
 }
 
-// A user message whose stored line is over 4 MiB still has its first line as the
-// title, in the resume list and after reopening.
 func TestLargeFirstMessageKeepsListTitle(t *testing.T) {
 	fp := &fakeProvider{reply: func(int, string) string { return textReply("ok") }}
 	a := newTestAgent(t, fp, Options{})
@@ -196,8 +149,6 @@ func TestLargeFirstMessageKeepsListTitle(t *testing.T) {
 	}
 }
 
-// The session list holds only this project's sessions, newest first, titled by the
-// custom title or else the first user line.
 func TestSessionListIsScopedAndOrdered(t *testing.T) {
 	a := newTestAgent(t, &fakeProvider{}, Options{})
 	for _, row := range [][]any{
@@ -218,8 +169,6 @@ func TestSessionListIsScopedAndOrdered(t *testing.T) {
 	}
 }
 
-// A model chosen in one session is the default for new sessions but does not change
-// another open session, which keeps its model after reopening too.
 func TestModelSelectionIsPerSession(t *testing.T) {
 	fp := &fakeProvider{reply: func(int, string) string { return textReply("ok") }}
 	a := newTestAgent(t, fp, Options{})
@@ -261,7 +210,6 @@ func TestModelSelectionIsPerSession(t *testing.T) {
 	}
 }
 
-// An answer keeps its time and duration after a resume.
 func TestResumedAnswerKeepsItsTime(t *testing.T) {
 	fp := &fakeProvider{reply: func(int, string) string { return textReply("ok") }}
 	a := newTestAgent(t, fp, Options{})

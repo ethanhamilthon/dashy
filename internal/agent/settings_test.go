@@ -8,7 +8,6 @@ import (
 	"testing"
 )
 
-// rawSettingsHome is a DASHY_HOME whose database stores data as settings, unvalidated.
 func rawSettingsHome(t *testing.T, data string) string {
 	t.Helper()
 	home := t.TempDir()
@@ -23,7 +22,6 @@ func rawSettingsHome(t *testing.T, data string) string {
 	return home
 }
 
-// A fresh database means defaults; invalid stored settings are rejected with the reason in the error.
 func TestLoadSettingsDefaultsAndValidation(t *testing.T) {
 	s, err := LoadSettings(t.TempDir())
 	if err != nil || !s.ReasoningSummary || s.ShowLines != "normal" {
@@ -45,7 +43,6 @@ func TestLoadSettingsDefaultsAndValidation(t *testing.T) {
 	}
 }
 
-// The database is private to the user, and saved settings read back unchanged.
 func TestSaveSettingsIsPrivateAndRoundTrips(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
 	s := DefaultSettings()
@@ -65,7 +62,6 @@ func TestSaveSettingsIsPrivateAndRoundTrips(t *testing.T) {
 	}
 }
 
-// Choices made in the app are applied at once and saved; invalid changes change nothing.
 func TestSelectionsAreAppliedAndSaved(t *testing.T) {
 	a := newTestAgent(t, &fakeProvider{reply: func(int, string) string { return "" }}, Options{})
 	if err := a.Select("p", "m2", "high"); err != nil {
@@ -92,7 +88,6 @@ func TestSelectionsAreAppliedAndSaved(t *testing.T) {
 	}
 }
 
-// The bash output limit comes from settings only: default 8192, validated, and applied to calls.
 func TestShellOutputSetting(t *testing.T) {
 	if s, err := LoadSettings(t.TempDir()); err != nil || s.ShellOutput != ShellOutput {
 		t.Fatalf("default: %+v, %v", s, err)
@@ -113,7 +108,6 @@ func TestShellOutputSetting(t *testing.T) {
 	}
 }
 
-// A change saved by another process while this one edits is kept: the edit is applied again on top.
 func TestConcurrentSettingsEditsKeepBoth(t *testing.T) {
 	a := newTestAgent(t, &fakeProvider{reply: func(int, string) string { return "" }}, Options{})
 	other := true
@@ -143,8 +137,6 @@ func TestConcurrentSettingsEditsKeepBoth(t *testing.T) {
 	}
 }
 
-// Editing keeps the key when none is given and a rename carries the selection;
-// deleting the selected provider clears the selection.
 func TestEditRenameAndDeleteProvider(t *testing.T) {
 	a := newTestAgent(t, &fakeProvider{reply: func(int, string) string { return "" }}, Options{})
 	if err := a.SaveProvider("", "q", Provider{BaseURL: "https://q.example", APIKey: "secret"}); err != nil {

@@ -25,7 +25,7 @@ func TestUpRecallsOnlyPendingSteeringOnEmptyInput(t *testing.T) {
 		t.Fatal("nonempty draft overwritten")
 	}
 	m.input.Reset()
-	release() // the agent accepts "first" at its next boundary
+	release()
 	m = awaitIdle(t, m)
 	m = key(m, tea.KeyMsg{Type: tea.KeyUp})
 	if m.input.Value() != "" {

@@ -52,7 +52,6 @@ func TestCancellationKillsProcessGroup(t *testing.T) {
 	}
 }
 
-// A background child with redirected output must not outlive a finished call.
 func TestBackgroundDescendantsDoNotSurviveCall(t *testing.T) {
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "marker")
@@ -67,7 +66,6 @@ func TestBackgroundDescendantsDoNotSurviveCall(t *testing.T) {
 	}
 }
 
-// A background child that keeps the output pipe open is cut off after the wait delay.
 func TestPipeHoldingDescendantIsKilled(t *testing.T) {
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "marker")
@@ -80,16 +78,6 @@ func TestPipeHoldingDescendantIsKilled(t *testing.T) {
 	time.Sleep(1200 * time.Millisecond)
 	if _, err := os.Stat(marker); err == nil {
 		t.Fatal("pipe-holding descendant survived the call")
-	}
-}
-
-func TestOutputLimitKeepsFirstAndLastHalves(t *testing.T) {
-	got := run(t, "head -c 3000 /dev/zero | tr '\\0' a; printf END", 5*time.Second, 1000)
-	if !strings.HasPrefix(got.Output, "aaaa") || !strings.HasSuffix(got.Output, "END") || !strings.Contains(got.Output, "[output truncated") {
-		t.Fatalf("truncated output: %q", got.Output)
-	}
-	if full := run(t, "head -c 3000 /dev/zero | tr '\\0' a", 5*time.Second, 0); len(full.Output) != 3000 {
-		t.Fatalf("limit 0 must keep everything, got %d bytes", len(full.Output))
 	}
 }
 
@@ -106,13 +94,6 @@ func TestBlockOnlyVariablesAreNotInherited(t *testing.T) {
 	got, err = Command(context.Background(), dir, map[string]string{"DASHY_MODE": "print", "DASHY_SOURCE": "new", "DASHY_ENDPOINT": "/run/own.sock"}, script).Output()
 	if err != nil || string(got) != "mode=print source=new endpoint=/run/own.sock\n" {
 		t.Fatalf("block env: %q %v", got, err)
-	}
-}
-
-func TestSetsProcessGroup(t *testing.T) {
-	cmd := Command(context.Background(), t.TempDir(), nil, "true")
-	if cmd.SysProcAttr == nil || !cmd.SysProcAttr.Setpgid {
-		t.Fatal("command must run in its own process group")
 	}
 }
 

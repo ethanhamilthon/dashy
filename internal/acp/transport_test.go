@@ -30,7 +30,6 @@ func TestMalformedFramesAndNotifications(t *testing.T) {
 			t.Fatalf("%s: %+v", tc.body, f)
 		}
 	}
-	// Unknown notifications, responses and unsupported work notifications produce no replies.
 	w.send(t, map[string]any{"jsonrpc": "2.0", "method": "unknown"})
 	w.send(t, map[string]any{"jsonrpc": "2.0", "id": "unknown", "result": map[string]any{}})
 	w.send(t, map[string]any{"jsonrpc": "2.0", "method": "session/new", "params": map[string]any{}})
@@ -111,7 +110,6 @@ func TestFrameLimitAndTruncatedFinalFrame(t *testing.T) {
 		t.Fatal("frame limit hung")
 	}
 	client.Close()
-	// A valid final JSON frame is accepted even when EOF omits its newline.
 	in, out := io.Pipe()
 	writer, reader := net.Pipe()
 	p := newPeer(context.Background(), in, writer)
@@ -141,7 +139,6 @@ func TestStalledWriterAndQueueOverflow(t *testing.T) {
 	if err := p.send(map[string]any{"first": true}); err != nil {
 		t.Fatal(err)
 	}
-	// No reader: a full bounded queue closes the connection rather than dropping updates.
 	overflow := false
 	for i := 0; i < maxPending+2; i++ {
 		if p.send(map[string]any{"n": i}) != nil {

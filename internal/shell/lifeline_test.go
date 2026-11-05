@@ -9,7 +9,6 @@ import (
 	"time"
 )
 
-// TestMain lets the test binary act as an owner process that starts a command and hangs.
 func TestMain(m *testing.M) {
 	if dir := os.Getenv("DASHY_TEST_OWNER"); dir != "" {
 		cmd := Command(context.Background(), dir, nil, "touch ready; sleep 1; touch survived")
@@ -22,7 +21,6 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// A command dies with its owner, even when the owner is killed with SIGKILL.
 func TestCommandDiesWithOwner(t *testing.T) {
 	dir := t.TempDir()
 	owner := exec.Command(os.Args[0], "-test.run=^$")

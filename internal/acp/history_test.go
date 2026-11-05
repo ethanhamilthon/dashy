@@ -40,7 +40,6 @@ func TestLoadRestoresHistoryAndProviderContext(t *testing.T) {
 	if err := os.Remove(filepath.Join(dir, "replay-marker")); err != nil {
 		t.Fatal(err)
 	}
-	// A new connection owns no in-memory agent: the load must read SQLite.
 	w.conn.Close()
 	<-w.done
 	w2 := connect(t)
@@ -78,7 +77,6 @@ func TestLoadRestoresHistoryAndProviderContext(t *testing.T) {
 			t.Fatalf("provider lost history %q: %s", text, body)
 		}
 	}
-	// Loading an already open session replays without appending to its history.
 	w2.updates = nil
 	if f := load(t, w2, 4, id, dir); f.Error != nil {
 		t.Fatal(f.Error)

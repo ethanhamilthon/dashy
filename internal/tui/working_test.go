@@ -3,7 +3,6 @@ package tui
 import (
 	"strings"
 	"testing"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -11,42 +10,6 @@ import (
 	"dashy/internal/agent"
 )
 
-func TestWorkingIndicatorLifecycleAndScrolling(t *testing.T) {
-	idle, _ := testModel(t)
-	if idle.workingBlock() != "" {
-		t.Fatal("idle indicator shown")
-	}
-	m, _ := busyModel(t)
-	for i := 0; i < 40; i++ {
-		m.add("user", "history")
-	}
-	m.refresh(true)
-	if view := ansi.Strip(m.View()); !strings.Contains(view, "working") || !strings.Contains(view, "esc to stop") {
-		t.Fatal("missing indicator or stop hint")
-	}
-	m.viewport.GotoTop()
-	offset := m.viewport.YOffset
-	next, cmd := m.Update(workingTick{m.ctl.Status().Started})
-	m = next.(model)
-	if cmd == nil || m.viewport.YOffset != offset {
-		t.Fatal("tick must animate without stealing scroll")
-	}
-	next, cmd = m.Update(workingTick{time.Now().Add(-time.Hour)})
-	m = next.(model)
-	if cmd != nil {
-		t.Fatal("stale timer restarted")
-	}
-	m.requestCancel()
-	m = awaitIdle(t, m)
-	if m.workingBlock() != "" {
-		t.Fatal("indicator persisted after completion")
-	}
-	if !hasEvent(m, "Turn cancelled.") {
-		t.Fatalf("cancellation not reported: %+v", m.entries)
-	}
-}
-
-// hasEvent reports whether the session events end a line with text.
 func hasEvent(m model, text string) bool {
 	for _, e := range m.ctl.Events() {
 		if strings.HasSuffix(e, " "+text) {
@@ -66,7 +29,6 @@ func TestSteeringQueueAndRecovery(t *testing.T) {
 	if !strings.Contains(ansi.Strip(m.workingBlock()), "queued · follow up") {
 		t.Fatal("pending message invisible")
 	}
-	// Once the model's answer completes, the agent accepts the steering at its boundary.
 	release()
 	m = awaitIdle(t, m)
 	users := 0

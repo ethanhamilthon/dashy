@@ -43,7 +43,6 @@ func TestSelectionTextAndHighlight(t *testing.T) {
 	if !strings.HasPrefix(ansi.Strip(marked[1]), "bravo") {
 		t.Fatalf("highlight changed the row text: %q", ansi.Strip(marked[1]))
 	}
-	// Highlighting the second occurrence of repeated text must not highlight the first.
 	repeat := selection{start: point{6, 0}, end: point{8, 0}}.highlight([]string{"foo + foo"}, 20)
 	if repeat[0] != "foo + \x1b[7mfoo\x1b[0m" {
 		t.Fatalf("repeated substring highlight = %q", repeat[0])
@@ -62,12 +61,10 @@ func TestSingleClickDoesNotCopy(t *testing.T) {
 	}
 }
 
-// Selection works on screen cells: wide characters take two, emoji and combining
-// sequences stay whole.
 func TestSelectionWideCharacters(t *testing.T) {
 	for _, c := range []struct {
 		line     string
-		from, to int // selected cells, inclusive
+		from, to int
 		want     string
 	}{
 		{"界ab", 2, 3, "ab"},

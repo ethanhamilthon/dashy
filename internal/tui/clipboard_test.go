@@ -90,7 +90,6 @@ func TestClipboardShortcutDecodesFromTerminalBytes(t *testing.T) {
 	}
 }
 
-// A pasted image goes into the draft as its path; the agent opens it with dashy view.
 func TestPastedImageInsertsPath(t *testing.T) {
 	m := bareModel(t, "/project")
 	m.input.SetValue("look at ")

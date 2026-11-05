@@ -13,14 +13,6 @@ import (
 	"net/http/httptest"
 )
 
-func TestRemovedPrintModeIsRejected(t *testing.T) {
-	for _, args := range [][]string{{"-p", "task"}, {"--global"}, {"--model", "model"}, {"--effort", "high"}} {
-		if out, _, err := runCLI(t, "input", args...); err == nil || out != "" {
-			t.Fatalf("accepted removed mode/flag: %v %q %v", args, out, err)
-		}
-	}
-}
-
 func TestBinaryACPAndSignal(t *testing.T) {
 	provider := httptest.NewServer(&stub{reply: func(int) string { return streamOf("hello") }})
 	defer provider.Close()

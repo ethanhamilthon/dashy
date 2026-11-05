@@ -23,7 +23,6 @@ func TestStreamFailureDiagnostics(t *testing.T) {
 	}
 }
 
-// A provider error that echoes the API key reaches the user and the events without it.
 func TestProviderFailuresNeverShowTheKey(t *testing.T) {
 	fp := &fakeProvider{reply: func(int, string) string {
 		return sse(`{"type":"response.failed","response":{"error":{"code":"server_error","message":"bad key sk-secret-123"}}}`)

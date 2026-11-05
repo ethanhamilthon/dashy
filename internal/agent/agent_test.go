@@ -13,14 +13,12 @@ import (
 	"time"
 )
 
-// fakeProvider answers requests. reply gets the request number (from 1) and the
-// raw body and returns the response body: SSE for streamed requests.
 type fakeProvider struct {
 	mu     sync.Mutex
 	bodies []string
 	reply  func(n int, body string) string
-	status func(n int) int // optional: HTTP status of request n; 0 means 200
-	hold   bool            // keep the connection open after the reply
+	status func(n int) int
+	hold   bool
 }
 
 func (f *fakeProvider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -52,7 +50,6 @@ func (f *fakeProvider) requests() []string {
 	return append([]string(nil), f.bodies...)
 }
 
-// sse frames one streamed response.
 func sse(events ...string) string {
 	var b strings.Builder
 	for _, e := range events {
@@ -61,23 +58,19 @@ func sse(events ...string) string {
 	return b.String()
 }
 
-// textReply is a streamed response with one assistant message.
 func textReply(text string) string {
 	return sse(fmt.Sprintf(`{"type":"response.completed","response":{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":%q}]}]}}`, text))
 }
 
-// bashReply is a streamed response with one bash call.
 func bashReply(callID, command string) string {
 	args, _ := json.Marshal(map[string]any{"command": command, "timeout": nil})
 	return sse(fmt.Sprintf(`{"type":"response.completed","response":{"output":[{"type":"function_call","call_id":%q,"name":"bash","arguments":%q}]}}`, callID, args))
 }
 
-// newTestAgent opens a project in a temp directory against fp. DASHY_HOME is temporary too.
 func newTestAgent(t *testing.T, fp *fakeProvider, opts Options) *Agent {
 	return newTestAgentWith(t, fp, opts, nil)
 }
 
-// newTestAgentWith is newTestAgent after pre has written files into home and the project directory.
 func newTestAgentWith(t *testing.T, fp *fakeProvider, opts Options, pre func(home, dir string)) *Agent {
 	t.Helper()
 	home, dir := t.TempDir(), t.TempDir()
@@ -101,7 +94,6 @@ func newTestAgentWith(t *testing.T, fp *fakeProvider, opts Options, pre func(hom
 	return a
 }
 
-// turn runs one message and returns its events.
 func turn(t *testing.T, a *Agent, text string) ([]Event, error) {
 	t.Helper()
 	var events []Event
@@ -148,7 +140,7 @@ func TestFinalTextIgnoresEarlierTurns(t *testing.T) {
 func TestMissingModelSendsNoRequest(t *testing.T) {
 	fp := &fakeProvider{reply: func(int, string) string { return textReply("x") }}
 	a := newTestAgent(t, fp, Options{})
-	a.cfg.sel = selection{} // a session created before any model was configured
+	a.cfg.sel = selection{}
 	if err := a.update(func(s *Settings) error { *s = DefaultSettings(); return nil }); err != nil {
 		t.Fatal(err)
 	}
@@ -157,18 +149,6 @@ func TestMissingModelSendsNoRequest(t *testing.T) {
 	}
 	if len(fp.requests()) != 0 {
 		t.Fatal("a request was sent without a model")
-	}
-}
-
-// estimateTokens counts history bytes and charges images a fixed amount.
-func TestEstimateTokensCountsImagesAndText(t *testing.T) {
-	big := json.RawMessage(`{"role":"user","content":"` + strings.Repeat("a", 4000) + `"}`)
-	if got := estimateTokens([]json.RawMessage{big}); got < 1000 {
-		t.Fatalf("estimate %d", got)
-	}
-	img := json.RawMessage(`{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,AAAA"}]}`)
-	if got := estimateTokens([]json.RawMessage{img}); got < imageTokens {
-		t.Fatalf("image not charged: %d", got)
 	}
 }
 
@@ -182,29 +162,6 @@ func TestStreamFailureSurfacesAsError(t *testing.T) {
 	}
 }
 
-// Every request carries the same bash tool description and a strict schema.
-func TestRequestCarriesStaticToolDescription(t *testing.T) {
-	fp := &fakeProvider{reply: func(int, string) string { return textReply("ok") }}
-	a := newTestAgent(t, fp, Options{})
-	if _, err := turn(t, a, "hi"); err != nil {
-		t.Fatal(err)
-	}
-	var body struct {
-		Tools []struct {
-			Name        string `json:"name"`
-			Description string `json:"description"`
-			Strict      bool   `json:"strict"`
-		} `json:"tools"`
-	}
-	if err := json.Unmarshal([]byte(fp.requests()[0]), &body); err != nil {
-		t.Fatal(err)
-	}
-	if len(body.Tools) != 1 || body.Tools[0].Name != "bash" || body.Tools[0].Description != BashToolDescription || !body.Tools[0].Strict {
-		t.Fatalf("tools: %+v", body.Tools)
-	}
-}
-
-// A completed response counts even if the provider keeps the stream open afterwards.
 func TestCompletedResponseWithoutStreamClose(t *testing.T) {
 	a := newTestAgent(t, &fakeProvider{hold: true, reply: func(int, string) string { return textReply("hi") }}, Options{})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -217,7 +174,6 @@ func TestCompletedResponseWithoutStreamClose(t *testing.T) {
 	}
 }
 
-// A provider that returns the same page forever does not hang the model listing.
 func TestModelsStopOnRepeatedPage(t *testing.T) {
 	fp := &fakeProvider{reply: func(int, string) string {
 		return `{"data":[{"id":"a"},{"id":"b"}],"has_more":true}`

@@ -65,18 +65,11 @@ func TestFilterRanking(t *testing.T) {
 		"scripts/build_release.sh",
 	}
 
-	// Query "main":
-	// Basename prefix matches: "cmd/dashy/main.go" (base "main.go"), "main.go" (base "main.go")
-	// Both are Category 0. Deterministic tie-break by path: cmd/dashy/main.go < main.go.
 	res := filterFileCompletions(indexed, "main")
 	if len(res) < 2 || res[0] != "cmd/dashy/main.go" || res[1] != "main.go" {
 		t.Fatalf("query 'main' results = %v", res)
 	}
 
-	// Query "das":
-	// Basename prefix matches: "cmd/dashy/main.go" (base "main.go", no match on base)
-	// "dashy.json": base is "dashy.json", prefix match -> Cat 0
-	// "cmd/dashy/main.go": path contains "das" -> Cat 1
 	res = filterFileCompletions(indexed, "das")
 	if len(res) < 2 {
 		t.Fatalf("query 'das' results = %v", res)
@@ -88,7 +81,6 @@ func TestFilterRanking(t *testing.T) {
 		t.Errorf("res[1] = %q, want %q", res[1], "cmd/dashy/main.go")
 	}
 
-	// Empty query returns up to 100 entries sorted
 	empty := filterFileCompletions(indexed, "")
 	if len(empty) != len(indexed) {
 		t.Fatalf("empty query len = %d, want %d", len(empty), len(indexed))
@@ -126,7 +118,6 @@ func TestFileCompletionEnterDoesNotSubmit(t *testing.T) {
 	m.input.SetValue("@m")
 	m.input.CursorEnd()
 
-	// First Enter: accepts file completion
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(model)
 
@@ -146,7 +137,6 @@ func TestEscClosesActiveCompletionBeforeTurnCancellation(t *testing.T) {
 	m = startBusy(t, m)
 	m.fileCompletions = []string{"file1.go", "file2.go"}
 
-	// First Esc closes completions
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = next.(model)
 
@@ -157,7 +147,6 @@ func TestEscClosesActiveCompletionBeforeTurnCancellation(t *testing.T) {
 		t.Fatal("first Esc cancelled turn instead of closing completions")
 	}
 
-	// Second Esc cancels the busy turn; the turn ends with a cancellation notice.
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = awaitIdle(t, next.(model))
 	if !hasEvent(m, "Turn cancelled.") {
@@ -229,7 +218,6 @@ func TestFileCompletionE2EUpdateTypingBlinkEnterEsc(t *testing.T) {
 	m, _, release := heldModel(t)
 	m.cwd = dir
 
-	// Genuine Update typing of "@ma"
 	for _, r := range "@ma" {
 		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 		m = next.(model)
@@ -242,7 +230,6 @@ func TestFileCompletionE2EUpdateTypingBlinkEnterEsc(t *testing.T) {
 		t.Fatal("expected fileLoading to be true after typing @ma")
 	}
 
-	// Debounce and scan
 	next, scanCmd := m.Update(fileDebounceMsg{debounceGen: m.fileDebounceGen, fileGen: m.fileGen})
 	m = next.(model)
 	if scanCmd == nil {
@@ -259,7 +246,6 @@ func TestFileCompletionE2EUpdateTypingBlinkEnterEsc(t *testing.T) {
 		t.Fatalf("fileCompletions = %v, want ['main.go']", m.fileCompletions)
 	}
 
-	// Press Enter: accepts file completion
 	next, acceptCmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(model)
 	if acceptCmd != nil {
@@ -281,7 +267,6 @@ func TestFileCompletionE2EUpdateTypingBlinkEnterEsc(t *testing.T) {
 
 	genBefore := m.fileGen
 
-	// Non-key message: cursor.BlinkMsg
 	next, blinkCmd := m.Update(cursor.BlinkMsg{})
 	if blinkCmd != nil {
 		t.Fatalf("cursor.BlinkMsg generated non-nil cmd: %v", blinkCmd)
@@ -297,14 +282,12 @@ func TestFileCompletionE2EUpdateTypingBlinkEnterEsc(t *testing.T) {
 	if m.fileGen != genBefore {
 		t.Fatalf("cursor.BlinkMsg bumped fileGen: %d -> %d", genBefore, m.fileGen)
 	}
-	// Also test another non-key message (window size or noop)
 	next, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = next.(model)
 	if m.hasFileCompletions() || m.fileLoading {
 		t.Fatal("WindowSizeMsg reopened file completion")
 	}
 
-	// Subsequent Enter submits normally: when busy, it queues steering after the file is read
 	m = startBusy(t, m)
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(model)
@@ -316,7 +299,6 @@ func TestFileCompletionE2EUpdateTypingBlinkEnterEsc(t *testing.T) {
 		t.Fatalf("composer not cleared after submit: %q", m.input.Value())
 	}
 
-	// Test Esc dismisses completion and stays dismissed on non-key messages
 	release()
 	m = awaitIdle(t, m)
 	for _, r := range "@ut" {
@@ -334,28 +316,24 @@ func TestFileCompletionE2EUpdateTypingBlinkEnterEsc(t *testing.T) {
 		t.Fatal("expected completions for @ut")
 	}
 
-	// Esc dismisses
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = next.(model)
 	if m.hasFileCompletions() || m.fileLoading {
 		t.Fatal("Esc did not close completion")
 	}
 
-	// Idle blink does NOT reopen
 	next, _ = m.Update(cursor.BlinkMsg{})
 	m = next.(model)
 	if m.hasFileCompletions() || m.fileLoading {
 		t.Fatal("cursor.BlinkMsg revived completion dismissed by Esc")
 	}
 
-	// Moving cursor clears suppression: Left arrow moves cursor from 3 to 2
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
 	m = next.(model)
 	if m.fileDismissed {
 		t.Fatal("cursor movement did not clear fileDismissed")
 	}
 
-	// Typing clears suppression
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
 	m = next.(model)
 	if m.fileDismissed {
@@ -368,28 +346,24 @@ func TestUpDownNavigatesFileCompletions(t *testing.T) {
 	m.fileCompletions = []string{"a.go", "b.go", "c.go"}
 	m.fileSelected = 0
 
-	// Down moves to 1
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m = next.(model)
 	if m.fileSelected != 1 {
 		t.Fatalf("selected = %d, want 1", m.fileSelected)
 	}
 
-	// Down moves to 2
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m = next.(model)
 	if m.fileSelected != 2 {
 		t.Fatalf("selected = %d, want 2", m.fileSelected)
 	}
 
-	// Down wraps to 0
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m = next.(model)
 	if m.fileSelected != 0 {
 		t.Fatalf("selected = %d, want 0", m.fileSelected)
 	}
 
-	// Up wraps to 2
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
 	m = next.(model)
 	if m.fileSelected != 2 {
@@ -400,12 +374,10 @@ func TestUpDownNavigatesFileCompletions(t *testing.T) {
 func TestScanWalkBounded(t *testing.T) {
 	dir := t.TempDir()
 
-	// Create sample structure
 	_ = os.MkdirAll(filepath.Join(dir, "src", "pkg"), 0755)
 	_ = os.WriteFile(filepath.Join(dir, "src", "pkg", "app.go"), []byte("package pkg"), 0644)
 	_ = os.WriteFile(filepath.Join(dir, "root.txt"), []byte("root"), 0644)
 
-	// Create ignored directories
 	_ = os.MkdirAll(filepath.Join(dir, ".git", "objects"), 0755)
 	_ = os.WriteFile(filepath.Join(dir, ".git", "config"), []byte("git config"), 0644)
 	_ = os.MkdirAll(filepath.Join(dir, ".dashy"), 0755)
@@ -413,7 +385,6 @@ func TestScanWalkBounded(t *testing.T) {
 	_ = os.MkdirAll(filepath.Join(dir, "node_modules", "pkg"), 0755)
 	_ = os.WriteFile(filepath.Join(dir, "node_modules", "pkg", "index.js"), []byte("js"), 0644)
 
-	// Create symlink to directory (must not traverse)
 	_ = os.Symlink(filepath.Join(dir, "src"), filepath.Join(dir, "link_to_src"))
 
 	ctx, cancel := context.WithTimeout(context.Background(), fileScanTimeout)
@@ -433,7 +404,6 @@ func TestScanWalkBounded(t *testing.T) {
 		}
 	}
 
-	// Check that real files are found
 	hasRoot := false
 	hasApp := false
 	for _, p := range paths {
@@ -472,8 +442,6 @@ func TestQuotedPathWithSpacesAcceptance(t *testing.T) {
 	}
 }
 
-// Restored steering drops the file completion of the old draft, so accepting it cannot
-// overwrite the restored text.
 func TestRestoredSteeringDropsFileCompletion(t *testing.T) {
 	m := bareModel(t, t.TempDir())
 	m.input.SetValue("@ma")
@@ -489,7 +457,6 @@ func TestRestoredSteeringDropsFileCompletion(t *testing.T) {
 	}
 }
 
-// A repository whose files are all ignored lists nothing: the walk fallback would show them.
 func TestScanEmptyGitListing(t *testing.T) {
 	dir := t.TempDir()
 	if out, err := exec.Command("git", "-C", dir, "init", "-q").CombinedOutput(); err != nil {

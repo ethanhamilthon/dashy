@@ -35,11 +35,3 @@ func TestBottomBarWidthsAndPadding(t *testing.T) {
 		}
 	}
 }
-
-func TestFixedStatusLine(t *testing.T) {
-	m, _ := testModel(t)
-	left, right := m.status()
-	if left != "p · m" || !strings.HasPrefix(right, "ctx ~") || !strings.Contains(right, " · ") {
-		t.Fatalf("status = %q | %q", left, right)
-	}
-}

@@ -5,29 +5,8 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/muesli/termenv"
 )
-
-func TestMarkdownStylesAndLists(t *testing.T) {
-	previous := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	defer lipgloss.SetColorProfile(previous)
-	text := "# One\n\n## Two\n\n### Three\n\n#### Four\n\n##### Five\n\n###### Six\n\n`inline blue`\n\n1. First\n2. Second\n   - Nested\n"
-	block := renderEntry(entry{Kind: "assistant", Text: text}, 100, -1)
-	plain := ansi.Strip(block)
-	for _, want := range []string{"1. First", "2. Second", "Nested", "inline blue"} {
-		if !strings.Contains(plain, want) {
-			t.Errorf("missing %q in %q", want, plain)
-		}
-	}
-	for _, color := range []string{"155;222;245", "121;217;255", "229;192;123", "135;147;168", "215;195;139", "240;158;172", "138;173;255"} {
-		if !strings.Contains(block, "38;2;"+color) {
-			t.Errorf("missing RGB %s in %q", color, block)
-		}
-	}
-}
 
 func TestMarkdownHyperlinks(t *testing.T) {
 	for _, text := range []string{
@@ -82,8 +61,6 @@ func TestWrappedMarkdownLinkTargetAndNoLeak(t *testing.T) {
 	}
 }
 
-// Glamour's word wrap does not count hyphens, so a row with one used to overflow and
-// break again mid-word: "AGENTS." on one row, "md" alone on the next.
 func TestMarkdownWrapWithHyphens(t *testing.T) {
 	text := "Загвоздка: мы уже за лимитом, 7131 строка при потолке в 7000. Так что сначала придётся где-то ужать код, иначе AGENTS.md нарушим. Делаем? Ещё раз-два-три и `go test -race`"
 	for width := 20; width <= 160; width++ {

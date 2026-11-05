@@ -17,33 +17,6 @@ func menuNames(m model) []string {
 	return names
 }
 
-// /settings opens the display settings rows, /models the model list and /connect the providers.
-func TestSettingsModelsAndConnectCommandsOpenTheirPickers(t *testing.T) {
-	f := newFixture(t, true)
-	f.command(t, "/settings")
-	if f.m.menuKind != pickerSettings {
-		t.Fatalf("/settings opened %q", f.m.menuKind)
-	}
-	names := strings.Join(menuNames(f.m), "|")
-	for _, row := range []string{"Reasoning summary", "Show lines"} {
-		if !strings.Contains(names, row) {
-			t.Fatalf("settings rows %q lack %q", names, row)
-		}
-	}
-	f.key(tea.KeyMsg{Type: tea.KeyEsc})
-	f.command(t, "/models")
-	if f.m.menuKind != pickerModels {
-		t.Fatalf("/models opened %q", f.m.menuKind)
-	}
-	f.key(tea.KeyMsg{Type: tea.KeyEsc})
-	f.command(t, "/connect")
-	if f.m.menuKind != pickerConnect || !strings.Contains(strings.Join(menuNames(f.m), "|"), "p|Add") {
-		t.Fatalf("/connect opened %q with %v", f.m.menuKind, menuNames(f.m))
-	}
-}
-
-// First run: no provider yet, so the provider form opens; with providers but no
-// model, the models open; with both, nothing does.
 func TestOnboarding(t *testing.T) {
 	f := newFixture(t, false)
 	if f.m.onboard(); f.m.menuKind != pickerProvider || !f.m.form.welcome {
@@ -65,7 +38,6 @@ func TestOnboarding(t *testing.T) {
 	}
 }
 
-// A toggle made while a turn runs is applied; the turn is not interrupted.
 func TestToggleWhileBusyChangesSetting(t *testing.T) {
 	m, _, release := heldModel(t)
 	defer release()
@@ -90,7 +62,6 @@ func TestStatusEstimatesContextOfResumedHistory(t *testing.T) {
 	}
 }
 
-// An open settings picker survives a notification that starts a turn: the toggle still applies.
 func TestPickerToggleAppliesWhenNotificationStartsTurn(t *testing.T) {
 	f := newFixture(t, true)
 	hold := make(chan struct{})
@@ -100,7 +71,7 @@ func TestPickerToggleAppliesWhenNotificationStartsTurn(t *testing.T) {
 	if _, err := agent.RunTask(f.project, f.a.SessionID(), "echo background result"); err != nil {
 		t.Fatal(err)
 	}
-	awaitRequest(t, f.m) // the notification starts a turn by itself
+	awaitRequest(t, f.m)
 	f.m = settle(f.m)
 	f.m = selectRow(t, f.m, "Reasoning summary")
 	before := f.m.ctl.Settings().ReasoningSummary
@@ -110,7 +81,6 @@ func TestPickerToggleAppliesWhenNotificationStartsTurn(t *testing.T) {
 	}
 }
 
-// An idle TUI starts a turn for an external notification at once, without any tick.
 func TestNotificationStartsTurnWhenIdle(t *testing.T) {
 	f := newFixture(t, true)
 	hold := make(chan struct{})

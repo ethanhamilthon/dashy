@@ -22,7 +22,6 @@ func TestViewQueuesPreviewAndOriginal(t *testing.T) {
 		t.Run(status, func(t *testing.T) {
 			home := t.TempDir()
 			t.Setenv("DASHY_HOME", home)
-			// Keep Unix socket paths below the platform's length limit.
 			dir, err := os.MkdirTemp("", "rv-")
 			if err != nil {
 				t.Fatal(err)
