@@ -70,7 +70,7 @@ func (c *Controller) Closed() <-chan struct{} { return c.closed }
 // Status reports the active operation.
 func (c *Controller) Status() (s Status) {
 	c.view(func() {
-		s = Status{}
+		s = Status{Tasks: c.a.RunningTasks()}
 		if c.active != nil {
 			s.Busy, s.Cancelling = true, c.active.cancelled
 			s.Started = c.active.started

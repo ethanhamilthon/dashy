@@ -77,4 +77,5 @@ type Status struct {
 	Cancelling bool
 	Started    time.Time
 	Queued     []agent.Input
+	Tasks      int // background tasks running
 }

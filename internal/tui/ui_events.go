@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -84,10 +85,21 @@ func (m model) workingBlock() string {
 			label, hint = "cancelling", ""
 		}
 		line := "  " + lipgloss.NewStyle().Foreground(inputBlue).Render(frames[int(elapsed/(80*time.Millisecond))%len(frames)]) +
-			lipgloss.NewStyle().Foreground(muted).Render(" "+label+" · "+formatDuration(elapsed)+hint)
+			lipgloss.NewStyle().Foreground(muted).Render(" "+label+" · "+formatDuration(elapsed)+tasksRunning(status.Tasks, " · ")+hint)
+		block.WriteString(ansi.Truncate(line, max(1, m.width), "…") + "\n\n")
+	} else if status.Tasks > 0 {
+		line := "  " + lipgloss.NewStyle().Foreground(inputBlue).Render("●") + lipgloss.NewStyle().Foreground(muted).Render(tasksRunning(status.Tasks, " "))
 		block.WriteString(ansi.Truncate(line, max(1, m.width), "…") + "\n\n")
 	}
 	return block.String()
+}
+
+// tasksRunning is "<sep>n tasks running", or empty without background tasks.
+func tasksRunning(n int, sep string) string {
+	if n == 0 {
+		return ""
+	}
+	return sep + fmt.Sprint(n) + map[bool]string{true: " task", false: " tasks"}[n == 1] + " running"
 }
 
 // handleControl applies one controller event to the interface.

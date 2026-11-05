@@ -20,7 +20,7 @@ func TestEventsGoToStatusBar(t *testing.T) {
 	if len(m.entries) != 0 {
 		t.Fatalf("an error reached the chat: %+v", m.entries)
 	}
-	if bar := ansi.Strip(m.bottomBar()); !strings.Contains(bar, "No provider configured.") || len(bar) > 200 {
+	if bar := ansi.Strip(m.bottomBar()); !strings.Contains(bar, "no provider") || len(bar) > 200 {
 		t.Fatalf("status bar: %q", bar)
 	}
 	next, _ := m.Update(flashExpired{m.flashAt.Add(-time.Second)})
@@ -28,7 +28,7 @@ func TestEventsGoToStatusBar(t *testing.T) {
 		t.Fatal("an older timer cleared a newer event")
 	}
 	next, _ = m.Update(flashExpired{m.flashAt})
-	if m = next.(model); strings.Contains(ansi.Strip(m.bottomBar()), "No provider") {
+	if m = next.(model); strings.Contains(ansi.Strip(m.bottomBar()), "no provider") {
 		t.Fatal("event did not expire")
 	}
 	m.ctl.Note(agent.Event{Kind: "notice", Text: "<view>\nhi\n</view>"})
@@ -36,5 +36,16 @@ func TestEventsGoToStatusBar(t *testing.T) {
 	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if len(m.entries) != 2 || m.entries[0].Kind != "notice" || !strings.Contains(m.entries[1].Text, "No provider configured.") {
 		t.Fatalf("entries: %+v", m.entries)
+	}
+}
+
+func TestShortEventsAndTaskCount(t *testing.T) {
+	for text, want := range map[string]string{"Copied 3 lines to the clipboard.": "copied", "Selected p · m/high (saved to x)": "model changed", "weird": "notice · /events"} {
+		if got := shortEvent("notice", text); got != want {
+			t.Errorf("%q: got %q, want %q", text, got, want)
+		}
+	}
+	if tasksRunning(0, " · ") != "" || tasksRunning(1, " ") != " 1 task running" || tasksRunning(2, " · ") != " · 2 tasks running" {
+		t.Fatal(tasksRunning(2, " · "))
 	}
 }
