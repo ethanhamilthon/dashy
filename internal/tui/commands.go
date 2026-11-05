@@ -124,9 +124,10 @@ func (m *model) complete() bool {
 }
 
 // keyboardHelp lists the interface key bindings shown by /help.
-const keyboardHelp = "Enter: execute selected completion or send / steer while working · Shift+Enter / Alt+Enter / Ctrl+J: newline\n" +
+const keyboardHelp = "Enter: execute selected completion or send · Shift+Enter / Alt+Enter / Ctrl+J: newline\n" +
+	"Sending while dashy works: a running command moves to the background (/tasks) and the model reads your message next\n" +
 	"Clipboard: Ctrl+V (Cmd+V when forwarded)\n" +
-	"Tab: complete · Up/Down: select completion · unmatched slash text: send normally · Up on empty input: recall queued steering\n" +
+	"Tab: complete · Up/Down: select completion · unmatched slash text: send normally · Up on empty input: recall a message not read yet\n" +
 	"PgUp/PgDn or mouse wheel: scroll timeline\n" +
 	"Esc / Ctrl+C: cancel current turn · Ctrl+C when idle or Ctrl+D on empty input: quit"
 

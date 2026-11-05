@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	_ "embed"
@@ -255,7 +256,7 @@ func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event)) (er
 			}
 			calls++
 			started := time.Now()
-			result := a.runTool(ctx, call.Name, call.Arguments)
+			result := a.runTool(ctx, call.Name, call.Arguments, emit)
 			output := callOutput(call.CallID, result)
 			a.History = append(a.History, output)
 			for _, r := range RecordsForItem(output) {
@@ -291,9 +292,14 @@ func callOutput(callID string, result shell.Result) json.RawMessage {
 }
 
 // runTool executes one function call; failures become an error result for the model.
-func (a *Agent) runTool(ctx context.Context, name, arguments string) shell.Result {
+// Input typed by the user meanwhile does not wait for the command: it moves to the
+// background as a task, and calls that have not started yet are skipped.
+func (a *Agent) runTool(ctx context.Context, name, arguments string, emit func(Event)) shell.Result {
 	if ctx.Err() != nil {
 		return shell.Result{Output: ctx.Err().Error(), Error: true}
+	}
+	if a.queue.hasTyped() {
+		return shell.Result{Output: "Skipped: the user sent a new message before this call started. Read it first; run the command again if it is still needed."}
 	}
 	if name != "bash" {
 		return shell.Result{Output: "Unknown tool: " + name, Error: true}
@@ -312,10 +318,27 @@ func (a *Agent) runTool(ctx context.Context, name, arguments string) shell.Resul
 			timeout = time.Duration(*args.Timeout) * time.Second
 		}
 	}
-	if err == nil {
-		return a.Shell.Execute(ctx, args.Command, timeout, limit)
+	if err != nil {
+		return shell.Result{Output: err.Error(), ExitCode: 2, Error: true}
 	}
-	return shell.Result{Output: err.Error(), ExitCode: 2, Error: true}
+	var detach <-chan struct{}
+	if a.tasks != nil {
+		a.queue.drainTyped()
+		detach = a.queue.typedSignal()
+	}
+	result, bg := a.Shell.Run(ctx, args.Command, timeout, limit, detach)
+	if bg == nil {
+		return result
+	}
+	id, err := a.tasks.adopt(args.Command, bg)
+	if err != nil {
+		_ = bg.Cmd.Cancel()
+		_ = bg.Wait()
+		return shell.Result{Output: result.Output + "\n[dashy: stopped; could not move it to the background: " + err.Error() + "]\n", ExitCode: 130, Error: true}
+	}
+	emit(Event{Kind: "notice", Text: "Command moved to the background as task " + id + "."})
+	return shell.Result{Output: fmt.Sprintf("The user sent a new message, so this command moved to the background as task %s and keeps running. "+
+		"Its result arrives as <task-result id=%q> when it ends; check it with: dashy tasks status %s\n\nOutput so far:\n%s", id, id, id, cmp.Or(result.Output, "(none)"))}
 }
 
 // itemID identifies a response item of the latest request in display events.

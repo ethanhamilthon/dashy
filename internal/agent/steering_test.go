@@ -2,8 +2,13 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"dashy/internal/shell"
 )
@@ -55,5 +60,54 @@ func TestSteeringRecallUntilAccepted(t *testing.T) {
 	}
 	if _, ok := s.Recall(); ok {
 		t.Fatal("accepted instruction recalled")
+	}
+}
+
+// A message typed while a bash call runs moves the call to the background as a task and
+// skips the calls that have not started; the message goes to the model at once.
+func TestTypedInputMovesRunningCallToBackground(t *testing.T) {
+	fp := &fakeProvider{reply: func(n int, body string) string {
+		if n == 1 {
+			args := func(command string) string {
+				data, _ := json.Marshal(map[string]any{"command": command, "timeout": nil})
+				return string(data)
+			}
+			return sse(fmt.Sprintf(`{"type":"response.completed","response":{"output":[`+
+				`{"type":"function_call","call_id":"c1","name":"bash","arguments":%q},`+
+				`{"type":"function_call","call_id":"c2","name":"bash","arguments":%q}]}}`,
+				args("touch started; echo early; sleep 2; echo late"), args("touch second")))
+		}
+		return textReply("ok")
+	}}
+	a := newTestAgent(t, fp, Options{})
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() { done <- a.Run(context.Background(), "go", func(Event) {}) }()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if _, err := os.Stat(filepath.Join(a.Shell.Dir, "started")); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the command never started")
+		}
+	}
+	a.Queue().Push(Input{Text: "STOP-AND-LISTEN"})
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(start); took > 1800*time.Millisecond {
+		t.Fatalf("the turn waited for the command: %s", took)
+	}
+	requests := fp.requests()
+	if len(requests) != 2 || !strings.Contains(requests[1], "STOP-AND-LISTEN") || !strings.Contains(requests[1], "background as task t1") ||
+		!strings.Contains(requests[1], "early") || !strings.Contains(requests[1], "Skipped: the user sent a new message") {
+		t.Fatalf("second request: %s", requests[len(requests)-1])
+	}
+	if _, err := os.Stat(filepath.Join(a.Shell.Dir, "second")); err == nil {
+		t.Fatal("a call after the message ran")
+	}
+	got := awaitInput(t, a)
+	if !strings.Contains(got[0].Text, `id="t1" status="done"`) || !strings.Contains(got[0].Text, "early") || !strings.Contains(got[0].Text, "late") {
+		t.Fatalf("task result %q", got[0].Text)
 	}
 }

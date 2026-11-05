@@ -55,6 +55,28 @@ func (t *tasks) run(command string) (string, error) {
 	if strings.TrimSpace(command) == "" {
 		return "", errors.New("tasks run requires a command")
 	}
+	return t.start(command, func(file *os.File) (*exec.Cmd, func() error, error) {
+		cmd := shell.Command(context.Background(), t.dir, t.env, command)
+		cmd.Stdout, cmd.Stderr = file, file
+		if err := cmd.Start(); err != nil {
+			return nil, nil, err
+		}
+		return cmd, func() error { return shell.Reap(cmd) }, nil
+	})
+}
+
+// adopt makes a running bash call a task: its output so far and from now on goes to
+// the task log. Without a task (session ended) the caller still owns the command.
+func (t *tasks) adopt(command string, bg *shell.Background) (string, error) {
+	return t.start(command, func(file *os.File) (*exec.Cmd, func() error, error) {
+		bg.Redirect(file)
+		return bg.Cmd, bg.Wait, nil
+	})
+}
+
+// start registers a task whose output goes to its log, launches it and reports its
+// result as session input when it ends.
+func (t *tasks) start(command string, launch func(*os.File) (*exec.Cmd, func() error, error)) (string, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.closed {
@@ -73,15 +95,14 @@ func (t *tasks) run(command string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	cmd := shell.Command(context.Background(), t.dir, t.env, command)
-	cmd.Stdout, cmd.Stderr = file, file
 	started := time.Now()
 	if _, err := t.db.Exec(`INSERT INTO tasks (session, id, command, status, started, log) VALUES (?, ?, ?, 'running', ?, ?)`,
 		t.session, id, command, started.UnixNano(), logPath); err != nil {
 		file.Close()
 		return "", err
 	}
-	if err := cmd.Start(); err != nil {
+	cmd, wait, err := launch(file)
+	if err != nil {
 		file.Close()
 		t.finish(id, "failed", nil)
 		return "", err
@@ -90,7 +111,7 @@ func (t *tasks) run(command string) (string, error) {
 	t.wg.Add(1)
 	go func() {
 		defer t.wg.Done()
-		err := shell.Reap(cmd)
+		err := wait()
 		file.Close()
 		t.mu.Lock()
 		stopped := t.stopped[id]

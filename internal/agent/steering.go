@@ -72,7 +72,33 @@ func inputEvent(input Input) Event {
 type Steering struct {
 	mu      sync.Mutex
 	pending []Input
-	wake    func() // called after every push; a new session's queue keeps it
+	wake    func()        // called after every push; a new session's queue keeps it
+	typed   chan struct{} // signalled when composer input is pushed
+}
+
+// typedSignal fires when composer input is pushed (not on notices).
+func (s *Steering) typedSignal() <-chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.typed == nil {
+		s.typed = make(chan struct{}, 1)
+	}
+	return s.typed
+}
+
+// drainTyped forgets earlier signals; then the signal means input pushed from now on.
+func (s *Steering) drainTyped() {
+	select {
+	case <-s.typedSignal():
+	default:
+	}
+}
+
+// hasTyped reports whether composer input is waiting.
+func (s *Steering) hasTyped() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.ContainsFunc(s.pending, func(input Input) bool { return !input.Notice })
 }
 
 // OnPush sets the function called after every push, so an idle session can start a turn at once.
@@ -108,6 +134,12 @@ func (s *Steering) Push(input Input) bool {
 	}
 	s.pending = append(s.pending, input)
 	wake := s.wake
+	if s.typed != nil && !input.Notice {
+		select {
+		case s.typed <- struct{}{}:
+		default:
+		}
+	}
 	s.mu.Unlock()
 	if wake != nil {
 		wake()

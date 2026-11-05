@@ -35,9 +35,10 @@ FLAGS & COMMANDS
                   running session and print its ID (t1, t2, ...). Output goes to a log file.
                   When it ends, the session receives <task-result id status exit_code
                   duration> with the command and the last 40 lines: an idle session starts a
-                  turn at once, a busy one takes it as steering. Closing the session stops
-                  its running tasks, and they die with dashy even if it crashes; dashy -p
-                  waits for them before it exits.
+                  turn at once, a busy one takes it after the running response. A message
+                  typed in the TUI while a bash call runs makes that call a task too.
+                  Closing the session stops its running tasks, and they die with dashy even
+                  if it crashes; dashy -p waits for them before it exits.
   tasks list      List the session's tasks: ID, status (running, done, failed: nonzero
                   exit or no start, stopped, lost), duration, command.
   tasks status    Show one task with the end of its output and the log path.

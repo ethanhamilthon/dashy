@@ -94,35 +94,60 @@ func killGroup(cmd *exec.Cmd) error {
 // Execute runs command with a timeout, keeping at most limit output bytes
 // (first and last halves; limit <= 0 keeps everything).
 func (r *Runner) Execute(ctx context.Context, command string, timeout time.Duration, limit int) Result {
-	callCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
+	result, _ := r.Run(ctx, command, timeout, limit, nil)
+	return result
+}
+
+// Run is Execute that can let go of the command: when detach fires first, Run returns
+// the output so far and the still running command, which the caller then owns.
+func (r *Runner) Run(ctx context.Context, command string, timeout time.Duration, limit int, detach <-chan struct{}) (Result, *Background) {
 	var env map[string]string
 	if r.Env != nil {
 		env = r.Env()
 	}
-	cmd := Command(callCtx, r.Dir, env, command)
+	// Not tied to ctx: a detached command must outlive the call. Cancellation and the
+	// timeout kill the group below.
+	cmd := Command(context.Background(), r.Dir, env, command)
 	cmd.Stdin = strings.NewReader("")
+	buffer := NewOutputBuffer(limit)
 	// Stdout and Stderr share one writer, so exec never calls Write concurrently.
-	out := NewOutputBuffer(limit)
+	out := &switchWriter{w: buffer}
 	cmd.Stdout, cmd.Stderr = out, out
-	if err := cmd.Start(); err != nil {
-		if ctx.Err() != nil {
-			return Result{Output: "\n[dashy: cancelled]\n", ExitCode: 130, Error: true}
-		}
-		io.WriteString(out, err.Error()+"\n")
-		return Result{Output: out.Text(), ExitCode: 127, Error: true}
+	if ctx.Err() != nil {
+		return Result{Output: "\n[dashy: cancelled]\n", ExitCode: 130, Error: true}, nil
 	}
-	err := Reap(cmd)
-
+	if err := cmd.Start(); err != nil {
+		io.WriteString(buffer, err.Error()+"\n")
+		return Result{Output: buffer.Text(), ExitCode: 127, Error: true}, nil
+	}
+	done := make(chan error, 1)
+	go func() { done <- Reap(cmd) }()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	var err error
 	result := Result{}
+	select {
+	case err = <-done:
+	case <-ctx.Done():
+		_ = killGroup(cmd)
+		err = <-done
+		result.ExitCode = 130
+	case <-timer.C:
+		_ = killGroup(cmd)
+		err = <-done
+		result.ExitCode = 124
+	case <-detach:
+		out.mu.Lock()
+		text := buffer.Text()
+		out.mu.Unlock()
+		return Result{Output: text}, &Background{Cmd: cmd, done: done, out: out, buffer: buffer}
+	}
 	var exit *exec.ExitError
 	switch {
-	case ctx.Err() != nil:
-		result.ExitCode = 130
-		io.WriteString(out, "\n[dashy: cancelled]\n")
-	case callCtx.Err() != nil:
-		result.ExitCode = 124
-		io.WriteString(out, fmt.Sprintf("\n[dashy: timed out after %s]\n", timeout))
+	case result.ExitCode == 130:
+		io.WriteString(buffer, "\n[dashy: cancelled]\n")
+	case result.ExitCode == 124:
+		io.WriteString(buffer, fmt.Sprintf("\n[dashy: timed out after %s]\n", timeout))
 	case errors.As(err, &exit):
 		result.ExitCode = exit.ExitCode()
 		if status, ok := exit.Sys().(syscall.WaitStatus); ok && status.Signaled() {
@@ -130,12 +155,43 @@ func (r *Runner) Execute(ctx context.Context, command string, timeout time.Durat
 		}
 	case err != nil:
 		result.ExitCode = 1
-		io.WriteString(out, fmt.Sprintf("\n[dashy: %v]\n", err))
+		io.WriteString(buffer, fmt.Sprintf("\n[dashy: %v]\n", err))
 	}
-	result.Output = out.Text()
+	result.Output = buffer.Text()
 	result.Error = result.ExitCode != 0
-	return result
+	return result, nil
 }
+
+// switchWriter is the output of a command, which can move to a log file mid-run.
+type switchWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (s *switchWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(p)
+}
+
+// Background is a command that Run let go of; it keeps running in its process group.
+type Background struct {
+	Cmd    *exec.Cmd
+	done   <-chan error
+	out    *switchWriter
+	buffer *OutputBuffer
+}
+
+// Redirect sends the output from now on to w, after the output kept so far.
+func (b *Background) Redirect(w io.Writer) {
+	b.out.mu.Lock()
+	defer b.out.mu.Unlock()
+	io.WriteString(w, b.buffer.Text())
+	b.out.w = w
+}
+
+// Wait waits for the command to end and its group to be killed, as Reap does.
+func (b *Background) Wait() error { return <-b.done }
 
 var lifeline struct {
 	once sync.Once

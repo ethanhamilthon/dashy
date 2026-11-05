@@ -177,7 +177,8 @@ var flashLabels = [][2]string{
 	{"Instructions will reload", "reload queued"}, {"No provider", "no provider"}, {"No model selected", "no model"},
 	{"No models", "no models"}, {"Some providers failed", "models failed"}, {"Could not list models", "models failed"},
 	{"No saved sessions", "no sessions"}, {"Unknown command", "unknown command"}, {"Unexpected command", "bad arguments"},
-	{"Clipboard read", "pasting"}, {"Steering queue is full", "queue full"}, {"Session is changing", "busy"},
+	{"Command moved to the background", "moved to background"}, {"Provider saved", "provider saved"}, {"Provider deleted", "provider deleted"},
+	{"Task ", "task stopped"}, {"Clipboard read", "pasting"}, {"Steering queue is full", "queue full"}, {"Session is changing", "busy"},
 	{"Wait for", "busy"}, {"That instruction was already", "already sent"}, {"Stored settings changed", "settings error"},
 	{"session not found", "not found"}, {"clipboard", "paste failed"},
 }
