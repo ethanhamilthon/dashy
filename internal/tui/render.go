@@ -120,7 +120,24 @@ func renderEntryMode(e entry, width, limit int, markdown bool) string {
 	for i, line := range lines {
 		lines[i] = ansi.Truncate(strings.Repeat(" ", min(2, max(0, width-1)))+line, max(1, width), "…")
 	}
-	return paint(ansi.Truncate("  "+label, max(1, width), "…"), width, lipgloss.NoColor{}, fg) + "\n" + paint(strings.Join(lines, "\n"), width, lipgloss.NoColor{}, bodyColor(e.Kind))
+	out := paint(ansi.Truncate("  "+label, max(1, width), "…"), width, lipgloss.NoColor{}, fg) + "\n" + paint(strings.Join(lines, "\n"), width, lipgloss.NoColor{}, bodyColor(e.Kind))
+	if footer := answerFooter(e); footer != "" {
+		out += "\n" + paint(ansi.Truncate("  "+footer, max(1, width), "…"), width, lipgloss.NoColor{}, muted)
+	}
+	return out
+}
+
+// answerFooter ends a finished answer: when it arrived and how long the turn took.
+func answerFooter(e entry) string {
+	if e.Kind != "assistant" || e.Preview || e.Meta == nil || e.Meta.At.IsZero() {
+		return ""
+	}
+	at, now := e.Meta.At.Local(), time.Now()
+	clock := at.Format("15:04")
+	if at.YearDay() != now.YearDay() || at.Year() != now.Year() {
+		clock = at.Format("Jan 2 15:04")
+	}
+	return clock + " · " + formatDuration(e.Meta.Duration)
 }
 func bodyColor(kind string) lipgloss.TerminalColor {
 	switch kind {

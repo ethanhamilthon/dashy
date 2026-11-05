@@ -65,11 +65,12 @@ type Agent struct {
 	cfg          *settingsState // live settings and API client, shared with the turn goroutine
 	Shell        *shell.Runner
 	History      []json.RawMessage
-	db           *sql.DB // DASHY_HOME/dashy.db, shared by sessions of this agent
-	project      string  // absolute project directory
-	id           string  // session ID
-	saved        int     // history items already stored
-	stored       bool    // the session has a row in the database
+	itemMeta     map[string]*Metadata // metadata of answer items, by their JSON; saved with them
+	db           *sql.DB              // DASHY_HOME/dashy.db, shared by sessions of this agent
+	project      string               // absolute project directory
+	id           string               // session ID
+	saved        int                  // history items already stored
+	stored       bool                 // the session has a row in the database
 	owner        *os.File
 	promptFiles  []string // DASHY.md files selected at startup, /new or /resume
 	prompt       string   // assembled system prompt, frozen once assembled
@@ -230,12 +231,13 @@ func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event)) (er
 			for _, r := range RecordsForItem(item) {
 				m := meta
 				if r.Kind == "assistant" {
-					m.Duration = time.Since(turnStart)
+					m.Duration, m.At = time.Since(turnStart), time.Now()
 					m.Usage = nil
 					if usageKnown {
 						u := total
 						m.Usage = &u
 					}
+					a.setItemMeta(item, m)
 				}
 				emit(Event{Kind: r.Kind, Text: r.Text, ID: a.itemID(int64(i)), Meta: &m, Final: true})
 			}
@@ -502,4 +504,11 @@ func bashParameters() map[string]any {
 		"required":             []string{"command", "timeout"},
 		"additionalProperties": false,
 	}
+}
+
+func (a *Agent) setItemMeta(item json.RawMessage, m Metadata) {
+	if a.itemMeta == nil {
+		a.itemMeta = map[string]*Metadata{}
+	}
+	a.itemMeta[string(item)] = &m
 }

@@ -18,6 +18,7 @@ type Metadata struct {
 	Usage        *Usage
 	ContextInput *int64
 	RequestID    string
+	At           time.Time `json:",omitzero"` // when an answer arrived
 }
 
 type Record struct {
@@ -163,11 +164,19 @@ func RecordsForItem(item json.RawMessage) []Record {
 	return nil
 }
 
-// Records returns the display records derived from the session history.
+// Records returns the display records derived from the session history. Answers
+// keep the metadata (time, duration, usage) they were shown with.
 func (a *Agent) Records() []Record {
 	var records []Record
 	for _, item := range a.History {
-		records = append(records, RecordsForItem(item)...)
+		meta := a.itemMeta[string(item)]
+		for _, r := range RecordsForItem(item) {
+			if r.Kind == "assistant" && meta != nil {
+				m := *meta
+				r.Meta = &m
+			}
+			records = append(records, r)
+		}
 	}
 	return records
 }

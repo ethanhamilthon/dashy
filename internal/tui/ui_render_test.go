@@ -69,8 +69,22 @@ func TestMetadataAndBottomBar(t *testing.T) {
 	}
 	meta := &agent.Metadata{Duration: 42 * time.Millisecond, Usage: &agent.Usage{Input: 12, Output: 3, Cached: 7}}
 	label := formatMetadata(meta, "assistant")
-	if !strings.Contains(label, "  ↑12 ↓3 · 42ms · cache 58%") {
+	if !strings.Contains(label, "  ↑12 ↓3 · cache 58%") {
 		t.Fatal(label)
+	}
+	if !strings.Contains(formatMetadata(meta, "code"), "  ↑12 ↓3 · 42ms · cache 58%") {
+		t.Fatal("code label")
+	}
+	// A finished answer ends with when it arrived and how long it took; a streaming one does not.
+	at := time.Now()
+	answer := entry{Kind: "assistant", Text: "hi", Meta: &agent.Metadata{Duration: 4200 * time.Millisecond, At: at}}
+	rows := strings.Split(ansi.Strip(renderEntry(answer, 60, -1)), "\n")
+	if last := strings.TrimSpace(rows[len(rows)-1]); last != at.Format("15:04")+" · 4.2s" {
+		t.Fatalf("footer %q", last)
+	}
+	answer.Preview = true
+	if strings.Contains(ansi.Strip(renderEntry(answer, 60, -1)), "4.2s") {
+		t.Fatal("streaming answer has a footer")
 	}
 	if !strings.Contains(formatMetadata(&agent.Metadata{}, "code"), "↑? ↓?") {
 		t.Fatal("missing usage not marked")

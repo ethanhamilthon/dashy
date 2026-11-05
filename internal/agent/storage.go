@@ -57,24 +57,30 @@ func (a *Agent) createSession() error {
 		return err
 	}
 	a.id = time.Now().UTC().Format("20060102T150405.000000000Z") + "-" + hex.EncodeToString(id[:])
+	a.itemMeta = nil
 	a.fixSelection(selection{})
 	return a.acquire()
 }
 
 // readSession loads the history items of the session.
 func (a *Agent) readSession() error {
-	rows, err := a.db.Query(`SELECT data FROM items WHERE session = ? ORDER BY seq`, a.id)
+	rows, err := a.db.Query(`SELECT data, meta FROM items WHERE session = ? ORDER BY seq`, a.id)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
-	a.History = nil
+	a.History, a.itemMeta = nil, nil
 	for rows.Next() {
 		var item []byte
-		if err := rows.Scan(&item); err != nil {
+		var meta string
+		if err := rows.Scan(&item, &meta); err != nil {
 			return err
 		}
 		a.History = append(a.History, json.RawMessage(item))
+		var m Metadata
+		if meta != "" && json.Unmarshal([]byte(meta), &m) == nil {
+			a.setItemMeta(item, m)
+		}
 	}
 	a.saved = len(a.History)
 	return rows.Err()
@@ -102,7 +108,12 @@ func (a *Agent) Save() error {
 		return err
 	}
 	for i := start; i < len(a.History); i++ {
-		if _, err := tx.Exec(`INSERT INTO items (session, seq, data) VALUES (?, ?, ?)`, a.id, i, string(a.History[i])); err != nil {
+		meta := ""
+		if m := a.itemMeta[string(a.History[i])]; m != nil {
+			data, _ := json.Marshal(m)
+			meta = string(data)
+		}
+		if _, err := tx.Exec(`INSERT INTO items (session, seq, data, meta) VALUES (?, ?, ?, ?)`, a.id, i, string(a.History[i]), meta); err != nil {
 			return err
 		}
 	}

@@ -46,6 +46,9 @@ func formatMetadata(meta *agent.Metadata, kind string) string {
 			cache = fmt.Sprintf("%.0f%%", 100*float64(u.Cached)/float64(u.Input))
 		}
 	}
+	if kind == "assistant" { // the answer footer shows the duration
+		return fmt.Sprintf("  ↑%s ↓%s · cache %s", input, output, cache)
+	}
 	return fmt.Sprintf("  ↑%s ↓%s · %s · cache %s", input, output, duration, cache)
 }
 

@@ -51,6 +51,8 @@ var migrations = []string{
 		log       TEXT NOT NULL,
 		PRIMARY KEY (session, id)
 	);`,
+	// Metadata of answer items (JSON: time, duration, usage), so a resumed session shows them.
+	`ALTER TABLE items ADD COLUMN meta TEXT NOT NULL DEFAULT '';`,
 }
 
 // migrate creates the schema and applies the migrations it lacks, in one transaction.

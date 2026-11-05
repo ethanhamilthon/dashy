@@ -260,3 +260,25 @@ func TestModelSelectionIsPerSession(t *testing.T) {
 		t.Fatalf("new session default %s", s.Model)
 	}
 }
+
+// An answer keeps its time and duration after a resume.
+func TestResumedAnswerKeepsItsTime(t *testing.T) {
+	fp := &fakeProvider{reply: func(int, string) string { return textReply("ok") }}
+	a := newTestAgent(t, fp, Options{})
+	turn(t, a, "hello")
+	before := a.Records()
+	id := a.SessionID()
+	a.Close()
+	again, err := New(a.Shell.Dir, Options{Resume: id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer again.Close()
+	records := again.Records()
+	if len(records) != 2 || records[1].Kind != "assistant" || records[1].Meta == nil || records[1].Meta.At.IsZero() || records[1].Meta.Duration <= 0 {
+		t.Fatalf("records %+v", records)
+	}
+	if !records[1].Meta.At.Equal(before[1].Meta.At) || records[1].Meta.Duration != before[1].Meta.Duration {
+		t.Fatalf("meta changed: %+v -> %+v", before[1].Meta, records[1].Meta)
+	}
+}
