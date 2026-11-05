@@ -18,7 +18,11 @@ var version string
 
 func main() {
 	tui.Version = strings.TrimSpace(version)
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, cancel := context.Background(), func() {}
+	if !cli.IsHelper(os.Args[1:]) {
+		// Sessions save and clean up on a signal; helpers just end, even when blocked reading.
+		ctx, cancel = signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	}
 	defer cancel()
 	if err := cli.Run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
 		code := cli.ExitCode(err)

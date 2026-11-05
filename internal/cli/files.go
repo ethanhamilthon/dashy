@@ -14,22 +14,44 @@ import (
 	"strings"
 )
 
-// parseAll parses flags wherever they appear among the positional arguments, which it returns.
+// parseAll parses flags wherever they appear among the positional arguments, which it
+// returns. After "--" everything is positional.
 func parseAll(fs *flag.FlagSet, args []string) ([]string, error) {
 	var positional []string
 	for {
 		if err := fs.Parse(args); err != nil || fs.NArg() == 0 {
 			return positional, err
 		}
+		if used := len(args) - fs.NArg(); used > 0 && args[used-1] == "--" {
+			return append(positional, fs.Args()...), nil
+		}
 		positional, args = append(positional, fs.Arg(0)), fs.Args()[1:]
 	}
 }
 
-// textLines reads a text file as lines without their endings; binary files are refused.
+// maxTextFile is the largest file read and grep load.
+const maxTextFile = 32 << 20
+
+var (
+	errBinary     = errors.New("binary file")
+	errNotRegular = errors.New("not a regular file")
+)
+
+// textLines reads a text file as lines without their endings. Binary files, files
+// over maxTextFile and anything but regular files (devices, FIFOs) are refused.
 func textLines(path string) ([]string, error) {
+	info, err := os.Stat(path)
+	switch {
+	case err != nil:
+		return nil, err
+	case !info.Mode().IsRegular():
+		return nil, errNotRegular
+	case info.Size() > maxTextFile:
+		return nil, fmt.Errorf("file too large (%d MB, limit %d MB)", info.Size()>>20, maxTextFile>>20)
+	}
 	data, err := os.ReadFile(path)
 	if err == nil && bytes.IndexByte(data[:min(len(data), 8000)], 0) >= 0 {
-		err = errors.New("binary file")
+		err = errBinary
 	}
 	if err != nil || len(data) == 0 {
 		return nil, err
@@ -126,7 +148,7 @@ func patchCommand(args []string, in io.Reader, out io.Writer) error {
 
 // grepCommand searches files for a Go regexp: dashy grep [-i] [-l] [-g GLOB] PATTERN [PATH...];
 // with --files it lists the files instead. Directories are searched recursively without ignored (git) and hidden files.
-func grepCommand(args []string, out io.Writer) error {
+func grepCommand(args []string, out, diagnostics io.Writer) error {
 	var ignoreCase, names, list bool
 	var glob string
 	set := flagSet("grep", func(fs *flag.FlagSet) {
@@ -153,7 +175,7 @@ func grepCommand(args []string, out io.Writer) error {
 	if len(paths) == 0 {
 		paths = []string{"."}
 	}
-	files, err := searchFiles(paths)
+	files, failures, err := searchFiles(paths)
 	if err != nil {
 		return fmt.Errorf("grep: %w", err)
 	}
@@ -170,7 +192,10 @@ func grepCommand(args []string, out io.Writer) error {
 			fmt.Fprintln(out, file)
 			continue
 		}
-		lines, _ := textLines(file)
+		lines, err := textLines(file)
+		if err != nil && !errors.Is(err, errBinary) && !errors.Is(err, errNotRegular) && !errors.Is(err, fs.ErrNotExist) {
+			failures = append(failures, fmt.Sprintf("%s: %v", file, err))
+		}
 		for i, line := range lines {
 			if !re.MatchString(line) {
 				continue
@@ -186,18 +211,24 @@ func grepCommand(args []string, out io.Writer) error {
 			fmt.Fprintf(out, "%s:%d:%s\n", file, i+1, cut(strings.TrimSpace(line), 300))
 		}
 	}
-	if matches == 0 {
+	for _, f := range failures {
+		fmt.Fprintln(diagnostics, "grep: "+f)
+	}
+	switch {
+	case len(failures) > 0:
+		return &ExitError{Code: 2, Reported: true} // like grep: an incomplete search is exit 2
+	case matches == 0:
 		return &ExitError{Code: 1, Reported: true} // like grep: no match is exit 1
 	}
 	return nil
 }
 
-// searchFiles expands directories to their files: git's view when it has one, else a walk without hidden entries.
-func searchFiles(paths []string) ([]string, error) {
-	var files []string
+// searchFiles expands directories to their files: git's view when it has one, else a
+// walk without hidden entries. Unreadable directories of the walk are failures.
+func searchFiles(paths []string) (files, failures []string, err error) {
 	for _, root := range paths {
 		if info, err := os.Stat(root); err != nil {
-			return nil, err
+			return nil, nil, err
 		} else if !info.IsDir() {
 			files = append(files, root)
 			continue
@@ -213,7 +244,8 @@ func searchFiles(paths []string) ([]string, error) {
 		_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 			switch {
 			case err != nil:
-				return nil // unreadable entries are skipped
+				failures = append(failures, fmt.Sprintf("%s: %v", p, err))
+				return nil
 			case p != root && (strings.HasPrefix(d.Name(), ".") || d.Name() == "node_modules"):
 				if d.IsDir() {
 					return filepath.SkipDir
@@ -224,7 +256,7 @@ func searchFiles(paths []string) ([]string, error) {
 			return nil
 		})
 	}
-	return files, nil
+	return files, failures, nil
 }
 
 // parseBlocks splits patch input into SEARCH/REPLACE pairs. Text outside blocks is

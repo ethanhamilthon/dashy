@@ -62,13 +62,53 @@ func IsReported(err error) bool {
 var cancelled = &ExitError{Code: 130, Reported: true}
 
 func isTerminal(v any) bool {
+	if w, ok := v.(*failedWriter); ok {
+		v = w.w
+	}
 	f, ok := v.(*os.File)
 	return ok && isatty.IsTerminal(f.Fd())
 }
 
+// IsHelper reports whether args run a helper command (file tools, tasks, view, help),
+// which ends at once on SIGINT or SIGTERM instead of cancelling a session.
+func IsHelper(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "version", "help", "--help", "-h", "tasks", "view", "read", "write", "patch", "grep":
+		return true
+	}
+	return false
+}
+
+// failedWriter remembers the first write error, so a lost result is not a success.
+type failedWriter struct {
+	w   io.Writer
+	err error
+}
+
+func (f *failedWriter) Write(p []byte) (int, error) {
+	n, err := f.w.Write(p)
+	if err != nil && f.err == nil {
+		f.err = err
+	}
+	return n, err
+}
+
 // Run executes one command line. stdout receives results; diagnostics receives
-// progress and errors. ctx ends everything: a cancelled run exits 130.
+// progress and errors. ctx ends everything: a cancelled run exits 130. A failed
+// write of the results fails the run.
 func Run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.Writer) error {
+	w := &failedWriter{w: out}
+	err := run(ctx, args, in, w, diagnostics)
+	if err == nil && w.err != nil {
+		err = fmt.Errorf("write output: %w", w.err)
+	}
+	return err
+}
+
+func run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.Writer) error {
 	if len(args) > 0 {
 		switch args[0] {
 		case "version", "help", "--help", "-h":
@@ -94,7 +134,7 @@ func Run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.W
 		case "patch":
 			return patchCommand(args[1:], in, out)
 		case "grep":
-			return grepCommand(args[1:], out)
+			return grepCommand(args[1:], out, diagnostics)
 		}
 	}
 	return sessionCommand(ctx, args, in, out, diagnostics)

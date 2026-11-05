@@ -495,3 +495,22 @@ func TestPrintGlobalInstructionsNeedGlobalFlag(t *testing.T) {
 		t.Error("--global with --no-global was accepted")
 	}
 }
+
+// A helper blocked on stdin (an open pipe) ends at once on SIGTERM.
+func TestSignalEndsBlockedHelper(t *testing.T) {
+	bin := build(t)
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	defer reader.Close()
+	dir := t.TempDir()
+	cmd := start(t, bin, dir, t.TempDir(), reader, "write", filepath.Join(dir, "out.txt"))
+	if _, took := waitExit(t, cmd, syscall.SIGTERM, func() { time.Sleep(time.Second) }); took > 5*time.Second {
+		t.Fatalf("exit after %s", took)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "out.txt")); err == nil {
+		t.Fatal("an interrupted write created the file")
+	}
+}

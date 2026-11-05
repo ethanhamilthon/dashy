@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -116,5 +118,48 @@ func TestPatchRejectsMalformedAndKeepsLineEndings(t *testing.T) {
 		if got, err := patch(c.file, c.blocks); err != nil || got != c.want {
 			t.Errorf("%s: %q %v", name, got, err)
 		}
+	}
+}
+
+type brokenWriter struct{}
+
+func (brokenWriter) Write([]byte) (int, error) { return 0, errors.New("disk full") }
+
+// A result that cannot be written fails the command.
+func TestOutputFailureIsAnError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "a.txt")
+	os.WriteFile(path, []byte("x\n"), 0600)
+	err := Run(context.Background(), []string{"read", path}, strings.NewReader(""), brokenWriter{}, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "disk full") {
+		t.Fatalf("err %v", err)
+	}
+}
+
+// After -- every argument is positional, even dash-prefixed ones.
+func TestGrepDoubleDash(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "a.txt")
+	os.WriteFile(path, []byte("-l here\nother\n"), 0600)
+	out, err := runTool(t, "", "grep", "--", "-l", path)
+	if err != nil || !strings.Contains(out, ":1:-l here") {
+		t.Fatalf("grep -- -l: %q %v", out, err)
+	}
+}
+
+// Special and huge files are refused; unreadable files make grep fail instead of looking like no match.
+func TestReadRefusesSpecialFilesAndGrepReportsFailures(t *testing.T) {
+	if _, err := runTool(t, "", "read", "/dev/zero"); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("read /dev/zero: %v", err)
+	}
+	if os.Getuid() == 0 {
+		t.Skip("root reads everything")
+	}
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "ok.txt"), []byte("match\n"), 0600)
+	os.WriteFile(filepath.Join(dir, "locked.txt"), []byte("match\n"), 0000)
+	var out, diag bytes.Buffer
+	err := Run(context.Background(), []string{"grep", "match", dir}, strings.NewReader(""), &out, &diag)
+	if ExitCode(err) != 2 || !strings.Contains(out.String(), "ok.txt:1:match") || !strings.Contains(diag.String(), "locked.txt") {
+		t.Fatalf("grep: %v %q %q", err, out.String(), diag.String())
 	}
 }
