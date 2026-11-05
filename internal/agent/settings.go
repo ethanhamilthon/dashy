@@ -251,33 +251,63 @@ func (a *Agent) AttachmentsDir() string { return filepath.Join(a.home, "attachme
 // reloads of changes made by other dashy processes share it, so every access goes through mu.
 type settingsState struct {
 	mu      sync.Mutex
-	s       Settings
+	base    Settings  // as stored: shared by all sessions, its selection is the default for new ones
+	sel     selection // of this session; an empty model follows base
+	s       Settings  // effective: base with the session selection and the -p overrides
 	client  *client
 	version int64 // of the stored settings when s was loaded or saved
 	warned  int64 // last version whose reload failed, reported once
 }
 
-// set makes s effective and rebuilds the API client for its provider. Callers hold mu or own c.
-func (c *settingsState) set(s Settings, version int64) {
+// selection is the provider, model and reasoning effort of one session.
+type selection struct{ Provider, Model, Effort string }
+
+// effectiveLocked is base with the session selection and the -p overrides applied, validated.
+func (a *Agent) effectiveLocked(base Settings) (Settings, error) {
+	s := base
+	s.Providers = maps.Clone(base.Providers)
 	if s.Providers == nil {
 		s.Providers = map[string]Provider{}
 	}
-	c.s, c.version = s, version
-	c.client = newClient(s.Providers[s.Provider])
-}
-
-// readSettings loads the stored settings with the per-run -p overrides applied and validated.
-func (a *Agent) readSettings() (Settings, int64, error) {
-	s, version, err := loadSettings(a.db)
-	if err != nil {
-		return Settings{}, version, err
+	if sel := a.cfg.sel; sel.Model != "" {
+		s.Provider, s.Model, s.Effort = sel.Provider, sel.Model, sel.Effort
 	}
 	for field, value := range map[*string]string{&s.Provider: a.opts.Provider, &s.Model: a.opts.Model, &s.Effort: a.opts.Effort} {
 		if value != "" {
 			*field = value
 		}
 	}
-	return s, version, validateSettings(s)
+	return s, validateSettings(s)
+}
+
+// applyLocked makes base the stored settings and rebuilds the effective ones and the API client.
+func (a *Agent) applyLocked(base Settings, version int64) error {
+	s, err := a.effectiveLocked(base)
+	if err != nil {
+		return err
+	}
+	c := a.cfg
+	c.base, c.s, c.version = base, s, version
+	c.client = newClient(s.Providers[s.Provider])
+	return nil
+}
+
+// fixSelection gives the session its selection: sel, or the current default when sel is
+// empty or no longer valid. Later default changes do not reach this session; until a model
+// is configured at all, the session follows the default.
+func (a *Agent) fixSelection(sel selection) {
+	c := a.cfg
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sel = sel
+	if sel.Model == "" || a.applyLocked(c.base, c.version) != nil {
+		c.sel = selection{}
+		_ = a.applyLocked(c.base, c.version)
+	}
+	// The session keeps what it runs with, -p overrides included.
+	if c.s.Model != "" {
+		c.sel = selection{c.s.Provider, c.s.Model, c.s.Effort}
+	}
 }
 
 // reloadLocked re-reads the settings when another process saved a new version. Settings
@@ -288,7 +318,10 @@ func (a *Agent) reloadLocked() (warning string) {
 	if err != nil || version == c.version {
 		return ""
 	}
-	s, version, err := a.readSettings()
+	base, version, err := loadSettings(a.db)
+	if err == nil {
+		err = a.applyLocked(base, version)
+	}
 	if err != nil {
 		if version == c.warned {
 			return ""
@@ -296,7 +329,6 @@ func (a *Agent) reloadLocked() (warning string) {
 		c.warned = version
 		return "Stored settings changed but could not be loaded; keeping the previous settings: " + Redact(c.s, err.Error())
 	}
-	c.set(s, version)
 	return ""
 }
 
@@ -330,20 +362,26 @@ func (a *Agent) Settings() Settings {
 	return a.settingsLocked()
 }
 
-// update changes the latest settings (other processes' changes included), then validates, saves and
-// applies them. A failed change or save leaves the previous settings in place.
+// update changes the latest stored settings (other processes' changes included), then
+// validates, saves and applies them. A failed change or save leaves the previous settings in place.
 func (a *Agent) update(change func(*Settings) error) error {
 	a.cfg.mu.Lock()
 	defer a.cfg.mu.Unlock()
 	a.reloadLocked()
-	next := a.settingsLocked()
+	next := a.cfg.base
+	next.Providers = maps.Clone(next.Providers)
+	if next.Providers == nil {
+		next.Providers = map[string]Provider{}
+	}
 	if err := change(&next); err != nil {
+		return err
+	}
+	if _, err := a.effectiveLocked(next); err != nil {
 		return err
 	}
 	version, err := storeSettings(a.db, next)
 	if err != nil {
 		return err
 	}
-	a.cfg.set(next, version)
-	return nil
+	return a.applyLocked(next, version)
 }

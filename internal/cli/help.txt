@@ -63,6 +63,8 @@ SYSTEM PROMPT (DASHY.md)
   Settings changed in the TUI apply at once, even while a turn runs: the running turn
   continues and its next request uses the new values. Changes saved by another dashy
   process are picked up before the next model request. --provider/--model/--effort keep priority.
+  Provider, model and effort belong to the session: /models changes them for this session and
+  makes them the default for new sessions; other open or saved sessions keep theirs.
 
 BASH TOOL
   The model's only tool runs /bin/bash --noprofile --norc in the project directory.

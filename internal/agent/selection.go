@@ -8,12 +8,26 @@ import (
 	"strings"
 )
 
-// Select sets the provider, model and reasoning effort, and saves them.
+// Select sets the provider, model and reasoning effort of this session and makes
+// them the default for new sessions. Other open sessions keep theirs.
 func (a *Agent) Select(provider, model, effort string) error {
-	return a.update(func(s *Settings) error {
+	a.cfg.mu.Lock()
+	previous := a.cfg.sel
+	a.cfg.sel = selection{provider, model, effort}
+	a.cfg.mu.Unlock()
+	err := a.update(func(s *Settings) error {
 		s.Provider, s.Model, s.Effort = provider, model, effort
 		return nil
 	})
+	if err != nil {
+		a.cfg.mu.Lock()
+		a.cfg.sel = previous
+		a.cfg.mu.Unlock()
+		return err
+	}
+	// Only the selection columns: a turn may be saving the history at the same time.
+	_, err = a.db.Exec(`UPDATE sessions SET provider = ?, model = ?, effort = ? WHERE id = ?`, provider, model, effort, a.id)
+	return err
 }
 
 // ModelChoice is a model offered by one configured provider.

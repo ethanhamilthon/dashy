@@ -142,7 +142,10 @@ func TestFinalTextIgnoresEarlierTurns(t *testing.T) {
 func TestMissingModelSendsNoRequest(t *testing.T) {
 	fp := &fakeProvider{reply: func(int, string) string { return textReply("x") }}
 	a := newTestAgent(t, fp, Options{})
-	a.update(func(s *Settings) error { *s = DefaultSettings(); return nil })
+	a.cfg.sel = selection{} // a session created before any model was configured
+	if err := a.update(func(s *Settings) error { *s = DefaultSettings(); return nil }); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := turn(t, a, "hi"); err == nil || !strings.Contains(err.Error(), "No provider configured") {
 		t.Fatalf("err = %v", err)
 	}

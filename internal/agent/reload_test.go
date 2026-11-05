@@ -45,10 +45,11 @@ func reloadAgent(t *testing.T, opts Options, hook func(a *Agent)) (*Agent, *fake
 	return a, fp
 }
 
-// Settings saved by another process during a turn do not stop it; the next request uses the new values.
+// Settings saved by another process during a turn do not stop it; the next request uses
+// the new shared values but keeps this session's model and effort.
 func TestFileEditDuringTurnAppliesToNextRequest(t *testing.T) {
 	a, fp := reloadAgent(t, Options{}, func(a *Agent) {
-		editFile(t, a, func(s *Settings) { s.Model, s.Effort = "new-model", "high" })
+		editFile(t, a, func(s *Settings) { s.Model, s.Effort, s.ReasoningSummary = "new-model", "high", false })
 	})
 	if _, err := turn(t, a, "go"); err != nil {
 		t.Fatal(err)
@@ -57,8 +58,12 @@ func TestFileEditDuringTurnAppliesToNextRequest(t *testing.T) {
 	if len(reqs) != 2 || !strings.Contains(reqs[0], `"model":"m"`) || strings.Contains(reqs[0], `"effort"`) {
 		t.Fatalf("first request: %v", reqs)
 	}
-	if !strings.Contains(reqs[1], `"model":"new-model"`) || !strings.Contains(reqs[1], `"effort":"high"`) {
-		t.Fatalf("second request did not use the new settings: %s", reqs[1])
+	if !strings.Contains(reqs[1], `"model":"m"`) || strings.Contains(reqs[1], `"effort"`) || strings.Contains(reqs[1], `"summary"`) {
+		t.Fatalf("second request: %s", reqs[1])
+	}
+	// A new session starts with the new default.
+	if err := a.NewSession(); err != nil || a.Settings().Model != "new-model" {
+		t.Fatalf("new session model %q, %v", a.Settings().Model, err)
 	}
 }
 
@@ -101,9 +106,9 @@ func TestBrokenSettingsKeepOldAndWarnOnce(t *testing.T) {
 	if a.Settings().Model != "m" {
 		t.Fatalf("settings changed: %+v", a.Settings())
 	}
-	storeRaw(t, a, `{"provider":"p","model":"fixed","providers":`+providersJSON(a)+`}`)
+	storeRaw(t, a, `{"provider":"p","model":"fixed","show_lines":"full","providers":`+providersJSON(a)+`}`)
 	a.refreshSettings(nil)
-	if a.Settings().Model != "fixed" {
+	if a.Settings().ShowLines != "full" {
 		t.Fatalf("fixed settings not picked up: %+v", a.Settings())
 	}
 }
@@ -149,7 +154,7 @@ func TestPromptStaysFrozenWhileSettingsReload(t *testing.T) {
 			return textReply("done")
 		}
 		writeFile(t, filepath.Join(a.Shell.Dir, "DASHY.md"), "changed")
-		editFile(t, a, func(s *Settings) { s.Effort = "high" })
+		editFile(t, a, func(s *Settings) { s.ReasoningSummary = false })
 		return bashReply("c1", "echo hi")
 	}
 	a = newTestAgentWith(t, fp, Options{}, func(_, dir string) { writeFile(t, filepath.Join(dir, "DASHY.md"), "original") })
@@ -157,7 +162,7 @@ func TestPromptStaysFrozenWhileSettingsReload(t *testing.T) {
 		t.Fatal(err)
 	}
 	reqs := fp.requests()
-	if !strings.Contains(reqs[0], "original") || !strings.Contains(reqs[1], "original") || strings.Contains(reqs[1], "changed") || !strings.Contains(reqs[1], `"effort":"high"`) {
+	if !strings.Contains(reqs[0], "original") || !strings.Contains(reqs[1], "original") || strings.Contains(reqs[1], "changed") || strings.Contains(reqs[1], `"summary"`) {
 		t.Fatalf("prompt changed within the session:\n%s\n%s", reqs[0], reqs[1])
 	}
 }

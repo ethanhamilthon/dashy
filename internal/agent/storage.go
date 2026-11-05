@@ -30,7 +30,9 @@ func (a *Agent) openSession(id string) error {
 	if id == "" || filepath.Base(id) != id || strings.ContainsAny(id, `/\`) {
 		return fmt.Errorf("invalid session ID: %s", id)
 	}
-	err := a.db.QueryRow(`SELECT title FROM sessions WHERE id = ? AND project = ?`, id, a.project).Scan(&a.title)
+	var sel selection
+	err := a.db.QueryRow(`SELECT title, provider, model, effort FROM sessions WHERE id = ? AND project = ?`, id, a.project).
+		Scan(&a.title, &sel.Provider, &sel.Model, &sel.Effort)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("session not found in this project: %s", id)
 	}
@@ -38,6 +40,7 @@ func (a *Agent) openSession(id string) error {
 		return err
 	}
 	a.id, a.stored = id, true
+	a.fixSelection(sel)
 	if err := a.acquire(); err != nil {
 		return err
 	}
@@ -54,6 +57,7 @@ func (a *Agent) createSession() error {
 		return err
 	}
 	a.id = time.Now().UTC().Format("20060102T150405.000000000Z") + "-" + hex.EncodeToString(id[:])
+	a.fixSelection(selection{})
 	return a.acquire()
 }
 
@@ -83,9 +87,13 @@ func (a *Agent) Save() error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`INSERT INTO sessions (id, project, title, first, updated) VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT (id) DO UPDATE SET title = excluded.title, first = excluded.first, updated = excluded.updated`,
-		a.id, a.project, a.title, a.DefaultTitle(), time.Now().UnixNano()); err != nil {
+	a.cfg.mu.Lock()
+	sel := a.cfg.sel
+	a.cfg.mu.Unlock()
+	if _, err := tx.Exec(`INSERT INTO sessions (id, project, title, first, updated, provider, model, effort) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (id) DO UPDATE SET title = excluded.title, first = excluded.first, updated = excluded.updated,
+		provider = excluded.provider, model = excluded.model, effort = excluded.effort`,
+		a.id, a.project, a.title, a.DefaultTitle(), time.Now().UnixNano(), sel.Provider, sel.Model, sel.Effort); err != nil {
 		return err
 	}
 	start := min(a.saved, len(a.History))

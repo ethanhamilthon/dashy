@@ -110,7 +110,7 @@ func (a *Agent) loadConfig(dir string) error {
 	if a.cfg == nil {
 		a.cfg = &settingsState{}
 	}
-	settings, version, err := a.readSettings()
+	base, version, err := loadSettings(a.db)
 	if err != nil {
 		return err
 	}
@@ -118,7 +118,12 @@ func (a *Agent) loadConfig(dir string) error {
 	if err != nil {
 		return err
 	}
-	a.cfg.set(settings, version)
+	a.cfg.mu.Lock()
+	err = a.applyLocked(base, version)
+	a.cfg.mu.Unlock()
+	if err != nil {
+		return err
+	}
 	a.promptFiles = files
 	return nil
 }

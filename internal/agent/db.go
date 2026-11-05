@@ -33,6 +33,42 @@ CREATE TABLE IF NOT EXISTS items (
 	PRIMARY KEY (session, seq)
 ) WITHOUT ROWID;`
 
+// migrations upgrade the schema; PRAGMA user_version counts those applied.
+var migrations = []string{
+	// Each session keeps the provider, model and effort it was created or switched to.
+	`ALTER TABLE sessions ADD COLUMN provider TEXT NOT NULL DEFAULT '';
+	 ALTER TABLE sessions ADD COLUMN model TEXT NOT NULL DEFAULT '';
+	 ALTER TABLE sessions ADD COLUMN effort TEXT NOT NULL DEFAULT '';`,
+}
+
+// migrate creates the schema and applies the migrations it lacks, in one transaction.
+func migrate(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var version int
+	if err := tx.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		return err
+	}
+	if version >= len(migrations) {
+		return nil
+	}
+	if _, err := tx.Exec(schema); err != nil {
+		return err
+	}
+	for _, m := range migrations[version:] {
+		if _, err := tx.Exec(m); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, len(migrations))); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // DBPath is the database in DASHY_HOME.
 func DBPath(home string) string { return filepath.Join(home, "dashy.db") }
 
@@ -52,7 +88,7 @@ func openDB(home string) (*sql.DB, error) {
 	query := "_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)&_txlock=immediate"
 	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", OmitHost: true, Path: path, RawQuery: query}).String())
 	if err == nil {
-		_, err = db.Exec(schema)
+		err = migrate(db)
 	}
 	if err != nil {
 		if db != nil {

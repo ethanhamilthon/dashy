@@ -217,3 +217,46 @@ func TestSessionListIsScopedAndOrdered(t *testing.T) {
 		t.Fatalf("another project's session opened: %v", err)
 	}
 }
+
+// A model chosen in one session is the default for new sessions but does not change
+// another open session, which keeps its model after reopening too.
+func TestModelSelectionIsPerSession(t *testing.T) {
+	fp := &fakeProvider{reply: func(int, string) string { return textReply("ok") }}
+	a := newTestAgent(t, fp, Options{})
+	if _, err := turn(t, a, "hi"); err != nil {
+		t.Fatal(err)
+	}
+	b, err := New(t.TempDir(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	if err := b.Select("p", "other", "high"); err != nil {
+		t.Fatal(err)
+	}
+	a.refreshSettings(nil)
+	if s := a.Settings(); s.Model != "m" || s.Effort != "" {
+		t.Fatalf("open session changed to %s/%s", s.Model, s.Effort)
+	}
+	if err := a.Select("p", "mine", "low"); err != nil {
+		t.Fatal(err)
+	}
+	id := a.SessionID()
+	a.Close()
+	again, err := New(a.Shell.Dir, Options{Resume: id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer again.Close()
+	if s := again.Settings(); s.Model != "mine" || s.Effort != "low" {
+		t.Fatalf("reopened session runs %s/%s", s.Model, s.Effort)
+	}
+	fresh, err := New(t.TempDir(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fresh.Close()
+	if s := fresh.Settings(); s.Model != "mine" {
+		t.Fatalf("new session default %s", s.Model)
+	}
+}
