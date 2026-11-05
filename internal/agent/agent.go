@@ -54,7 +54,7 @@ type Options struct {
 	Config   string // --config FILE, relative to the project directory
 	NoGlobal bool   // --no-global
 	Resume   string // --resume ID; "" starts a new session
-	Mode     string // "acp" for editor sessions; empty means TUI
+	Mode     string // DASHY_MODE of instruction blocks: "tui" (the default) or "acp"
 	// Provider, Model and Effort override the saved selection for this run only; "" keeps it.
 	Provider, Model, Effort string
 	Observe                 func(ExecutionEvent)
@@ -91,6 +91,9 @@ func New(dir string, opts Options) (*Agent, error) {
 	home, err := DashyHome(dir)
 	if err != nil {
 		return nil, err
+	}
+	if opts.Mode == "" {
+		opts.Mode = "tui"
 	}
 	a := &Agent{opts: opts, home: home, promptSource: "startup", Shell: &shell.Runner{Dir: dir}, slots: &imageSlots{}, queue: &Steering{}}
 	a.Shell.Env = a.shellEnv
@@ -315,7 +318,7 @@ func (a *Agent) runTool(ctx context.Context, callID, name, arguments string, emi
 	}
 	a.observe(execution, "in_progress", shell.Result{})
 	var detach <-chan struct{}
-	if a.tasks != nil && a.opts.Mode != "acp" {
+	if a.tasks != nil {
 		a.queue.drainTyped()
 		detach = a.queue.typedSignal()
 	}

@@ -145,13 +145,6 @@ func (a *Agent) changeSession(id string) error {
 	return nil
 }
 
-func (a *Agent) mode() string {
-	if a.opts.Mode == "acp" {
-		return "acp"
-	}
-	return "tui"
-}
-
 // shellEnv is exported to every bash tool call. API keys and settings are never exported.
 func (a *Agent) shellEnv() map[string]string {
 	env := map[string]string{"DASHY_SESSION_ID": a.SessionID()}

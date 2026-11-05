@@ -133,14 +133,14 @@ func blockFailure(reason string, out *blockOutputs) string {
 
 // runBlock executes one dashy block. A block failure is returned as prompt text;
 // only cancellation of the turn is an error, because the turn itself must stop.
-func (a *Agent) runBlock(turn context.Context, script, mode, source string) (string, error) {
+func (a *Agent) runBlock(turn context.Context, script, source string) (string, error) {
 	execution := Execution{ID: fmt.Sprintf("instructions-%d", time.Now().UnixNano()), Kind: "instructions", Command: script, Started: time.Now()}
 	a.observe(execution, "pending", shell.Result{})
 	a.observe(execution, "in_progress", shell.Result{})
 	ctx, cancel := context.WithTimeout(turn, blockTimeout)
 	defer cancel()
 	env := a.shellEnv()
-	env["DASHY_MODE"], env["DASHY_SOURCE"], env["DASHY_HOME"] = mode, source, a.home
+	env["DASHY_MODE"], env["DASHY_SOURCE"], env["DASHY_HOME"] = a.opts.Mode, source, a.home
 	out := &blockOutputs{}
 	cmd := shell.Command(ctx, a.Shell.Dir, env, script)
 	cmd.Stdout, cmd.Stderr = blockWriter{out, false}, blockWriter{out, true}
@@ -228,7 +228,7 @@ func (a *Agent) expandBlocks(ctx context.Context, data []byte) (string, error) {
 	var out strings.Builder
 	last := 0
 	for _, b := range blocks {
-		replacement, err := a.runBlock(ctx, b.script, a.mode(), a.promptSource)
+		replacement, err := a.runBlock(ctx, b.script, a.promptSource)
 		if err != nil {
 			return "", err
 		}

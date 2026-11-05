@@ -98,21 +98,21 @@ func TestBlockTimeoutIsAFailure(t *testing.T) {
 func TestBlockOutputBudget(t *testing.T) {
 	a := newTestAgent(t, &fakeProvider{}, Options{})
 	ctx := context.Background()
-	exact, err := a.runBlock(ctx, "head -c 63488 /dev/zero | tr '\\0' a", "tui", "startup")
+	exact, err := a.runBlock(ctx, "head -c 63488 /dev/zero | tr '\\0' a", "startup")
 	if err != nil || exact != strings.Repeat("a", 62*1024) {
 		t.Fatalf("62 KiB of stdout: kept %d bytes, err %v", len(exact), err)
 	}
-	cut, err := a.runBlock(ctx, "head -c 200000 /dev/zero | tr '\\0' a", "tui", "startup")
+	cut, err := a.runBlock(ctx, "head -c 200000 /dev/zero | tr '\\0' a", "startup")
 	if err != nil || len(cut) != blockOutput {
 		t.Fatalf("stdout over the limit kept %d bytes, err %v", len(cut), err)
 	}
-	noisy, err := a.runBlock(ctx, "head -c 100000 /dev/zero | tr '\\0' e >&2; echo out", "tui", "startup")
+	noisy, err := a.runBlock(ctx, "head -c 100000 /dev/zero | tr '\\0' e >&2; echo out", "startup")
 	if err != nil || noisy != "out" {
 		t.Fatalf("stderr crowded out stdout: %q, err %v", noisy, err)
 	}
 	// The failure text keeps only the stderr tail.
 	many := "head -c 100000 /dev/zero | tr '\\0' a; for i in $(seq 1 40); do echo line$i >&2; done; exit 2"
-	failed, _ := a.runBlock(ctx, many, "tui", "startup")
+	failed, _ := a.runBlock(ctx, many, "startup")
 	if !strings.HasSuffix(failed, "line36\nline37\nline38\nline39\nline40") || strings.Count(failed, "\n") != blockTailLines {
 		t.Fatalf("stderr tail = %q", failed)
 	}
