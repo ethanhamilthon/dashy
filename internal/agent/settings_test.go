@@ -71,10 +71,10 @@ func TestSelectionsAreAppliedAndSaved(t *testing.T) {
 	if err := a.Select("p", "m2", "high"); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.AddProvider("q", Provider{BaseURL: "https://q.example"}); err != nil {
+	if err := a.SaveProvider("", "q", Provider{BaseURL: "https://q.example"}); err != nil {
 		t.Fatal(err)
 	}
-	if a.AddProvider("q", Provider{BaseURL: "https://q.example"}) == nil || a.AddProvider(" ", Provider{BaseURL: "https://x"}) == nil {
+	if a.SaveProvider("", "q", Provider{BaseURL: "https://q.example"}) == nil || a.SaveProvider("", " ", Provider{BaseURL: "https://x"}) == nil {
 		t.Fatal("duplicate or empty provider name accepted")
 	}
 	if a.Select("missing", "m", "") == nil || a.Settings().Model != "m2" {
@@ -147,7 +147,7 @@ func TestConcurrentSettingsEditsKeepBoth(t *testing.T) {
 // deleting the selected provider clears the selection.
 func TestEditRenameAndDeleteProvider(t *testing.T) {
 	a := newTestAgent(t, &fakeProvider{reply: func(int, string) string { return "" }}, Options{})
-	if err := a.AddProvider("q", Provider{BaseURL: "https://q.example", APIKey: "secret"}); err != nil {
+	if err := a.SaveProvider("", "q", Provider{BaseURL: "https://q.example", APIKey: "secret"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.SaveProvider("q", "q2", Provider{BaseURL: "https://q2.example"}); err != nil {

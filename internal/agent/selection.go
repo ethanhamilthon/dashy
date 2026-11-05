@@ -73,11 +73,6 @@ func AllModels(ctx context.Context, providers map[string]Provider) (choices []Mo
 	return choices, errs
 }
 
-// AddProvider registers a new provider and saves the settings.
-func (a *Agent) AddProvider(name string, provider Provider) error {
-	return a.SaveProvider("", name, provider)
-}
-
 // SaveProvider adds the provider name (old is "") or replaces the provider old, which
 // may be renamed. An empty key keeps the key of old. Sessions using old follow a rename.
 func (a *Agent) SaveProvider(old, name string, provider Provider) error {

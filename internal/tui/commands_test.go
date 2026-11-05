@@ -53,7 +53,7 @@ func TestOnboarding(t *testing.T) {
 	if f.m.menuKind != "" {
 		t.Fatalf("Esc left %q open", f.m.menuKind)
 	}
-	if err := f.m.ctl.AddProvider("work", "http://127.0.0.1:9", ""); err != nil {
+	if err := f.m.ctl.SaveProvider("", "work", "http://127.0.0.1:9", ""); err != nil {
 		t.Fatal(err)
 	}
 	if f.m.onboard(); f.m.menuKind != pickerModels {

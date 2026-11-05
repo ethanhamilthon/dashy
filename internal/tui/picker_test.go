@@ -55,10 +55,10 @@ func modelServer(t *testing.T, list string) string {
 // applies and saves the effort and a chosen model at once.
 func TestSettingsAndModelsPickers(t *testing.T) {
 	m, a := freshModel(t)
-	if err := a.AddProvider("p", agent.Provider{BaseURL: modelServer(t, `{"data":[{"id":"m1"},{"id":"m2"}]}`)}); err != nil {
+	if err := a.SaveProvider("", "p", agent.Provider{BaseURL: modelServer(t, `{"data":[{"id":"m1"},{"id":"m2"}]}`)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.AddProvider("q", agent.Provider{BaseURL: modelServer(t, `{"data":[{"id":"m3"}]}`)}); err != nil {
+	if err := a.SaveProvider("", "q", agent.Provider{BaseURL: modelServer(t, `{"data":[{"id":"m3"}]}`)}); err != nil {
 		t.Fatal(err)
 	}
 	m = openPickerCmd(t, m, "/settings")
@@ -183,7 +183,7 @@ func TestProviderFormValidatesAndSavesAnyway(t *testing.T) {
 func TestConnectEditsAndDeletesProvider(t *testing.T) {
 	m, a := freshModel(t)
 	url := modelServer(t, `{"data":[{"id":"m1"}]}`)
-	if err := a.AddProvider("old", agent.Provider{BaseURL: url, APIKey: "k1"}); err != nil {
+	if err := a.SaveProvider("", "old", agent.Provider{BaseURL: url, APIKey: "k1"}); err != nil {
 		t.Fatal(err)
 	}
 	m = openPickerCmd(t, m, "/connect")
@@ -229,7 +229,7 @@ func TestPickerNamesThatMatchActionsAreChoices(t *testing.T) {
 	m, a := freshModel(t)
 	url := modelServer(t, `{"data":[{"id":"Reasoning summary"},{"id":"Show lines"}]}`)
 	for _, name := range []string{"Add", "Add provider"} {
-		if err := a.AddProvider(name, agent.Provider{BaseURL: url}); err != nil {
+		if err := a.SaveProvider("", name, agent.Provider{BaseURL: url}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -257,7 +257,7 @@ func TestPickerNamesThatMatchActionsAreChoices(t *testing.T) {
 // With a configured model, Left/Right saves the effort at once: Escape keeps it.
 func TestEffortChangeIsSavedBeforeEscape(t *testing.T) {
 	m, a := freshModel(t)
-	if err := a.AddProvider("p", agent.Provider{BaseURL: modelServer(t, `{"data":[{"id":"m1"}]}`)}); err != nil {
+	if err := a.SaveProvider("", "p", agent.Provider{BaseURL: modelServer(t, `{"data":[{"id":"m1"}]}`)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.Select("p", "m1", ""); err != nil {

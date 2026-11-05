@@ -194,7 +194,7 @@ func (c *Controller) beginLocked() *operation {
 
 func (c *Controller) beginTurnLocked(input agent.Input) {
 	op := c.beginLocked()
-	c.publish(Event{Kind: "started", Operation: "turn", Text: input.Text})
+	c.publish(Event{Kind: "started", Text: input.Text})
 	go func() { c.finishTurn(op, c.a.RunInput(op.ctx, input, func(e agent.Event) { c.observe(e) })) }()
 }
 
@@ -241,7 +241,7 @@ func (c *Controller) finishTurn(op *operation, err error) {
 		if status == "ok" {
 			final = c.a.FinalText() // committed history: the answer after the last tool output
 		}
-		c.publish(Event{Kind: "done", Operation: "turn", Status: status, Error: text, Unsent: unsent, Text: final})
+		c.publish(Event{Kind: "done", Status: status, Error: text, Unsent: unsent, Text: final})
 		c.settleLocked()
 	})
 }

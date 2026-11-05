@@ -220,11 +220,6 @@ func (c *Controller) selectLocked(provider, model, effort string) error {
 	return nil
 }
 
-// AddProvider configures a new provider. The API key is never reported back.
-func (c *Controller) AddProvider(name, baseURL, apiKey string) error {
-	return c.SaveProvider("", name, baseURL, apiKey)
-}
-
 // SaveProvider adds a provider (old is "") or edits the provider old, which may be
 // renamed; an empty key then keeps the stored one. The API key is never reported back.
 func (c *Controller) SaveProvider(old, name, baseURL, apiKey string) error {

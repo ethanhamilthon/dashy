@@ -366,10 +366,10 @@ func TestSettingsAndProvidersThroughTheController(t *testing.T) {
 	if err := h.ctl.SelectModel("p", "m2", "high"); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.ctl.AddProvider("q", "https://q.example/v1", "sk-x"); err != nil {
+	if err := h.ctl.SaveProvider("", "q", "https://q.example/v1", "sk-x"); err != nil {
 		t.Fatal(err)
 	}
-	if codeOf(h.ctl.AddProvider("q", "https://q.example/v1", "")) != "failed" {
+	if codeOf(h.ctl.SaveProvider("", "q", "https://q.example/v1", "")) != "failed" {
 		t.Fatal("duplicate provider accepted")
 	}
 	for _, setting := range []string{SettingReasoning, SettingLines, SettingShellOutput} {

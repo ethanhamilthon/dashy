@@ -177,7 +177,13 @@ func SaveSettings(home string, s Settings) error {
 		return err
 	}
 	defer db.Close()
-	_, err = storeSettings(db, s)
+	if err := validateSettings(s); err != nil {
+		return err
+	}
+	version, err := settingsVersion(db)
+	if err == nil {
+		_, err = storeSettingsAt(db, s, version)
+	}
 	return err
 }
 
@@ -208,21 +214,6 @@ func settingsVersion(db *sql.DB) (version int64, err error) {
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}
-	return version, err
-}
-
-// storeSettings validates and saves settings, returning their new version.
-func storeSettings(db *sql.DB, s Settings) (version int64, err error) {
-	if err := validateSettings(s); err != nil {
-		return 0, err
-	}
-	data, err := json.Marshal(s)
-	if err != nil {
-		return 0, err
-	}
-	err = db.QueryRow(`INSERT INTO settings (id, data, version) VALUES (1, ?, 1)
-		ON CONFLICT (id) DO UPDATE SET data = excluded.data, version = settings.version + 1
-		RETURNING version`, string(data)).Scan(&version)
 	return version, err
 }
 
