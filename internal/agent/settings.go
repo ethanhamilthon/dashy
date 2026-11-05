@@ -12,10 +12,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"time"
-
-	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/option"
 )
 
 // Fixed limits of the bash tool and the timeline (show_lines).
@@ -256,7 +252,7 @@ func (a *Agent) AttachmentsDir() string { return filepath.Join(a.home, "attachme
 type settingsState struct {
 	mu      sync.Mutex
 	s       Settings
-	client  openai.Client
+	client  *client
 	version int64 // of the stored settings when s was loaded or saved
 	warned  int64 // last version whose reload failed, reported once
 }
@@ -315,7 +311,7 @@ func (a *Agent) refreshSettings(emit func(Event)) {
 }
 
 // snapshot is the settings and client for one model request.
-func (a *Agent) snapshot() (Settings, openai.Client) {
+func (a *Agent) snapshot() (Settings, *client) {
 	a.cfg.mu.Lock()
 	defer a.cfg.mu.Unlock()
 	return a.settingsLocked(), a.cfg.client
@@ -350,13 +346,4 @@ func (a *Agent) update(change func(*Settings) error) error {
 	}
 	a.cfg.set(next, version)
 	return nil
-}
-
-func newClient(p Provider) openai.Client {
-	return openai.NewClient(
-		option.WithBaseURL(strings.TrimRight(p.BaseURL, "/")+"/"),
-		option.WithAPIKey(p.key()),
-		option.WithMaxRetries(0),
-		option.WithRequestTimeout(10*time.Minute),
-	)
 }

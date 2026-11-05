@@ -13,11 +13,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/packages/param"
-	"github.com/openai/openai-go/v3/responses"
-	"github.com/openai/openai-go/v3/shared"
-
 	"dashy/internal/shell"
 )
 
@@ -333,41 +328,38 @@ func (a *Agent) request(ctx context.Context, emit func(Event)) (items []json.Raw
 	if err != nil {
 		return nil, err
 	}
-	input := make(responses.ResponseInputParam, len(a.History))
 	for i, item := range a.History {
 		if !json.Valid(item) {
 			return nil, fmt.Errorf("invalid history item %d", i)
 		}
-		input[i] = param.Override[responses.ResponseInputItemUnionParam](item)
 	}
-	payload := responses.ResponseNewParams{
-		Model:        settings.Model,
-		Instructions: openai.String(prompt),
-		Input:        responses.ResponseNewParamsInputUnion{OfInputItemList: input},
-		Store:        openai.Bool(false),
-		Tools: []responses.ToolUnionParam{{OfFunction: &responses.FunctionToolParam{
-			Name:        "bash",
-			Description: openai.String(BashToolDescription),
-			Parameters:  bashParameters(),
-			Strict:      openai.Bool(true),
-		}}},
+	payload := map[string]any{
+		"model":        settings.Model,
+		"instructions": prompt,
+		"input":        a.History,
+		"store":        false,
+		"tools": []any{map[string]any{
+			"type": "function", "name": "bash", "description": BashToolDescription,
+			"parameters": bashParameters(), "strict": true,
+		}},
 	}
+	reasoning := map[string]any{}
 	if settings.Effort != "" {
-		payload.Reasoning.Effort = shared.ReasoningEffort(settings.Effort)
+		reasoning["effort"] = settings.Effort
 	}
 	if settings.ReasoningSummary {
-		payload.Reasoning.Summary = shared.ReasoningSummaryAuto
+		reasoning["summary"] = "auto"
+	}
+	if len(reasoning) > 0 {
+		payload["reasoning"] = reasoning
 	}
 	started := time.Now()
 	a.lastRequest = Metadata{RequestID: fmt.Sprintf("r-%d", len(a.History))}
 	a.slots.sent()
-	stream := client.Responses.NewStreaming(ctx, payload)
-	defer stream.Close()
 	var completed []json.RawMessage
 	arguments := map[int64]string{}
 	names := map[int64]string{}
-	for stream.Next() {
-		event := stream.Current()
+	err = client.stream(ctx, payload, func(event streamEvent) error {
 		switch event.Type {
 		case "response.function_call_arguments.delta", "response.function_call_arguments.done":
 			if event.Type == "response.function_call_arguments.delta" {
@@ -379,20 +371,22 @@ func (a *Agent) request(ctx context.Context, emit func(Event)) (items []json.Raw
 				emit(Event{Kind: "code", Text: partialCode(arguments[event.OutputIndex]), Provisional: true, ID: a.itemID(event.OutputIndex), Final: true})
 			}
 		case "response.output_item.added", "response.output_item.done":
+			var item struct{ Type, Name, Arguments string }
+			_ = json.Unmarshal(event.Item, &item)
 			// Some providers deliver complete arguments without argument deltas.
-			if event.Item.Type == "function_call" {
-				names[event.OutputIndex] = event.Item.Name
-				if event.Item.Arguments.OfString != "" {
-					arguments[event.OutputIndex] = event.Item.Arguments.OfString
+			if item.Type == "function_call" {
+				names[event.OutputIndex] = item.Name
+				if item.Arguments != "" {
+					arguments[event.OutputIndex] = item.Arguments
 				}
-				if event.Item.Name == "bash" {
+				if item.Name == "bash" {
 					emit(Event{Kind: "code", Text: partialCode(arguments[event.OutputIndex]), Provisional: true, ID: a.itemID(event.OutputIndex), Final: true})
-					continue
+					return nil
 				}
 			}
 			// Display of a finished item is emitted by RunInput when the response commits.
 			if event.Type == "response.output_item.added" {
-				for _, record := range RecordsForItem(json.RawMessage(event.Item.RawJSON())) {
+				for _, record := range RecordsForItem(event.Item) {
 					emit(Event{Kind: record.Kind, Text: record.Text, ID: a.itemID(event.OutputIndex), Final: true, Provisional: true})
 				}
 			}
@@ -404,24 +398,22 @@ func (a *Agent) request(ctx context.Context, emit func(Event)) (items []json.Raw
 			emit(Event{Kind: "refusal_delta", Text: event.Delta, ID: a.itemID(event.OutputIndex), Provisional: true})
 		case "response.completed":
 			a.lastRequest.Duration = time.Since(started)
-			if event.Response.JSON.Usage.Valid() {
-				n := event.Response.Usage.InputTokens
+			if u := event.Response.Usage; u != nil {
+				n := u.InputTokens
 				a.lastRequest.ContextInput = &n
 				cached := int64(-1)
-				if event.Response.Usage.InputTokensDetails.JSON.CachedTokens.Valid() {
-					cached = event.Response.Usage.InputTokensDetails.CachedTokens
+				if u.InputTokensDetails != nil && u.InputTokensDetails.CachedTokens != nil {
+					cached = *u.InputTokensDetails.CachedTokens
 				}
-				a.lastRequest.Usage = &Usage{Input: n, Output: event.Response.Usage.OutputTokens, Cached: cached}
+				a.lastRequest.Usage = &Usage{Input: n, Output: u.OutputTokens, Cached: cached}
 			}
-			completed = make([]json.RawMessage, len(event.Response.Output))
-			for i, item := range event.Response.Output {
-				completed[i] = json.RawMessage(item.RawJSON())
-			}
+			completed = append([]json.RawMessage{}, event.Response.Output...)
 		case "response.failed", "response.incomplete", "error":
-			return nil, streamFailure(event)
+			return streamFailure(event)
 		}
-	}
-	if err := stream.Err(); err != nil {
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 	if completed == nil {

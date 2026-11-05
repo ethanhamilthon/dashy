@@ -11,8 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/openai/openai-go/v3"
 )
 
 const (
@@ -26,13 +24,13 @@ func retryable(err error) bool {
 	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
-	var api *openai.Error
+	var api *apiError
 	if errors.As(err, &api) {
-		switch api.StatusCode {
+		switch api.Status {
 		case http.StatusRequestTimeout, http.StatusConflict, http.StatusTooManyRequests:
 			return true
 		}
-		return api.StatusCode >= 500
+		return api.Status >= 500
 	}
 	var network net.Error
 	if errors.As(err, &network) {
@@ -50,9 +48,9 @@ func retryable(err error) bool {
 // lengthened by a provider Retry-After but never beyond retryMax.
 func delay(attempt int, err error) time.Duration {
 	wait := min(retryMax, retryBase<<attempt)
-	var api *openai.Error
-	if errors.As(err, &api) && api.Response != nil {
-		if seconds, e := strconv.Atoi(api.Response.Header.Get("Retry-After")); e == nil && seconds > 0 {
+	var api *apiError
+	if errors.As(err, &api) {
+		if seconds, e := strconv.Atoi(api.RetryAfter); e == nil && seconds > 0 {
 			// Clamp before converting to a duration so huge values cannot overflow.
 			seconds = min(seconds, int(retryMax/time.Second))
 			wait = max(wait, time.Duration(seconds)*time.Second)

@@ -1,12 +1,8 @@
 package agent
 
 import (
-	"errors"
 	"fmt"
 	"strings"
-
-	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/responses"
 )
 
 // providerError holds sanitized text; Unwrap keeps retry and cancellation checks working.
@@ -28,23 +24,16 @@ func (a *Agent) safeError(err error) error {
 		return err
 	}
 	text := err.Error()
-	var api *openai.Error
-	if errors.As(err, &api) {
-		text = api.Error() // status line only; the message is the one provider field kept
-		if api.Message != "" {
-			text += ": " + api.Message
-		}
-	}
 	return &providerError{text: Redact(a.Settings(), text), cause: err}
 }
 
 // streamFailure reports a failed stream event by its code and message, never the raw event.
-func streamFailure(event responses.ResponseStreamEventUnion) error {
+func streamFailure(event streamEvent) error {
 	fields := []string{event.Code, event.Message}
-	switch event.Type {
-	case "response.failed":
-		fields = []string{string(event.Response.Error.Code), event.Response.Error.Message}
-	case "response.incomplete":
+	switch {
+	case event.Type == "response.failed" && event.Response.Error != nil:
+		fields = []string{event.Response.Error.Code, event.Response.Error.Message}
+	case event.Type == "response.incomplete" && event.Response.IncompleteDetails != nil:
 		fields = []string{event.Response.IncompleteDetails.Reason}
 	}
 	return fmt.Errorf("provider stream %s: %s", event.Type, strings.TrimSpace(strings.Join(fields, " ")))

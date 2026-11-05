@@ -29,13 +29,7 @@ func AllModels(ctx context.Context, providers map[string]Provider) (choices []Mo
 	results := make(chan result, len(providers))
 	for name, p := range providers {
 		go func(name string, p Provider) {
-			client := newClient(p)
-			page := client.Models.ListAutoPaging(ctx)
-			var models []string
-			for page.Next() {
-				models = append(models, page.Current().ID)
-			}
-			err := page.Err()
+			models, err := newClient(p).models(ctx)
 			if err != nil && p.key() != "" {
 				err = errors.New(strings.ReplaceAll(err.Error(), p.key(), "[redacted]"))
 			}

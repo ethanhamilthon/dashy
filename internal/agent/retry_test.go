@@ -5,8 +5,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/openai/openai-go/v3"
 )
 
 // A transient server error is retried; the user sees a notice and the turn succeeds.
@@ -63,11 +61,11 @@ func TestRetryDelayIsBounded(t *testing.T) {
 	if got := delay(10, nil); got != retryMax {
 		t.Fatalf("capped pause %s", got)
 	}
-	long := &openai.Error{StatusCode: 429, Response: &http.Response{Header: http.Header{"Retry-After": {"3600"}}}}
+	long := &apiError{Status: 429, RetryAfter: "3600"}
 	if got := delay(0, long); got != retryMax {
 		t.Fatalf("Retry-After above the cap: %s", got)
 	}
-	short := &openai.Error{StatusCode: 429, Response: &http.Response{Header: http.Header{"Retry-After": {"3"}}}}
+	short := &apiError{Status: 429, RetryAfter: "3"}
 	if got := delay(0, short); got != 3*time.Second {
 		t.Fatalf("Retry-After 3: %s", got)
 	}
