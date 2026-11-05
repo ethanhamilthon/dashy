@@ -6,7 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"encoding/xml"
+	"errors"
 	"fmt"
 	"image"
 	"io"
@@ -23,14 +23,24 @@ import (
 	"dashy/internal/shell"
 )
 
-// Message is one session socket request: notification text or an image for the next model request.
+// Message is one session socket request: an image for the next model request or a task operation.
 type Message struct {
-	Text  string       `json:"text,omitempty"`
 	Image *shell.Image `json:"image,omitempty"`
+	Task  *TaskRequest `json:"task,omitempty"`
 }
 
-// MaxNotifyBytes is the largest notification text a session accepts.
-const MaxNotifyBytes = 128 * 1024
+// TaskRequest starts a background command (Op run) or stops a running task (Op stop).
+type TaskRequest struct {
+	Op      string `json:"op"`
+	Command string `json:"command,omitempty"`
+	ID      string `json:"id,omitempty"`
+}
+
+// reply answers one socket request: an error, or text such as a new task ID.
+type reply struct {
+	Error string `json:"error,omitempty"`
+	Text  string `json:"text,omitempty"`
+}
 
 // SocketPath returns the unix socket path for the given session ID.
 // If the path exceeds the macOS limit of 104 bytes, a deterministic short hash is used.
@@ -49,12 +59,13 @@ func SocketPath(runDir, id string) string {
 	return filepath.Join("/tmp", "dashy-"+shortName)
 }
 
-// sessionSocket is one session's notification socket. Its handlers never reference the Agent.
+// sessionSocket is one session's socket. Its handlers never reference the Agent.
 type sessionSocket struct {
 	path     string
 	listener net.Listener
 	queue    *Steering
 	slots    *imageSlots
+	tasks    *tasks
 	done     chan struct{} // closed when the accept loop has returned
 	mu       sync.Mutex    // guards retired and current, and admission
 	retired  bool
@@ -77,7 +88,7 @@ func (a *Agent) listenNotifications() error {
 		return err
 	}
 	_ = os.Chmod(sockPath, 0600)
-	s := &sessionSocket{path: sockPath, listener: listener, queue: a.queue, slots: a.slots, done: make(chan struct{})}
+	s := &sessionSocket{path: sockPath, listener: listener, queue: a.queue, slots: a.slots, tasks: a.tasks, done: make(chan struct{})}
 	a.sock = s
 	go func() {
 		defer close(s.done)
@@ -100,39 +111,41 @@ func (s *sessionSocket) serve(connection net.Conn) {
 	_ = json.NewEncoder(connection).Encode(s.admit(message, err))
 }
 
-// admit queues a request if the session is still current and returns the status to reply.
-func (s *sessionSocket) admit(message Message, err error) string {
+// admit handles a request if the session is still current and returns the reply.
+func (s *sessionSocket) admit(message Message, err error) reply {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.retired {
-		return "session has ended"
-	}
-	if err != nil {
-		return err.Error()
-	}
-	if message.Image != nil {
+	switch {
+	case s.retired:
+		return reply{Error: "session has ended"}
+	case err != nil:
+		return reply{Error: err.Error()}
+	case message.Image != nil:
 		switch {
 		case !validImage(*message.Image):
-			return "view requires a PNG or JPEG image"
+			return reply{Error: "view requires a PNG or JPEG image"}
 		case !s.slots.reserve(1):
-			return fmt.Sprintf("view: at most %d new images per model request", MaxPendingImages)
+			return reply{Error: fmt.Sprintf("view: at most %d new images per model request", MaxPendingImages)}
 		}
-		// The image joins the input queue like a notification; it reaches the next model request.
-		if !s.queue.Push(Input{Text: "<notify>\nImage queued by dashy view.\n</notify>", Images: []shell.Image{*message.Image}, Notice: true}) {
+		// The image joins the input queue; it reaches the next model request.
+		if !s.queue.Push(Input{Text: "<view>\nImage queued by dashy view.\n</view>", Images: []shell.Image{*message.Image}, Notice: true}) {
 			s.slots.release(1)
-			return "notification queue is full"
+			return reply{Error: "input queue is full"}
 		}
-		return ""
+		return reply{}
+	case message.Task != nil && message.Task.Op == "run":
+		id, err := s.tasks.run(message.Task.Command)
+		if err != nil {
+			return reply{Error: err.Error()}
+		}
+		return reply{Text: id}
+	case message.Task != nil && message.Task.Op == "stop":
+		if err := s.tasks.stop(message.Task.ID); err != nil {
+			return reply{Error: err.Error()}
+		}
+		return reply{}
 	}
-	if strings.TrimSpace(message.Text) == "" || len(message.Text) > MaxNotifyBytes {
-		return fmt.Sprintf("notify requires 1..%d bytes of message text", MaxNotifyBytes)
-	}
-	var escaped bytes.Buffer
-	_ = xml.EscapeText(&escaped, []byte(message.Text)) // writes to a bytes.Buffer never fail
-	if !s.queue.Push(Input{Text: "<notify>\n" + escaped.String() + "\n</notify>", Notice: true}) {
-		return "notification queue is full"
-	}
-	return ""
+	return reply{Error: "unknown request"}
 }
 
 // retire stops the socket before its session is replaced; no handler runs once it returns.
@@ -228,30 +241,31 @@ func Endpoint(cwd, id string) (string, error) {
 	return sockPath, nil
 }
 
-// Notify queues text for the active owner, which validates its size.
-func Notify(cwd, id, text string) error {
-	endpoint, err := Endpoint(cwd, id)
+// RunTask starts command as a background task of a running session and returns its ID.
+func RunTask(cwd, session, command string) (string, error) {
+	endpoint, err := Endpoint(cwd, session)
 	if err != nil {
-		return err
+		return "", err
 	}
-	return Send(endpoint, Message{Text: text})
+	return Send(endpoint, Message{Task: &TaskRequest{Op: "run", Command: command}})
 }
 
-func Send(endpoint string, message Message) error {
+// Send makes one request to a session socket and returns the reply text.
+func Send(endpoint string, message Message) (string, error) {
 	connection, err := net.DialTimeout("unix", endpoint, 2*time.Second)
 	if err != nil {
-		return fmt.Errorf("session is inactive: %w", err)
+		return "", fmt.Errorf("session is inactive: %w", err)
 	}
 	defer connection.Close()
 	_ = connection.SetDeadline(time.Now().Add(5 * time.Second))
 	if err = json.NewEncoder(connection).Encode(message); err != nil {
-		return err
+		return "", err
 	}
-	var status string
-	if err = json.NewDecoder(connection).Decode(&status); err == nil && status != "" {
-		err = fmt.Errorf("%s", status)
+	var answer reply
+	if err = json.NewDecoder(connection).Decode(&answer); err == nil && answer.Error != "" {
+		err = errors.New(answer.Error)
 	}
-	return err
+	return answer.Text, err
 }
 
 // CleanAttachments deletes attachment files older than 7 days from dir.

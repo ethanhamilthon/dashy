@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -51,7 +50,7 @@ type deferredAction struct {
 // New returns a controller for a. The agent must outlive the controller.
 func New(a *agent.Agent, emit func(Event)) *Controller {
 	c := &Controller{a: a, emit: emit, journal: a.Records(), closed: make(chan struct{})}
-	// Input pushed while idle (a notification, dashy view) starts a turn at once.
+	// Input pushed while idle (a task result, dashy view) starts a turn at once.
 	a.Queue().OnPush(func() { go c.view(func() { c.deliverLocked() }) })
 	c.custom = a.CustomTitle()
 	c.first = a.DefaultTitle()
@@ -244,7 +243,7 @@ func (c *Controller) finishTurn(op *operation, err error) {
 }
 
 // settleLocked runs after an operation ends: it performs a deferred session change
-// or quit, and otherwise delivers queued notifications.
+// or quit, and otherwise delivers queued notices.
 func (c *Controller) settleLocked() {
 	if c.reload {
 		c.reload = false
@@ -317,9 +316,9 @@ func (c *Controller) publish(e Event) {
 	c.emit(e)
 }
 
-// isStatus tells notices and errors outside the conversation (retries, failures) from <notify> messages and tool output.
+// isStatus tells notices and errors outside the conversation (retries, failures) from task results, view images and tool output.
 func isStatus(e agent.Event) bool {
-	return (e.Kind == "notice" || e.Kind == "error") && !e.Final && !strings.HasPrefix(e.Text, "<notify>")
+	return (e.Kind == "notice" || e.Kind == "error") && !e.Final && !agent.IsNotice(e.Text)
 }
 
 // setupError explains what is missing before a message can start a turn.

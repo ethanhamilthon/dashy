@@ -47,7 +47,7 @@ func TestViewQueuesPreviewAndOriginal(t *testing.T) {
 				_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 				var message agent.Message
 				if err = json.NewDecoder(conn).Decode(&message); err == nil {
-					err = json.NewEncoder(conn).Encode(status)
+					err = json.NewEncoder(conn).Encode(map[string]string{"error": status})
 				}
 				errors <- err
 				messages <- message

@@ -237,12 +237,12 @@ func TestMinimalCommandCompletions(t *testing.T) {
 }
 
 func TestSingleLineNotifications(t *testing.T) {
-	note := "<notify>Configuration updated. Ready.</notify>"
+	note := "<view>Configuration updated. Ready.</view>"
 	for _, tc := range []struct{ text, want string }{
-		{"<notify>Shell session restarted. Previous variables were cleared.</notify>", "! · Shell session restarted. Previous variables were cleared."},
-		{"<notify>Configuration\n  updated.\tReady.</notify>", "! · Configuration updated. Ready."},
+		{"<view>Shell session restarted. Previous variables were cleared.</view>", "! · Shell session restarted. Previous variables were cleared."},
+		{"<view>Configuration\n  updated.\tReady.</view>", "! · Configuration updated. Ready."},
 		{"\x1b[31mProvider event\x1b[0m\r\nreceived", "! · Provider event received"},
-		{"", "! · Notification received."},
+		{"", "! · Notice received."},
 	} {
 		e := entry{Kind: "notice", Text: tc.text, Meta: &agent.Metadata{}}
 		for _, width := range []int{1, 2, 5, 20, 80, 120} {
@@ -254,8 +254,8 @@ func TestSingleLineNotifications(t *testing.T) {
 			if width >= 80 && strings.TrimSpace(plain) != tc.want {
 				t.Errorf("got %q, want %q", plain, tc.want)
 			}
-			if strings.Contains(plain, "<notify>") {
-				t.Fatalf("technical notify text leaked: %q", plain)
+			if strings.Contains(plain, "<view>") {
+				t.Fatalf("technical notice text leaked: %q", plain)
 			}
 		}
 		if e.Text != tc.text {
@@ -275,7 +275,7 @@ func TestSingleLineNotifications(t *testing.T) {
 	a.History = []json.RawMessage{json.RawMessage(`{"role":"user","content":"` + note + `"}`)}
 	m := newModel(a, "/project", osc7501.New(io.Discard, false))
 	restored := m.timeline()
-	if !strings.Contains(ansi.Strip(restored), "! · Configuration updated. Ready.") || strings.Contains(ansi.Strip(restored), "<notify>") {
+	if !strings.Contains(ansi.Strip(restored), "! · Configuration updated. Ready.") || strings.Contains(ansi.Strip(restored), "<view>") {
 		t.Fatal("restored notice not formatted")
 	}
 	live := bareModel(t, "/project")

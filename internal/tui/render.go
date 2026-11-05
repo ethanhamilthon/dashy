@@ -88,9 +88,8 @@ func renderEntryMode(e entry, width, limit int, markdown bool) string {
 	fg, label := eventColors(e.Kind)
 
 	text := ansi.Strip(e.Text)
-	if e.Kind == "notice" { // <notify> messages; other notices and errors go to the status bar
-		text = strings.NewReplacer("<notify>", "", "</notify>", "").Replace(text)
-		text = cmp.Or(strings.Join(strings.Fields(text), " "), "Notification received.")
+	if e.Kind == "notice" { // task results and view images; other notices and errors go to the status bar
+		text = cmp.Or(agent.NoticeSummary(text), "Notice received.")
 		return paint(ansi.Truncate("  "+label+" · "+text, max(1, width), "…"), max(1, width), lipgloss.NoColor{}, fg)
 	}
 

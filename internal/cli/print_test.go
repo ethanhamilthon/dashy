@@ -363,8 +363,8 @@ func TestPrintModeRetryOnStderr(t *testing.T) {
 }
 
 // A sub-agent has its own socket: its shell gets its own DASHY_ENDPOINT, not the parent's,
-// and a notification sent to it while it works reaches its model.
-func TestPrintModeHasItsOwnNotifySocket(t *testing.T) {
+// and it waits for a task started there, whose result reaches its model.
+func TestPrintModeHasItsOwnTaskSocket(t *testing.T) {
 	t.Setenv("DASHY_ENDPOINT", "/tmp/parent-dashy.sock")
 	var bodies []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -377,13 +377,13 @@ func TestPrintModeHasItsOwnNotifySocket(t *testing.T) {
 			args, _ := json.Marshal(map[string]any{"command": `echo "endpoint=$DASHY_ENDPOINT"`, "timeout": nil})
 			item = map[string]any{"type": "function_call", "id": "c1", "call_id": "c1", "name": "bash", "arguments": string(args)}
 		case 2:
-			// The model's next request carries the endpoint its shell saw; notify it there.
+			// The model's next request carries the endpoint its shell saw; start a task there.
 			rest := string(body)[strings.LastIndex(string(body), "endpoint=")+len("endpoint="):]
 			endpoint, _, _ := strings.Cut(rest, `\`)
 			if endpoint == "" || endpoint == "/tmp/parent-dashy.sock" {
 				t.Errorf("sub-agent shell endpoint = %q", endpoint)
-			} else if err := agent.Send(endpoint, agent.Message{Text: "late note"}); err != nil {
-				t.Errorf("notify the sub-agent: %v", err)
+			} else if _, err := agent.Send(endpoint, agent.Message{Task: &agent.TaskRequest{Op: "run", Command: "sleep 0.3; echo late note"}}); err != nil {
+				t.Errorf("start a task in the sub-agent: %v", err)
 			}
 		}
 		data, _ := json.Marshal(map[string]any{"type": "response.completed", "response": map[string]any{"output": []any{item}}})
@@ -396,6 +396,6 @@ func TestPrintModeHasItsOwnNotifySocket(t *testing.T) {
 		t.Fatalf("run: %v\n%s", err, stderr.String())
 	}
 	if len(bodies) != 3 || !strings.Contains(bodies[2], "late note") || !strings.Contains(stderr.String(), "late note") {
-		t.Fatalf("notification did not reach the sub-agent: %d requests\n%s", len(bodies), stderr.String())
+		t.Fatalf("task result did not reach the sub-agent: %d requests\n%s", len(bodies), stderr.String())
 	}
 }

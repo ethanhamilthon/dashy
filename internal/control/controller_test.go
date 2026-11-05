@@ -204,14 +204,19 @@ func TestSteeringJoinsRunningTurn(t *testing.T) {
 	}
 }
 
-// A notification acknowledged during a busy turn precedes composer steering sent later.
+// A task result queued during a busy turn precedes composer steering sent later.
 func TestNotificationKeepsOrderWithSteering(t *testing.T) {
 	gate := make(chan struct{})
 	h := newHarness(t, &fakeModel{gate: gate})
 	h.send("first")
 	h.inFlight(1)
-	if err := agent.Notify(h.dir, h.a.SessionID(), "notice A"); err != nil {
+	if _, err := agent.RunTask(h.dir, h.a.SessionID(), "echo notice A"); err != nil {
 		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(5 * time.Second); h.a.RunningTasks() > 0; time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("task result did not arrive")
+		}
 	}
 	h.send("steer B")
 	close(gate)
@@ -264,12 +269,12 @@ func TestRecallReturnsNewestInstructionOnce(t *testing.T) {
 }
 
 // Settings changed while a turn runs are accepted and saved; the turn keeps running.
-// The turn is started by an external notification, as it can be while the picker is open.
+// The turn is started by a task result, as it can be while the picker is open.
 func TestSettingsChangeWhileNotificationTurnRuns(t *testing.T) {
 	gate := make(chan struct{})
 	defer close(gate)
 	h := newHarness(t, &fakeModel{gate: gate})
-	if err := agent.Notify(h.dir, h.a.SessionID(), "background result"); err != nil {
+	if _, err := agent.RunTask(h.dir, h.a.SessionID(), "echo background result"); err != nil {
 		t.Fatal(err)
 	}
 	for deadline := time.Now().Add(5 * time.Second); !h.ctl.Status().Busy; time.Sleep(time.Millisecond) {

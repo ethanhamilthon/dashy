@@ -80,6 +80,7 @@ type Agent struct {
 	sock         *sessionSocket // nil in print mode
 	queue        *Steering      // one ordered queue of input for the running turn, shared with the socket
 	slots        *imageSlots    // shared allowance of new images per model request
+	tasks        *tasks         // background tasks of the session; nil until it is acquired
 }
 
 // New opens the project in dir. Options.Resume optionally resumes a saved session.

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/mattn/go-isatty"
 
@@ -80,8 +81,8 @@ func Run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.W
 				fmt.Fprint(out, helpText)
 			}
 			return nil
-		case "notify":
-			return notifyCommand(ctx, args[1:], in)
+		case "tasks":
+			return tasksCommand(args[1:], out)
 		case "view":
 			return viewCommand(args[1:])
 		case "models":
@@ -105,27 +106,6 @@ func flagSet(name string, define func(*flag.FlagSet)) *flag.FlagSet {
 	fs.SetOutput(io.Discard)
 	define(fs)
 	return fs
-}
-
-func notifyCommand(ctx context.Context, args []string, in io.Reader) error {
-	var session string
-	fs := flagSet("notify", func(fs *flag.FlagSet) { fs.StringVar(&session, "s", "", "session ID") })
-	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("notify: %w", err)
-	}
-	text := strings.Join(fs.Args(), " ")
-	if len(fs.Args()) == 0 {
-		data, err := readStdin(ctx, in, agent.MaxNotifyBytes+1)
-		if err != nil {
-			return cancelledOr(ctx, err)
-		}
-		text = data
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-	return agent.Notify(cwd, session, text)
 }
 
 func viewCommand(args []string) error {
@@ -154,7 +134,7 @@ func viewCommand(args []string) error {
 		if err != nil {
 			return fmt.Errorf("%s: %w", path, err)
 		}
-		if err = agent.Send(endpoint, agent.Message{Image: &image}); err != nil {
+		if _, err = agent.Send(endpoint, agent.Message{Image: &image}); err != nil {
 			_ = os.Remove(image.Path)
 			return fmt.Errorf("%s: %w", path, err)
 		}
@@ -331,9 +311,10 @@ func cancelledOr(ctx context.Context, err error) error {
 	return err
 }
 
-// runPrint runs the task without a TUI. Notifications and dashy view images sent to the
-// sub-agent while it works are taken as steering; those still queued when the task ends
-// run as further turns, after the socket is closed so nothing arrives unanswered.
+// runPrint runs the task without a TUI. Task results and dashy view images that arrive
+// while it works are taken as steering; those still queued when the task ends run as
+// further turns. It waits for running background tasks, then closes the socket so
+// nothing arrives unanswered.
 // Only the final answer goes to out; progress goes to diagnostics.
 func runPrint(ctx context.Context, a *agent.Agent, prompt string, out, diagnostics io.Writer) error {
 	emit := func(e agent.Event) {
@@ -345,13 +326,20 @@ func runPrint(ctx context.Context, a *agent.Agent, prompt string, out, diagnosti
 				fmt.Fprintln(diagnostics, s)
 			}
 		case e.Kind == "notice" && strings.TrimSpace(e.Text) != "":
-			fmt.Fprintln(diagnostics, strings.TrimSpace(strings.NewReplacer("<notify>", "", "</notify>", "").Replace(e.Text)))
+			fmt.Fprintln(diagnostics, agent.NoticeSummary(strings.TrimSpace(e.Text)))
 		}
 	}
 	err := a.Run(ctx, prompt, emit)
 	for err == nil && ctx.Err() == nil {
 		next, ok := a.Queue().Pop()
 		if !ok {
+			if a.RunningTasks() > 0 { // a task result is still to come
+				select {
+				case <-ctx.Done():
+				case <-time.After(100 * time.Millisecond):
+				}
+				continue
+			}
 			if a.StopNotifications() {
 				continue // the socket is closed now: look once more for input that just arrived
 			}

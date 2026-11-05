@@ -141,7 +141,7 @@ func TestPickerToggleAppliesWhenNotificationStartsTurn(t *testing.T) {
 	f.hold.Store(&hold)
 	defer close(hold)
 	f.m = openPickerCmd(t, f.m, "/settings")
-	if err := agent.Notify(f.project, f.a.SessionID(), "background result"); err != nil {
+	if _, err := agent.RunTask(f.project, f.a.SessionID(), "echo background result"); err != nil {
 		t.Fatal(err)
 	}
 	awaitRequest(t, f.m) // the notification starts a turn by itself
@@ -160,7 +160,7 @@ func TestNotificationStartsTurnWhenIdle(t *testing.T) {
 	hold := make(chan struct{})
 	f.hold.Store(&hold)
 	defer close(hold)
-	if err := agent.Notify(f.project, f.a.SessionID(), "background result"); err != nil {
+	if _, err := agent.RunTask(f.project, f.a.SessionID(), "echo background result"); err != nil {
 		t.Fatal(err)
 	}
 	awaitRequest(t, f.m)

@@ -14,7 +14,7 @@ import (
 type Input struct {
 	Text   string
 	Images []shell.Image
-	Notice bool // socket notification: queued in order with composer input, never recalled
+	Notice bool // from dashy itself (task result, view image): queued in order with composer input, never recalled
 }
 
 func (input Input) Display() string {
@@ -61,14 +61,14 @@ func imageOriginals(images []shell.Image) string {
 
 func inputEvent(input Input) Event {
 	kind := "user"
-	if input.Notice || strings.HasPrefix(input.Text, "<notify>") {
+	if input.Notice || IsNotice(input.Text) {
 		kind = "notice"
 	}
 	return Event{Kind: kind, Text: input.Display()}
 }
 
 // Steering is the session's one ordered queue of input waiting for the running turn: composer
-// input, notifications and dashy view images, in admission order. Taken input cannot be recalled.
+// input, task results and dashy view images, in admission order. Taken input cannot be recalled.
 type Steering struct {
 	mu      sync.Mutex
 	pending []Input
@@ -87,6 +87,17 @@ const maxQueued = 64
 
 // Queue returns the session's steering queue.
 func (a *Agent) Queue() *Steering { return a.queue }
+
+// PushNotice queues input from dashy itself, such as a task result, even when the queue is full.
+func (s *Steering) PushNotice(input Input) {
+	s.mu.Lock()
+	s.pending = append(s.pending, input)
+	wake := s.wake
+	s.mu.Unlock()
+	if wake != nil {
+		wake()
+	}
+}
 
 // Push queues input behind everything waiting; false when the queue is full.
 func (s *Steering) Push(input Input) bool {
@@ -125,7 +136,7 @@ func (s *Steering) Pop() (Input, bool) {
 	return input, true
 }
 
-// RemoveComposer removes the composer input a turn did not accept and returns it; notifications stay queued.
+// RemoveComposer removes the composer input a turn did not accept and returns it; notices stay queued.
 func (s *Steering) RemoveComposer() []Input {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -12,7 +12,7 @@ import (
 func (a *Agent) lockPath() string { return filepath.Join(a.home, "locks", a.id+".lock") }
 
 // acquire takes the exclusive per-session lock and opens the session socket. Every session has
-// its own socket, a dashy -p sub-agent too, so notify and view from its shell reach it.
+// its own socket, a dashy -p sub-agent too, so tasks and view from its shell reach it.
 func (a *Agent) acquire() error {
 	if err := os.MkdirAll(filepath.Dir(a.lockPath()), 0700); err != nil {
 		return err
@@ -31,6 +31,7 @@ func (a *Agent) acquire() error {
 		return err
 	}
 	a.owner = file
+	a.tasks = a.newTasks()
 	if err := a.listenNotifications(); err != nil {
 		a.release()
 		return err
@@ -42,6 +43,10 @@ func (a *Agent) acquire() error {
 // The database stays open: a session change hands it to the next session.
 func (a *Agent) release() {
 	a.StopNotifications()
+	if a.tasks != nil {
+		a.tasks.close()
+		a.tasks = nil
+	}
 	if a.owner != nil {
 		_ = syscall.Flock(int(a.owner.Fd()), syscall.LOCK_UN)
 		_ = a.owner.Close()

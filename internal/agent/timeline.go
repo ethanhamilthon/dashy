@@ -105,7 +105,7 @@ func RecordsForItem(item json.RawMessage) []Record {
 		if kind == "" {
 			kind = "assistant"
 		}
-		if strings.HasPrefix(text, "<notify>") {
+		if IsNotice(text) {
 			kind = "notice"
 		}
 		if text != "" {

@@ -48,7 +48,7 @@ git log --oneline -3
 
 ## Sub-agents (`dashy -p`)
 
-`dashy -p "TASK"` runs one task in a new session (or in a saved one with `--resume ID`): the final answer goes to stdout, progress to stderr, and the exit code is non-zero on failure. A sub-agent has its own `dashy notify` and `dashy view` while it works; to report to another session, pass `-s` with that session's ID.
+`dashy -p "TASK"` runs one task in a new session (or in a saved one with `--resume ID`): the final answer goes to stdout, progress to stderr, and the exit code is non-zero on failure. A sub-agent has its own `dashy tasks` and `dashy view` while it works and waits for its running tasks before it exits; to report to another session, pass `-s` with that session's ID.
 
 ```sh
 # A focused reviewer with its own instructions (-p skips the global DASHY.md)
@@ -65,8 +65,11 @@ dashy -p "Task A" > a.out 2> a.err &
 dashy -p "Task B" > b.out 2> b.err &
 wait
 
-# Background work that tells the running session when it is done
-(make test > test.log 2>&1; dashy notify "tests finished with status $?") &
+# Background task: the session gets a <task-result> when it ends
+dashy tasks run make test
+dashy tasks list
+dashy tasks status t1
+dashy tasks stop t1
 ```
 
 ## Development

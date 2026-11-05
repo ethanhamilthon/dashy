@@ -82,14 +82,15 @@ func (a *Agent) readSession() error {
 
 // Save stores the session row and the history items added since the last save.
 func (a *Agent) Save() error {
+	// Read before the transaction: update holds cfg.mu while it writes the database.
+	a.cfg.mu.Lock()
+	sel := a.cfg.sel
+	a.cfg.mu.Unlock()
 	tx, err := a.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	a.cfg.mu.Lock()
-	sel := a.cfg.sel
-	a.cfg.mu.Unlock()
 	if _, err := tx.Exec(`INSERT INTO sessions (id, project, title, first, updated, provider, model, effort) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (id) DO UPDATE SET title = excluded.title, first = excluded.first, updated = excluded.updated,
 		provider = excluded.provider, model = excluded.model, effort = excluded.effort`,

@@ -17,23 +17,87 @@ func pngURL() string {
 	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(tinyPNG())
 }
 
-// The session socket accepts only text and PNG/JPEG images that decode, and escapes the text.
-func TestSocketValidatesAndQueues(t *testing.T) {
+// The session socket refuses empty requests, empty task commands and images that do not decode.
+func TestSocketValidates(t *testing.T) {
 	a := newTestAgent(t, &fakeProvider{reply: func(int, string) string { return "" }}, Options{})
 	for _, m := range []Message{
-		{Text: " \n "},
+		{},
+		{Task: &TaskRequest{Op: "run", Command: " "}},
+		{Task: &TaskRequest{Op: "stop", ID: "t9"}},
 		{Image: &shell.Image{URL: "data:image/svg+xml;base64,PHN2Zy8+"}},
 		{Image: &shell.Image{URL: "data:image/png;base64,bm90IGFuIGltYWdl"}},
 	} {
-		if err := Send(a.sock.path, m); err == nil {
+		if _, err := Send(a.sock.path, m); err == nil {
 			t.Fatalf("accepted %+v", m)
 		}
 	}
-	if err := Send(a.sock.path, Message{Text: "<check & report>"}); err != nil {
+	if got := a.Queue().Take(); len(got) != 0 {
+		t.Fatalf("queued %+v", got)
+	}
+}
+
+// awaitInput waits until the session queue holds input and takes it.
+func awaitInput(t *testing.T, a *Agent) []Input {
+	t.Helper()
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if got := a.Queue().Take(); len(got) > 0 {
+			return got
+		}
+	}
+	t.Fatal("no input arrived")
+	return nil
+}
+
+// A task runs in the project directory with the session's variables, is listed while it
+// runs, and its result (escaped command and output, exit code) arrives as a notice.
+func TestTaskRunsAndReportsItsResult(t *testing.T) {
+	a := newTestAgent(t, &fakeProvider{}, Options{})
+	id, err := Send(a.sock.path, Message{Task: &TaskRequest{Op: "run", Command: `echo "<$DASHY_SESSION_ID>" && pwd && exit 3`}})
+	if err != nil || id != "t1" {
+		t.Fatalf("run: %q %v", id, err)
+	}
+	got := awaitInput(t, a)
+	text := got[0].Text
+	if len(got) != 1 || !got[0].Notice || !strings.HasPrefix(text, `<task-result id="t1" status="done" exit_code="3"`) ||
+		!strings.Contains(text, "&lt;"+a.SessionID()+"&gt;") || !strings.Contains(text, a.Shell.Dir) || !strings.Contains(text, `$ echo "&lt;$DASHY_SESSION_ID&gt;"`) {
+		t.Fatalf("result %+v", got)
+	}
+	if s := NoticeSummary(text); !strings.HasPrefix(s, "task t1 done · exit 3 · ") || !strings.HasSuffix(s, `$ echo "<$DASHY_SESSION_ID>" && pwd && exit 3`) {
+		t.Fatalf("summary %q", s)
+	}
+	list, err := SessionTasks(a.home, a.SessionID())
+	if err != nil || len(list) != 1 || list[0].Status != "done" || *list[0].ExitCode != 3 {
+		t.Fatalf("list %+v %v", list, err)
+	}
+}
+
+// A stopped task reports stopped; closing the session stops running tasks without a result.
+func TestTaskStopAndSessionClose(t *testing.T) {
+	a := newTestAgent(t, &fakeProvider{}, Options{})
+	if _, err := Send(a.sock.path, Message{Task: &TaskRequest{Op: "run", Command: "sleep 30"}}); err != nil {
 		t.Fatal(err)
 	}
-	if got := a.Queue().Take(); len(got) != 1 || got[0].Text != "<notify>\n&lt;check &amp; report&gt;\n</notify>" || !got[0].Notice {
-		t.Fatalf("queued %+v", got)
+	if a.RunningTasks() != 1 {
+		t.Fatal("task not running")
+	}
+	if _, err := Send(a.sock.path, Message{Task: &TaskRequest{Op: "stop", ID: "t1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := awaitInput(t, a); !strings.HasPrefix(got[0].Text, `<task-result id="t1" status="stopped"`) {
+		t.Fatalf("result %+v", got)
+	}
+	if _, err := Send(a.sock.path, Message{Task: &TaskRequest{Op: "run", Command: "sleep 30"}}); err != nil {
+		t.Fatal(err)
+	}
+	old, start := a.SessionID(), time.Now()
+	if err := a.NewSession(); err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(start) > 5*time.Second || a.RunningTasks() != 0 || len(a.Queue().Take()) != 0 {
+		t.Fatal("session change did not stop the task quietly")
+	}
+	if list, err := SessionTasks(a.home, old); err != nil || len(list) != 2 || list[1].Status != "stopped" {
+		t.Fatalf("tasks %+v %v", list, err)
 	}
 }
 
@@ -44,11 +108,11 @@ func TestImageAllowanceIsSharedWithView(t *testing.T) {
 		t.Fatal("composer images refused")
 	}
 	for i := 0; i < 2; i++ {
-		if err := Send(a.sock.path, Message{Image: &shell.Image{URL: pngURL()}}); err != nil {
+		if _, err := Send(a.sock.path, Message{Image: &shell.Image{URL: pngURL()}}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := Send(a.sock.path, Message{Image: &shell.Image{URL: pngURL()}}); err == nil || !strings.Contains(err.Error(), "at most 4") {
+	if _, err := Send(a.sock.path, Message{Image: &shell.Image{URL: pngURL()}}); err == nil || !strings.Contains(err.Error(), "at most 4") {
 		t.Fatalf("fifth image admitted: %v", err)
 	}
 	if got := pendingImages(a); got != 4 {
@@ -65,7 +129,7 @@ func TestViewedImageReachesNextRequestOnce(t *testing.T) {
 		return textReply("ok")
 	}}
 	a := newTestAgent(t, fp, Options{})
-	if err := Send(a.sock.path, Message{Image: &shell.Image{URL: pngURL()}}); err != nil {
+	if _, err := Send(a.sock.path, Message{Image: &shell.Image{URL: pngURL()}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := turn(t, a, "look"); err != nil {

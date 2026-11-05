@@ -17,4 +17,6 @@ For files:
 Use these commands instead of cat, head, tail, sed, awk, grep, rg, find, echo or printf when working with files.
 
 To see an image, use `dashy view PATH`.
-Run long tasks in the background and end them with `dashy notify TEXT`: the message wakes you when they finish.
+For long commands (builds, test suites, servers), use background tasks instead of `&`:
+- dashy tasks run COMMAND...  starts it; the result arrives as a <task-result> message when it ends
+- dashy tasks list | status TASK | stop TASK

@@ -5,7 +5,8 @@ USAGE
   dashy -p "TASK" [--config FILE] [--global] [--resume ID]
                   [--provider NAME] [--model ID] [--effort LEVEL]
   dashy models [--provider NAME]
-  dashy notify [-s ID] TEXT...
+  dashy tasks run [-s ID] COMMAND...
+  dashy tasks list|status|stop [-s ID] [TASK]
   dashy view [-s ID] PATH...
   dashy read [-o LINE] [-n COUNT] FILE
   dashy grep [-i] [-l] [-g GLOB] PATTERN [PATH...]
@@ -28,12 +29,19 @@ FLAGS & COMMANDS
   --model ID      Model for this -p run, an exact ID from 'dashy models'. Not saved.
   --effort LEVEL  Reasoning effort for this -p run: none, minimal, low, medium, high,
                   xhigh or max. Not saved.
-  -s ID           Target session ID for notify/view (defaults to $DASHY_ENDPOINT).
+  -s ID           Target session ID for tasks/view (defaults to the session of this shell).
   --help, -h      Show this help reference.
-  notify          Send text or piped stdin to a running session. An idle session starts
-                  a turn at once; a busy one takes it as steering.
-  view            Send PNG/JPEG images to a running session, like notify: they go with
-                  its next model request (at most 4 new images per request).
+  tasks run       Start COMMAND (bash -c, project directory) as a background task of a
+                  running session and print its ID (t1, t2, ...). Output goes to a log file.
+                  When it ends, the session receives <task-result id status exit_code
+                  duration> with the command and the last 40 lines: an idle session starts a
+                  turn at once, a busy one takes it as steering. Closing the session stops
+                  its running tasks; dashy -p waits for them before it exits.
+  tasks list      List the session's tasks: ID, status, duration, command.
+  tasks status    Show one task with the end of its output and the log path.
+  tasks stop      Kill a running task (its whole process group); its result reports stopped.
+  view            Send PNG/JPEG images to a running session: they go with its next
+                  model request (at most 4 new images per request).
   models          List exact model IDs as 'PROVIDER<TAB>MODEL' for the configured
                   providers (or only --provider NAME). Failed providers go to stderr
                   and make the exit code 1.
@@ -76,8 +84,7 @@ BASH TOOL
   - Output limit: the shell_output setting (/settings), default 8192
     bytes, 0 = no truncation; the model cannot change it. When output is cut, the middle
     is removed and the first and last halves are kept.
-  - Background processes do not outlive the call; for long work redirect output
-    to a file and run 'dashy notify' when it finishes.
+  - Background processes do not outlive the call; for long work use 'dashy tasks run'.
   - It runs with the user's permissions and is not a sandbox.
 
 DASHY BLOCKS
@@ -101,7 +108,7 @@ ENVIRONMENT VARIABLES
 
 SUB-AGENT RECIPES
   Sub-agents run via 'dashy -p' from the bash tool or terminal. A sub-agent has its own
-  socket while it works: notify and view from its shell reach the sub-agent itself, and
+  socket while it works: tasks and view from its shell reach the sub-agent itself, and
   input still queued when it finishes runs before it exits. To report to another
   session, pass -s with that session's ID (the parent can put its $DASHY_SESSION_ID
   into TASK):
@@ -116,16 +123,17 @@ SUB-AGENT RECIPES
       dashy -p "Task A" > a.out 2> a.err &
       dashy -p "Task B" > b.out 2> b.err &
       wait
-  - Long background task notifying caller on completion:
-      (make test > test.log 2>&1; dashy notify "Tests completed with status $?") &
+  - Long background task; the result arrives as <task-result> when it ends:
+      dashy tasks run make test
 
 FILES
   $DASHY_HOME/dashy.db                   SQLite database: settings (providers, models, reasoning,
                                          display and shell_output, the bash output bytes kept per
-                                         call, default 8192) and sessions with their history items.
+                                         call, default 8192) and sessions with their history items and tasks.
   $DASHY_HOME/locks/<id>.lock            flock held while a session is open.
   $DASHY_HOME/attachments/               Saved images from clipboard paste or dashy view.
-  $DASHY_HOME/run/<id>.sock              Unix socket for notify/view. Paths over the macOS limit (~104 bytes)
+  $DASHY_HOME/tasks/<id>-<task>.log      Output of background tasks.
+  $DASHY_HOME/run/<id>.sock              Unix socket for tasks/view. Paths over the macOS limit (~104 bytes)
                                          use a 16-hex hash name; if DASHY_HOME is too long for that,
                                          the socket is /tmp/dashy-<hash>.sock.
 

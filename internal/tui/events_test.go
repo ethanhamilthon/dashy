@@ -31,7 +31,7 @@ func TestEventsGoToStatusBar(t *testing.T) {
 	if m = next.(model); strings.Contains(ansi.Strip(m.bottomBar()), "No provider") {
 		t.Fatal("event did not expire")
 	}
-	m.ctl.Note(agent.Event{Kind: "notice", Text: "<notify>hi</notify>"})
+	m.ctl.Note(agent.Event{Kind: "notice", Text: "<view>\nhi\n</view>"})
 	m.input.SetValue("/events")
 	m = key(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if len(m.entries) != 2 || m.entries[0].Kind != "notice" || !strings.Contains(m.entries[1].Text, "No provider configured.") {

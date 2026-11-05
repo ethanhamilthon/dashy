@@ -39,6 +39,18 @@ var migrations = []string{
 	`ALTER TABLE sessions ADD COLUMN provider TEXT NOT NULL DEFAULT '';
 	 ALTER TABLE sessions ADD COLUMN model TEXT NOT NULL DEFAULT '';
 	 ALTER TABLE sessions ADD COLUMN effort TEXT NOT NULL DEFAULT '';`,
+	// Background tasks started with dashy tasks run; output goes to the log file.
+	`CREATE TABLE tasks (
+		session   TEXT NOT NULL,
+		id        TEXT NOT NULL,
+		command   TEXT NOT NULL,
+		status    TEXT NOT NULL,
+		exit_code INTEGER,
+		started   INTEGER NOT NULL,
+		ended     INTEGER,
+		log       TEXT NOT NULL,
+		PRIMARY KEY (session, id)
+	);`,
 }
 
 // migrate creates the schema and applies the migrations it lacks, in one transaction.
