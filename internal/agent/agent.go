@@ -48,7 +48,6 @@ func partialCode(arguments string) string {
 
 type Options struct {
 	Config                  string
-	NoGlobal                bool
 	Resume                  string
 	Mode                    string
 	Provider, Model, Effort string

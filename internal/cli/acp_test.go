@@ -20,7 +20,7 @@ func TestBinaryACPAndSignal(t *testing.T) {
 	bin := build(t)
 	for _, signal := range []bool{false, true} {
 		t.Run(map[bool]string{false: "EOF", true: "signal"}[signal], func(t *testing.T) {
-			cmd := exec.Command(bin, "acp", "--no-global")
+			cmd := exec.Command(bin, "acp")
 			cmd.Dir = t.TempDir()
 			cmd.Env = append(os.Environ(), "DASHY_HOME="+home)
 			stdin, err := cmd.StdinPipe()

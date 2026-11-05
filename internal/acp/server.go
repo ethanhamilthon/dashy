@@ -16,9 +16,8 @@ import (
 )
 
 type Options struct {
-	Config   string
-	NoGlobal bool
-	Version  string
+	Config  string
+	Version string
 }
 type session struct {
 	a         *agent.Agent
@@ -183,7 +182,7 @@ func (s *server) openSession(ctx context.Context, params json.RawMessage, reply 
 			return
 		}
 		session := &session{}
-		opts := agent.Options{Mode: "acp", Config: s.opts.Config, NoGlobal: s.opts.NoGlobal}
+		opts := agent.Options{Mode: "acp", Config: s.opts.Config}
 		if load {
 			opts.Resume = p.SessionID
 		}

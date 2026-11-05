@@ -66,7 +66,7 @@ func connect(t *testing.T) *wire {
 	w := &wire{conn: client, decoder: json.NewDecoder(client), done: make(chan struct{})}
 	go func() {
 		defer close(w.done)
-		_ = Run(context.Background(), server, server, Options{Version: "test", NoGlobal: true})
+		_ = Run(context.Background(), server, server, Options{Version: "test"})
 	}()
 	t.Cleanup(func() {
 		client.Close()

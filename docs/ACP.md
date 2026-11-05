@@ -34,9 +34,10 @@ Build with `make install`, then configure a provider/model in the Dashy TUI. Con
 an ACP v1 client to launch the installed binary with arguments `["acp"]` in a local
 workspace. No TCP listener or remote service is started by Dashy.
 
-Use `dashy acp --no-global` to skip global instructions, or `--config FILE` for an
-alternate project instruction file. Both global and project instructions load by
-default. Executable blocks use `DASHY_MODE=acp`; instruction snapshots remain stored.
+Use `dashy acp --config FILE` to load only that instruction file. Otherwise Dashy
+uses `DASHY.md` in the session directory, falling back to `$DASHY_HOME/DASHY.md`
+only if the local file is absent. Files are never merged; parent directories are
+not searched. Executable blocks use `DASHY_MODE=acp`; instruction snapshots remain stored.
 
 Clients must send an absolute `cwd` and `mcpServers: []` to `session/new`. Disable
 client-side MCP injection: nonempty MCP declarations and additional roots are

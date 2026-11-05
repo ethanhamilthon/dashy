@@ -27,10 +27,13 @@ Settings apply on the fly: changes made in the TUI take effect immediately, even
 
 ## DASHY.md and dashy blocks
 
-The system prompt is built from two DASHY.md files before the first request of a new session. `/resume` reuses its stored snapshot; `/reload` replaces it:
+The system prompt uses a single instruction file before the first request of a new session. Both TUI and ACP select the first applicable option:
 
-1. `$DASHY_HOME/DASHY.md` (default `~/.dashy/DASHY.md`). Both TUI and ACP load it unless `--no-global`.
-2. `./DASHY.md`, or the file given with `--config FILE` (which replaces `./DASHY.md`).
+1. `--config FILE`: use only this file. A missing file is an error.
+2. `./DASHY.md` in the current directory, if present.
+3. `$DASHY_HOME/DASHY.md` (default `~/.dashy/DASHY.md`) as a fallback.
+
+Files are never merged, and parent directories are not searched. If no file exists, instructions are empty. `/resume` reuses its stored snapshot; `/reload` selects the file again and replaces the snapshot.
 
 A fenced block with the info string `dashy` runs with `bash -c` in the project directory, and its output replaces the block. Blocks time out after 30 seconds and are capped at 64 KiB of output. Opening an untrusted project's `DASHY.md` can execute arbitrary code with your permissions: review its blocks before starting Dashy.
 

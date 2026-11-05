@@ -34,7 +34,7 @@ func TestMaintainedSDKClientInteroperability(t *testing.T) {
 	settings(t, func(string) string { return answer("SDK hello") })
 	client, server := net.Pipe()
 	done := make(chan error, 1)
-	go func() { done <- Run(context.Background(), server, server, Options{Version: "test", NoGlobal: true}) }()
+	go func() { done <- Run(context.Background(), server, server, Options{Version: "test"}) }()
 	defer func() {
 		client.Close()
 		select {

@@ -1,8 +1,8 @@
 dashy - minimal AI coding agent (TUI and ACP editor integration)
 
 USAGE
-  dashy [--config FILE|-c FILE] [--no-global] [--resume ID]
-  dashy acp [--config FILE] [--no-global]
+  dashy [--config FILE|-c FILE] [--resume ID]
+  dashy acp [--config FILE]
   dashy models [--provider NAME]
   dashy tasks run [-s ID] COMMAND...
   dashy tasks list|status|stop [-s ID] [TASK]
@@ -16,8 +16,7 @@ USAGE
   dashy --help | -h | help
 
 FLAGS & COMMANDS
-  --config, -c    Project instructions instead of ./DASHY.md (-c is TUI only).
-  --no-global     Skip $DASHY_HOME/DASHY.md. Both TUI and ACP load it by default.
+  --config, -c    Use only FILE for instructions (-c is TUI only).
   --resume ID     Resume a saved project session in the TUI.
   --provider NAME Restrict the models listing to one provider.
   -s ID           Target a running session for tasks/view; defaults to DASHY_ENDPOINT.
@@ -49,7 +48,8 @@ FLAGS & COMMANDS
   version         Print the version.
 
 INSTRUCTIONS & SETTINGS
-  Instructions load from $DASHY_HOME/DASHY.md and ./DASHY.md (or --config FILE).
+  Instructions use --config FILE exclusively, otherwise ./DASHY.md, falling back to
+  $DASHY_HOME/DASHY.md only when the local file is absent. Files are never merged.
   The assembled prompt is stored in session history. /resume reuses it;
   /reload assembles and stores a new snapshot. Instructions are never user input.
   Settings live in $DASHY_HOME/dashy.db. TUI commands /connect, /models and /settings

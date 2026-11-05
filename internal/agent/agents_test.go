@@ -35,15 +35,14 @@ func systemPrompt(t *testing.T, global, local string) string {
 
 func TestPromptKeepsFileBytesVerbatim(t *testing.T) {
 	a := newTestAgent(t, &fakeProvider{}, Options{})
-	global, local := filepath.Join(a.home, "DASHY.md"), filepath.Join(a.Shell.Dir, "DASHY.md")
-	writeFile(t, global, "g\r\nline")
-	writeFile(t, local, "l\n\n\n")
-	a.promptFiles = []string{global, local}
+	local := filepath.Join(a.Shell.Dir, "DASHY.md")
+	writeFile(t, local, "l\r\nline\n\n\n")
+	a.promptFiles = []string{local}
 	got, err := a.instructions(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "# " + global + "\ng\r\nline\n\n# " + local + "\nl\n\n\n"
+	want := "# " + local + "\nl\r\nline\n\n\n"
 	if got != want {
 		t.Fatalf("prompt = %q\nwant     %q", got, want)
 	}

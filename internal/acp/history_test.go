@@ -95,7 +95,7 @@ func TestLoadRestoresHistoryAndProviderContext(t *testing.T) {
 func TestLoadLargeHistoryBackpressure(t *testing.T) {
 	settings(t, func(string) string { return answer("answer") })
 	dir := t.TempDir()
-	a, err := agent.New(dir, agent.Options{Mode: "acp", NoGlobal: true})
+	a, err := agent.New(dir, agent.Options{Mode: "acp"})
 	if err != nil {
 		t.Fatal(err)
 	}

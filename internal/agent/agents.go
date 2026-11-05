@@ -227,12 +227,6 @@ func (a *Agent) expandBlocks(ctx context.Context, data []byte) (string, error) {
 }
 
 func instructionFiles(home, dir string, files Options) ([]string, error) {
-	var paths []string
-	if !files.NoGlobal && home != "" {
-		if p := filepath.Join(home, "DASHY.md"); isFile(p) {
-			paths = append(paths, p)
-		}
-	}
 	if files.Config != "" {
 		p := files.Config
 		if !filepath.IsAbs(p) {
@@ -244,12 +238,17 @@ func instructionFiles(home, dir string, files Options) ([]string, error) {
 		} else if st.IsDir() {
 			return nil, fmt.Errorf("config %s: is a directory", p)
 		}
-		return append(paths, p), nil
+		return []string{p}, nil
 	}
 	if p := filepath.Join(dir, "DASHY.md"); isFile(p) {
-		paths = append(paths, p)
+		return []string{p}, nil
 	}
-	return paths, nil
+	if home != "" {
+		if p := filepath.Join(home, "DASHY.md"); isFile(p) {
+			return []string{p}, nil
+		}
+	}
+	return nil, nil
 }
 
 func isFile(p string) bool {

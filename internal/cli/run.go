@@ -96,13 +96,12 @@ func Run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.W
 		var opts acp.Options
 		fs := flagSet("acp", func(fs *flag.FlagSet) {
 			fs.StringVar(&opts.Config, "config", "", "project instructions")
-			fs.BoolVar(&opts.NoGlobal, "no-global", false, "skip global instructions")
 		})
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
 		if fs.NArg() > 0 {
-			return errors.New("usage: dashy acp [--config FILE] [--no-global]")
+			return errors.New("usage: dashy acp [--config FILE]")
 		}
 		opts.Version = Version
 		return cancelledOr(ctx, acp.Run(ctx, in, out, opts))
@@ -232,11 +231,9 @@ func modelsCommand(ctx context.Context, args []string, out, diagnostics io.Write
 
 func sessionCommand(ctx context.Context, args []string, in io.Reader, out, diagnostics io.Writer) error {
 	var config, resume string
-	var noGlobal bool
 	fs := flagSet("dashy", func(fs *flag.FlagSet) {
 		fs.StringVar(&config, "config", "", "project instructions")
 		fs.StringVar(&config, "c", "", "alias for --config")
-		fs.BoolVar(&noGlobal, "no-global", false, "skip global instructions")
 		fs.StringVar(&resume, "resume", "", "resume a project session")
 	})
 	if err := fs.Parse(args); err != nil {
@@ -252,7 +249,7 @@ func sessionCommand(ctx context.Context, args []string, in io.Reader, out, diagn
 	if err != nil {
 		return err
 	}
-	a, err := agent.New(cwd, agent.Options{Config: config, NoGlobal: noGlobal, Resume: resume})
+	a, err := agent.New(cwd, agent.Options{Config: config, Resume: resume})
 	if err != nil {
 		return err
 	}
