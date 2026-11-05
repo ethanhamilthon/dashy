@@ -5,7 +5,6 @@ package control
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"dashy/internal/agent"
@@ -35,41 +34,6 @@ func (e *Error) Error() string { return e.Message }
 
 func fail(code, format string, args ...any) error {
 	return &Error{Code: code, Message: fmt.Sprintf(format, args...)}
-}
-
-// CommandInfo describes one slash command; Icon is the glyph a completion list shows.
-type CommandInfo struct {
-	Name        string
-	Icon        string
-	Description string
-}
-
-var commandList = []CommandInfo{
-	{"/new", "+", "Start a new chat; re-read settings and DASHY.md"},
-	{"/help", "?", "Show commands and keyboard shortcuts"},
-	{"/quit", "->", "Save the chat and exit"},
-	{"/resume", "<", "Resume a saved session in this project"},
-	{"/reload", "~", "Re-read settings and DASHY.md for the next request"},
-	{"/rename", "#", "Rename this session; empty name restores the default"},
-	{"/events", "i", "Show notices and errors of this session"},
-	{"/tasks", "&", "Show background tasks; k stops the selected one"},
-	{"/settings", "*", "Configure display and bash output options"},
-	{"/models", "*", "Select the model and reasoning effort"},
-	{"/connect", "+", "Select or create a provider"},
-}
-
-// Commands returns the slash commands in completion order.
-func Commands() []CommandInfo { return append([]CommandInfo(nil), commandList...) }
-
-// Help renders the command reference followed by keyboard bindings.
-func Help(keyboard string) string {
-	var help strings.Builder
-	for _, cmd := range commandList {
-		fmt.Fprintf(&help, "%-9s %s\n", cmd.Name, cmd.Description)
-	}
-	help.WriteString("\n" + keyboard + "\n")
-	help.WriteString("\nHost access: the bash tool runs commands with your permissions; not an OS security sandbox.")
-	return help.String()
 }
 
 // Status is a consistent snapshot of the active operation.

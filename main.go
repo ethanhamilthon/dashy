@@ -10,14 +10,13 @@ import (
 	"syscall"
 
 	"dashy/internal/cli"
-	"dashy/internal/tui"
 )
 
 //go:embed VERSION
 var version string
 
 func main() {
-	tui.Version = strings.TrimSpace(version)
+	cli.Version = strings.TrimSpace(version)
 	ctx, cancel := context.Background(), func() {}
 	if !cli.IsHelper(os.Args[1:]) {
 		// Sessions save and clean up on a signal; helpers just end, even when blocked reading.

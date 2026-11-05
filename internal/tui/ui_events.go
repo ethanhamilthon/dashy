@@ -14,15 +14,13 @@ import (
 	"dashy/internal/control"
 )
 
-// Version is shown on the start screen; main sets it from the VERSION file.
-var Version = "dev"
-
 // Run runs the terminal interface until the user exits.
 // The caller remains responsible for closing the agent and releasing session ownership.
-func Run(ctx context.Context, a *agent.Agent, cwd string) error {
+func Run(ctx context.Context, a *agent.Agent, cwd, version string) error {
 	keyboard := keyboardProtocol{}
 	defer keyboard.close()
 	m := newModel(a, cwd)
+	m.version = version
 	m.startCmd = m.onboard()
 	program := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithFilter(keyboard.filter))
 	running, stop := context.WithCancel(ctx)

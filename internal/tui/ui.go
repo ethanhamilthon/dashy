@@ -68,6 +68,7 @@ type model struct {
 	fileDismissed            bool
 	fileDismissedValue       string
 	fileDismissedCursor      int
+	version                  string
 	flash                    entry // the latest notice or error, shown in the status bar
 	flashAt                  time.Time
 	frameAt                  time.Time // the last refresh

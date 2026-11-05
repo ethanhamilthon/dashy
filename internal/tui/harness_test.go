@@ -277,3 +277,7 @@ func bareModel(t *testing.T, cwd string) model {
 	m.cwd = cwd
 	return m
 }
+
+func renderEntry(e entry, width, limit int) string { return renderEntryMode(e, width, limit, true) }
+
+func (m *model) timeline() string { return strings.Join(m.timelineRows(0), "\n") }

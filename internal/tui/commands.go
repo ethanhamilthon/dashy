@@ -16,15 +16,30 @@ import (
 
 type command struct{ name, icon, description, label, action string }
 
-func commandMenu() []command {
-	var menu []command
-	for _, info := range control.Commands() {
-		menu = append(menu, command{name: info.Name, icon: info.Icon, description: info.Description})
-	}
-	return menu
+var commands = []command{
+	{name: "/new", icon: "+", description: "Start a new chat; re-read settings and DASHY.md"},
+	{name: "/help", icon: "?", description: "Show commands and keyboard shortcuts"},
+	{name: "/quit", icon: "->", description: "Save the chat and exit"},
+	{name: "/resume", icon: "<", description: "Resume a saved session in this project"},
+	{name: "/reload", icon: "~", description: "Re-read settings and DASHY.md for the next request"},
+	{name: "/rename", icon: "#", description: "Rename this session; empty name restores the default"},
+	{name: "/events", icon: "i", description: "Show notices and errors of this session"},
+	{name: "/tasks", icon: "&", description: "Show background tasks; k stops the selected one"},
+	{name: "/settings", icon: "*", description: "Configure display and bash output options"},
+	{name: "/models", icon: "*", description: "Select the model and reasoning effort"},
+	{name: "/connect", icon: "+", description: "Select or create a provider"},
 }
 
-var commands = commandMenu()
+// help renders the command reference followed by keyboard bindings.
+func help() string {
+	var help strings.Builder
+	for _, cmd := range commands {
+		fmt.Fprintf(&help, "%-9s %s\n", cmd.name, cmd.description)
+	}
+	help.WriteString("\n" + keyboardHelp + "\n")
+	help.WriteString("\nHost access: the bash tool runs commands with your permissions; not an OS security sandbox.")
+	return help.String()
+}
 
 // sessionTitle is the first user message, shortened for the resume picker.
 func sessionTitle(s agent.SessionSummary) string {
@@ -185,7 +200,7 @@ func (m model) runCommand(name string) (tea.Model, tea.Cmd) {
 		}
 		return m.submit(m.ctl.Rename(strings.TrimSpace(strings.TrimPrefix(name, "/rename"))))
 	case "/help":
-		return m.stop("info", control.Help(keyboardHelp))
+		return m.stop("info", help())
 	case "/events":
 		return m.stop("info", cmp.Or(strings.Join(m.ctl.Events(), "\n"), "No events in this session."))
 	case "/reload":

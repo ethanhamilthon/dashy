@@ -78,9 +78,6 @@ func paint(text string, width int, bg, fg lipgloss.TerminalColor) string {
 	return strings.Join(rows, "\n")
 }
 
-// renderEntry renders one timeline entry; a positive limit caps the wrapped body rows and 0 hides the entry.
-func renderEntry(e entry, width, limit int) string { return renderEntryMode(e, width, limit, true) }
-
 // renderEntryMode is renderEntry; without markdown an assistant entry shows as wrapped plain text.
 func renderEntryMode(e entry, width, limit int, markdown bool) string {
 	if limit == 0 {
@@ -191,9 +188,6 @@ func (m model) pickerHint() string {
 // keyInComposer reports whether the composer holds an API key, which is never shown.
 func (m model) keyInComposer() bool { return m.form != nil && m.form.field == 2 }
 
-// timeline renders the whole timeline at once; the interface uses timelineRows.
-func (m *model) timeline() string { return strings.Join(m.timelineRows(0), "\n") }
-
 // screenRows collects text chunks as screen rows. A chunk continues the last row,
 // so cached entries are appended without joining and splitting them again.
 type screenRows []string
@@ -215,7 +209,7 @@ func (r *screenRows) addLines(lines []string) {
 func (m *model) timelineRows(budget time.Duration) []string {
 	var out strings.Builder
 	out.WriteString(lipgloss.NewStyle().Foreground(cyan).Bold(true).Render("dashy. minimal coding agent."))
-	out.WriteString(lipgloss.NewStyle().Foreground(muted).Render(" v" + strings.TrimPrefix(Version, "v")))
+	out.WriteString(lipgloss.NewStyle().Foreground(muted).Render(" v" + strings.TrimPrefix(m.version, "v")))
 	out.WriteString("\n")
 	if hint := m.ctl.Settings().SetupHint(); hint != "" && m.form == nil {
 		out.WriteString(lipgloss.NewStyle().Foreground(warnColor).Render(hint) + "\n")

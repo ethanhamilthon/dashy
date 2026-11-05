@@ -96,6 +96,9 @@ func (f *failedWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// Version is the release shown by "dashy version", the TUI and ACP; main sets it.
+var Version = "dev"
+
 // Run executes one command line. stdout receives results; diagnostics receives
 // progress and errors. ctx ends everything: a cancelled run exits 130. A failed
 // write of the results fails the run.
@@ -112,7 +115,7 @@ func Run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.W
 		if fs.NArg() > 0 {
 			return errors.New("usage: dashy acp [--config FILE] [--no-global]")
 		}
-		opts.Version = tui.Version
+		opts.Version = Version
 		return cancelledOr(ctx, acp.Run(ctx, in, out, opts))
 	}
 	w := &failedWriter{w: out}
@@ -131,7 +134,7 @@ func run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.W
 				return fmt.Errorf("%s takes no arguments", args[0])
 			}
 			if args[0] == "version" {
-				fmt.Fprintln(out, strings.TrimPrefix(tui.Version, "v"))
+				fmt.Fprintln(out, strings.TrimPrefix(Version, "v"))
 			} else {
 				fmt.Fprint(out, helpText)
 			}
@@ -268,7 +271,7 @@ func sessionCommand(ctx context.Context, args []string, in io.Reader, out, diagn
 		return err
 	}
 	defer a.Close()
-	return cancelledOr(ctx, tui.Run(ctx, a, cwd))
+	return cancelledOr(ctx, tui.Run(ctx, a, cwd, Version))
 }
 
 // cancelledOr maps an interrupted wait to the cancelled exit; other errors pass through.
