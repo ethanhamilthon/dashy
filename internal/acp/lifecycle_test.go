@@ -107,3 +107,31 @@ func TestBackgroundHelpersSurviveTurnCancelAndStopOnDisconnect(t *testing.T) {
 		t.Fatalf("task leaked after disconnect: %+v %v", tasks, err)
 	}
 }
+
+func TestIdleTaskResultStartsTurn(t *testing.T) {
+	settings(t, func(body string) string {
+		if strings.Contains(body, "task-result") {
+			return answer("woke")
+		}
+		return answer("ok")
+	})
+	w := connect(t)
+	w.initialize(t)
+	dir := t.TempDir()
+	session := w.newSession(t, 2, dir)
+	w.prompt(t, 3, session, "first")
+	w.response(t, 3)
+	if _, err := agent.RunTask(dir, session, "true"); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		f := w.next(t)
+		if f.Method == "session/update" && strings.Contains(string(f.Params), `"woke"`) {
+			break
+		}
+	}
+	w.prompt(t, 4, session, "next")
+	if f := w.response(t, 4); f.Error != nil {
+		t.Fatal(f.Error)
+	}
+}

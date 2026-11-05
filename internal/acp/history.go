@@ -17,9 +17,10 @@ func (s *server) sessionReady(ctx context.Context, session *session, method stri
 	var failure *rpcError
 	defer func() {
 		session.mu.Lock()
-		defer session.mu.Unlock()
 		session.release()
 		reply(result, failure)
+		session.mu.Unlock()
+		s.deliver(session)
 	}()
 	if method == "session/load" {
 		if err := s.replay(ctx, session); err != nil {

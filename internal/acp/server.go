@@ -27,8 +27,10 @@ type session struct {
 	busy      bool
 	cancelled bool
 	closed    bool
-	work      sync.WaitGroup
-	models    map[string]agent.ModelChoice
+	// done is open while an unsolicited turn runs; a prompt arriving meanwhile waits for it.
+	done   chan struct{}
+	work   sync.WaitGroup
+	models map[string]agent.ModelChoice
 }
 
 func (session *session) claim()   { session.busy = true; session.work.Add(1) }
@@ -185,7 +187,11 @@ func (s *server) openSession(ctx context.Context, params json.RawMessage, reply 
 		if load {
 			opts.Resume = p.SessionID
 		}
-		opts.Observe = func(e agent.ExecutionEvent) { s.tool(session, e) }
+		opts.Observe = func(e agent.ExecutionEvent) {
+			if e.Kind != "instructions" {
+				s.tool(session, e)
+			}
+		}
 		a, err := agent.New(p.Cwd, opts)
 		if err != nil {
 			reply(nil, problem(-32603, "Unable to open local session storage or instructions"))
@@ -209,6 +215,7 @@ func (s *server) openSession(ctx context.Context, params json.RawMessage, reply 
 			return
 		}
 		session.claim()
+		a.Queue().OnPush(func() { go s.deliver(session) })
 		s.mu.Lock()
 		s.sessions[a.SessionID()] = session
 		s.mu.Unlock()
@@ -258,6 +265,18 @@ func (s *server) prompt(ctx context.Context, params json.RawMessage, reply reply
 		return
 	}
 	session.mu.Lock()
+	if done := session.done; done != nil && !session.closed {
+		session.mu.Unlock()
+		s.job(func() {
+			select {
+			case <-done:
+				s.prompt(ctx, params, reply)
+			case <-ctx.Done():
+				reply(nil, problem(-32800, "Request cancelled"))
+			}
+		})
+		return
+	}
 	if session.busy || session.closed {
 		session.mu.Unlock()
 		reply(nil, problem(-32600, "A prompt is already running in this session"))
@@ -282,18 +301,14 @@ func (s *server) prompt(ctx context.Context, params json.RawMessage, reply reply
 			}
 			input.Images = append(input.Images, image)
 		}
-		// Only committed text is published: retry rollbacks never duplicate editor output.
-		err := session.a.RunInput(turn, input, func(e agent.Event) {
-			if e.Kind == "assistant" && e.Final && !e.Provisional {
-				s.update(session, map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]string{"type": "text", "text": agent.Redact(session.a.Settings(), e.Text)}})
-			}
-		})
+		err := session.a.RunInput(turn, input, s.publish(session))
 		s.usage(session)
 		session.mu.Lock()
 		stopped, sessionCancelled := turn.Err() != nil, session.cancelled
 		session.release()
 		session.cancel = nil
 		session.mu.Unlock()
+		defer s.deliver(session)
 		if sessionCancelled {
 			reply(map[string]string{"stopReason": "cancelled"}, nil)
 		} else if stopped {
@@ -309,6 +324,50 @@ func (s *server) prompt(ctx context.Context, params json.RawMessage, reply reply
 		}
 	})
 }
+
+// Only committed text is published: retry rollbacks never duplicate editor output.
+func (s *server) publish(session *session) func(agent.Event) {
+	return func(e agent.Event) {
+		if e.Kind == "assistant" && e.Final && !e.Provisional {
+			s.update(session, map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]string{"type": "text", "text": agent.Redact(session.a.Settings(), e.Text)}})
+		}
+	}
+}
+
+// deliver starts an unsolicited turn for a queued task result or image when the session
+// is idle, like the TUI does. ACP has no agent-initiated turns, so the client only sees
+// session/update notifications outside of any prompt request.
+func (s *server) deliver(session *session) {
+	session.mu.Lock()
+	if session.busy || session.closed || s.peer.ctx.Err() != nil {
+		session.mu.Unlock()
+		return
+	}
+	input, ok := session.a.Queue().Pop()
+	if !ok {
+		session.mu.Unlock()
+		return
+	}
+	turn, cancel := context.WithCancel(s.peer.ctx)
+	session.claim()
+	session.cancelled = false
+	session.cancel = cancel
+	session.done = make(chan struct{})
+	session.mu.Unlock()
+	s.job(func() {
+		defer cancel()
+		_ = session.a.RunInput(turn, input, s.publish(session))
+		s.usage(session)
+		session.mu.Lock()
+		session.release()
+		session.cancel = nil
+		close(session.done)
+		session.done = nil
+		session.mu.Unlock()
+		s.deliver(session)
+	})
+}
+
 func (s *server) update(session *session, update any) {
 	_ = s.peer.notify(map[string]any{"sessionId": session.a.SessionID(), "update": update})
 }

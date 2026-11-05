@@ -154,6 +154,11 @@ func TestInstructionBlocksExecuteWithoutApprovals(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "executed")); err != nil {
 		t.Fatal(err)
 	}
+	for _, update := range w.updates {
+		if strings.Contains(string(update), `"tool_call`) {
+			t.Fatal("instruction block reported as a tool call:", string(update))
+		}
+	}
 }
 
 func TestDisconnectCancelsAndReleasesSession(t *testing.T) {

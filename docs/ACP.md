@@ -104,10 +104,13 @@ prompts or OS sandbox: subprocesses have your filesystem/network access and inhe
 your environment. Review untrusted `DASHY.md` blocks before opening a project.
 
 Each session owns its cwd, agent, model selection, SQLite lock, shell and notification
-socket. No process-wide `chdir` occurs. The adapter reuses the agent runner directly:
-the TUI controller's idle auto-delivery/steering would create unsolicited ACP turns.
-Overlapping prompts are rejected. Helper notices/images reach their owning session;
-while idle they wait for the next prompt instead of starting an unsolicited turn.
+socket. No process-wide `chdir` occurs. The adapter reuses the agent runner directly.
+Overlapping prompts are rejected. Helper notices/images reach their owning session.
+Experimental: while the session is idle, a task result or queued image starts an
+unsolicited turn, like the TUI. ACP has no agent-initiated turns, so the client only
+receives `session/update` notifications without a surrounding `session/prompt`; how
+it renders them is up to the client. `session/cancel` stops such a turn, and a prompt
+sent meanwhile waits for it to finish instead of being rejected.
 
 Turn cancellation stops its HTTP request and foreground process group. Explicit
 background tasks survive a cancelled turn. EOF/disconnect or SIGINT/SIGTERM stops
