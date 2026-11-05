@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -170,24 +171,41 @@ func taskResult(id, command, status string, exit *int, took time.Duration, logPa
 var xmlText = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
 
 // tail is the end of a log: its last taskResultLines lines, at most taskResultBytes.
+// Only the end of the file is read, however large the log is.
 func tail(path string) string {
-	data, err := os.ReadFile(path)
+	file, err := os.Open(path)
 	if err != nil {
 		return "(no output: " + err.Error() + ")"
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return "(no output: " + err.Error() + ")"
+	}
+	start := max(0, info.Size()-taskResultBytes-1)
+	data := make([]byte, info.Size()-start)
+	n, err := file.ReadAt(data, start)
+	if err != nil && n < len(data) {
+		data = data[:n]
+	}
+	if start > 0 {
+		// Drop the partial first line (and with it any cut UTF-8 sequence).
+		if i := bytes.IndexByte(data, '\n'); i >= 0 {
+			data = data[i+1:]
+		}
 	}
 	text := strings.TrimRight(string(data), "\n")
 	if text == "" {
 		return "(no output)"
 	}
 	lines := strings.Split(text, "\n")
-	if len(lines) > taskResultLines {
-		lines = append([]string{fmt.Sprintf("... %d earlier lines", len(lines)-taskResultLines)}, lines[len(lines)-taskResultLines:]...)
+	switch {
+	case len(lines) > taskResultLines:
+		lines = append([]string{"... earlier lines"}, lines[len(lines)-taskResultLines:]...)
+	case start > 0:
+		lines = append([]string{"... earlier output"}, lines...)
 	}
-	text = strings.Join(lines, "\n")
-	if len(text) > taskResultBytes {
-		text = "..." + text[len(text)-taskResultBytes:]
-	}
-	return text
+	return strings.Join(lines, "\n")
 }
 
 // IsNotice reports whether text is session input from dashy itself (a task result or

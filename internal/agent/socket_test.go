@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -234,4 +235,21 @@ func pendingImages(a *Agent) int {
 	a.slots.mu.Lock()
 	defer a.slots.mu.Unlock()
 	return a.slots.reserved + a.slots.committed
+}
+
+// The end of a huge log comes from its last bytes only, cut at a line start.
+func TestTailOfHugeLog(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "log")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(1 << 30); err != nil { // sparse: 1 GiB of zero bytes
+		t.Fatal(err)
+	}
+	file.WriteAt([]byte("\nlast line\n"), 1<<30)
+	file.Close()
+	if got := tail(path); !strings.HasPrefix(got, "... earlier output") || !strings.HasSuffix(got, "\nlast line") || len(got) > taskResultBytes+40 {
+		t.Fatalf("tail %d bytes: %q", len(got), got[max(0, len(got)-60):])
+	}
 }
