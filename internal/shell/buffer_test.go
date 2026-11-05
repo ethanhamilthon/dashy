@@ -6,7 +6,7 @@ import (
 )
 
 func TestOutputBufferKeepsHeadAndTail(t *testing.T) {
-	b := NewOutputBuffer(10)
+	b := newOutputBuffer(10)
 	for _, chunk := range []string{"0123", "456789", "abcdefghij", "klmnopqrst"} {
 		b.Write([]byte(chunk))
 	}
@@ -18,9 +18,9 @@ func TestOutputBufferKeepsHeadAndTail(t *testing.T) {
 }
 
 func TestOutputBufferWithinLimitAndUnlimitedAreExact(t *testing.T) {
-	short := NewOutputBuffer(64)
+	short := newOutputBuffer(64)
 	short.Write([]byte("short output"))
-	unlimited := NewOutputBuffer(0)
+	unlimited := newOutputBuffer(0)
 	long := strings.Repeat("x", 5000)
 	unlimited.Write([]byte(long))
 	if short.Text() != "short output" || unlimited.Text() != long {
@@ -38,9 +38,9 @@ func TestOutputBufferKeepsMultibyteStraddlingHeadTailSplit(t *testing.T) {
 		{6, "ab€"}, // below the limit; € crosses byte 3
 		{8192, strings.Repeat("x", 4095) + "€"}, // default limit; € crosses byte 4096
 	} {
-		whole := NewOutputBuffer(tc.limit)
+		whole := newOutputBuffer(tc.limit)
 		whole.Write([]byte(tc.text))
-		chunked := NewOutputBuffer(tc.limit)
+		chunked := newOutputBuffer(tc.limit)
 		for _, c := range []byte(tc.text) {
 			chunked.Write([]byte{c})
 		}

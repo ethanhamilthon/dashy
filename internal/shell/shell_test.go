@@ -12,7 +12,7 @@ import (
 func run(t *testing.T, command string, timeout time.Duration, limit int) Result {
 	t.Helper()
 	r := &Runner{Dir: t.TempDir(), Env: func() map[string]string { return map[string]string{"DASHY_SESSION_ID": "s1"} }}
-	return r.Execute(context.Background(), command, timeout, limit)
+	return execute(r, context.Background(), command, timeout, limit)
 }
 
 func TestFreshStateEnvironmentAndBASHENV(t *testing.T) {
@@ -21,8 +21,8 @@ func TestFreshStateEnvironmentAndBASHENV(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := &Runner{Dir: t.TempDir(), Env: func() map[string]string { return map[string]string{"DASHY_SESSION_ID": "s1"} }}
-	first := r.Execute(context.Background(), "x=1; cd /; echo $DASHY_SESSION_ID ${PAGER}", 5*time.Second, 0)
-	second := r.Execute(context.Background(), "echo \"[$x]\" $PWD", 5*time.Second, 0)
+	first := execute(r, context.Background(), "x=1; cd /; echo $DASHY_SESSION_ID ${PAGER}", 5*time.Second, 0)
+	second := execute(r, context.Background(), "echo \"[$x]\" $PWD", 5*time.Second, 0)
 	if first.Output != "s1 cat\n" || strings.Contains(first.Output, "rc-ran") {
 		t.Fatalf("first: %q", first.Output)
 	}
@@ -46,7 +46,7 @@ func TestCancellationKillsProcessGroup(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 	r := &Runner{Dir: t.TempDir()}
-	result := r.Execute(ctx, "sleep 30", 10*time.Second, 0)
+	result := execute(r, ctx, "sleep 30", 10*time.Second, 0)
 	if result.ExitCode != 130 {
 		t.Fatalf("cancel: %+v", result)
 	}
@@ -57,7 +57,7 @@ func TestBackgroundDescendantsDoNotSurviveCall(t *testing.T) {
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "marker")
 	r := &Runner{Dir: dir}
-	result := r.Execute(context.Background(), "(sleep 0.5; touch marker) >/dev/null 2>&1 &", 5*time.Second, 0)
+	result := execute(r, context.Background(), "(sleep 0.5; touch marker) >/dev/null 2>&1 &", 5*time.Second, 0)
 	if result.ExitCode != 0 {
 		t.Fatalf("call: %+v", result)
 	}
@@ -73,7 +73,7 @@ func TestPipeHoldingDescendantIsKilled(t *testing.T) {
 	marker := filepath.Join(dir, "marker")
 	r := &Runner{Dir: dir}
 	start := time.Now()
-	result := r.Execute(context.Background(), "(sleep 1; touch marker) &", 5*time.Second, 0)
+	result := execute(r, context.Background(), "(sleep 1; touch marker) &", 5*time.Second, 0)
 	if result.ExitCode != 0 || time.Since(start) > 4*time.Second {
 		t.Fatalf("call: %+v after %s", result, time.Since(start))
 	}
@@ -114,4 +114,9 @@ func TestSetsProcessGroup(t *testing.T) {
 	if cmd.SysProcAttr == nil || !cmd.SysProcAttr.Setpgid {
 		t.Fatal("command must run in its own process group")
 	}
+}
+
+func execute(r *Runner, ctx context.Context, command string, timeout time.Duration, limit int) Result {
+	result, _ := r.Run(ctx, command, timeout, limit, nil)
+	return result
 }

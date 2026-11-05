@@ -91,13 +91,6 @@ func killGroup(cmd *exec.Cmd) error {
 	return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 }
 
-// Execute runs command with a timeout, keeping at most limit output bytes
-// (first and last halves; limit <= 0 keeps everything).
-func (r *Runner) Execute(ctx context.Context, command string, timeout time.Duration, limit int) Result {
-	result, _ := r.Run(ctx, command, timeout, limit, nil)
-	return result
-}
-
 // Run is Execute that can let go of the command: when detach fires first, Run returns
 // the output so far and the still running command, which the caller then owns.
 func (r *Runner) Run(ctx context.Context, command string, timeout time.Duration, limit int, detach <-chan struct{}) (Result, *Background) {
@@ -109,7 +102,7 @@ func (r *Runner) Run(ctx context.Context, command string, timeout time.Duration,
 	// timeout kill the group below.
 	cmd := Command(context.Background(), r.Dir, env, command)
 	cmd.Stdin = strings.NewReader("")
-	buffer := NewOutputBuffer(limit)
+	buffer := newOutputBuffer(limit)
 	// Stdout and Stderr share one writer, so exec never calls Write concurrently.
 	out := &switchWriter{w: buffer}
 	cmd.Stdout, cmd.Stderr = out, out
@@ -179,7 +172,7 @@ type Background struct {
 	Cmd    *exec.Cmd
 	done   <-chan error
 	out    *switchWriter
-	buffer *OutputBuffer
+	buffer *outputBuffer
 }
 
 // Redirect sends the output from now on to w, after the output kept so far.

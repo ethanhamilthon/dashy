@@ -5,18 +5,18 @@ import (
 	"strings"
 )
 
-// OutputBuffer captures UTF-8 tool output. With a positive limit it keeps the
+// outputBuffer captures UTF-8 tool output. With a positive limit it keeps the
 // first and last limit/2 bytes; otherwise it keeps everything.
-type OutputBuffer struct {
+type outputBuffer struct {
 	limit      int
 	head, tail []byte
 	size       int
 }
 
-// NewOutputBuffer keeps the first and last limit/2 bytes, or everything when limit <= 0.
-func NewOutputBuffer(limit int) *OutputBuffer { return &OutputBuffer{limit: limit} }
+// newOutputBuffer keeps the first and last limit/2 bytes, or everything when limit <= 0.
+func newOutputBuffer(limit int) *outputBuffer { return &outputBuffer{limit: limit} }
 
-func (b *OutputBuffer) Write(p []byte) (int, error) {
+func (b *outputBuffer) Write(p []byte) (int, error) {
 	total := len(p)
 	b.size += total
 	if b.limit <= 0 {
@@ -36,7 +36,7 @@ func (b *OutputBuffer) Write(p []byte) (int, error) {
 	return total, nil
 }
 
-func (b *OutputBuffer) Text() string {
+func (b *outputBuffer) Text() string {
 	if b.limit <= 0 || b.size <= b.limit {
 		// Nothing was omitted: normalize the whole output so that a character
 		// straddling the head/tail split is kept intact.
