@@ -112,3 +112,33 @@ func TestShellOutputSetting(t *testing.T) {
 		t.Fatalf("limit not applied: %q", res.Output)
 	}
 }
+
+// A change saved by another process while this one edits is kept: the edit is applied again on top.
+func TestConcurrentSettingsEditsKeepBoth(t *testing.T) {
+	a := newTestAgent(t, &fakeProvider{reply: func(int, string) string { return "" }}, Options{})
+	other := true
+	err := a.ChangeSettings(func(s *Settings) {
+		if other {
+			other = false
+			stored, err := LoadSettings(a.home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stored.ShellOutput = 16384
+			if err := SaveSettings(a.home, stored); err != nil {
+				t.Fatal(err)
+			}
+		}
+		s.ReasoningSummary = false
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := LoadSettings(a.home)
+	if err != nil || back.ShellOutput != 16384 || back.ReasoningSummary {
+		t.Fatalf("lost update: %+v %v", back, err)
+	}
+	if s := a.Settings(); s.ShellOutput != 16384 || s.ReasoningSummary {
+		t.Fatalf("applied: %+v", s)
+	}
+}

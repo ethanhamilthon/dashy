@@ -226,6 +226,29 @@ func storeSettings(db *sql.DB, s Settings) (version int64, err error) {
 	return version, err
 }
 
+// errSettingsConflict means another process saved the settings since they were read.
+var errSettingsConflict = errors.New("settings changed concurrently; try again")
+
+// storeSettingsAt saves s only if the stored version is still expected (0: none stored),
+// returning errSettingsConflict otherwise. s must be valid.
+func storeSettingsAt(db *sql.DB, s Settings, expected int64) (version int64, err error) {
+	data, err := json.Marshal(s)
+	if err != nil {
+		return 0, err
+	}
+	if expected == 0 {
+		err = db.QueryRow(`INSERT INTO settings (id, data, version) VALUES (1, ?, 1)
+			ON CONFLICT (id) DO NOTHING RETURNING version`, string(data)).Scan(&version)
+	} else {
+		err = db.QueryRow(`UPDATE settings SET data = ?, version = version + 1
+			WHERE id = 1 AND version = ? RETURNING version`, string(data), expected).Scan(&version)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, errSettingsConflict
+	}
+	return version, err
+}
+
 // DashyHome is DASHY_HOME: default ~/.dashy, a relative value resolves against cwd.
 func DashyHome(cwd string) (string, error) {
 	dir := os.Getenv("DASHY_HOME")
@@ -364,24 +387,40 @@ func (a *Agent) Settings() Settings {
 
 // update changes the latest stored settings (other processes' changes included), then
 // validates, saves and applies them. A failed change or save leaves the previous settings in place.
+// The save succeeds only if nobody saved in between; otherwise the change is applied again
+// to the newer settings, so concurrent edits of different fields all survive.
 func (a *Agent) update(change func(*Settings) error) error {
 	a.cfg.mu.Lock()
 	defer a.cfg.mu.Unlock()
-	a.reloadLocked()
-	next := a.cfg.base
-	next.Providers = maps.Clone(next.Providers)
-	if next.Providers == nil {
-		next.Providers = map[string]Provider{}
+	for range 20 {
+		a.reloadLocked()
+		base, version, err := loadSettings(a.db)
+		if err != nil {
+			// Unreadable stored settings are replaced by the change applied to the last good ones.
+			base = a.cfg.base
+		}
+		next := base
+		next.Providers = maps.Clone(next.Providers)
+		if next.Providers == nil {
+			next.Providers = map[string]Provider{}
+		}
+		if err := change(&next); err != nil {
+			return err
+		}
+		if err := validateSettings(next); err != nil {
+			return err
+		}
+		if _, err := a.effectiveLocked(next); err != nil {
+			return err
+		}
+		saved, err := storeSettingsAt(a.db, next, version)
+		if errors.Is(err, errSettingsConflict) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		return a.applyLocked(next, saved)
 	}
-	if err := change(&next); err != nil {
-		return err
-	}
-	if _, err := a.effectiveLocked(next); err != nil {
-		return err
-	}
-	version, err := storeSettings(a.db, next)
-	if err != nil {
-		return err
-	}
-	return a.applyLocked(next, version)
+	return errSettingsConflict
 }
