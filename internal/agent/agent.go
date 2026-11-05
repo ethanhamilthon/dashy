@@ -66,12 +66,12 @@ type Agent struct {
 	cfg          *settingsState // live settings and API client, shared with the turn goroutine
 	Shell        *shell.Runner
 	History      []json.RawMessage
-	itemMeta     map[string]*Metadata // metadata of answer items, by their JSON; saved with them
-	db           *sql.DB              // DASHY_HOME/dashy.db, shared by sessions of this agent
-	project      string               // absolute project directory
-	id           string               // session ID
-	saved        int                  // history items already stored
-	stored       bool                 // the session has a row in the database
+	itemMeta     map[int]*Metadata // metadata keyed by history seq
+	db           *sql.DB           // DASHY_HOME/dashy.db, shared by sessions of this agent
+	project      string            // absolute project directory
+	id           string            // session ID
+	saved        int               // history items already stored
+	stored       bool              // the session has a row in the database
 	owner        *os.File
 	promptFiles  []string // DASHY.md files selected at startup, /new or /resume
 	prompt       string   // assembled system prompt, frozen once assembled
@@ -193,13 +193,12 @@ func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event)) (er
 
 	shown := inputEvent(input)
 	shown.ID = fmt.Sprintf("input-%d", time.Now().UnixNano())
-	emit(shown)
 	a.commitInput(input)
+	shown.Meta = a.itemMeta[len(a.History)-1]
+	emit(shown)
 
-	turnStart := time.Now()
-	var total Usage
-	usageKnown := true
-	for step := 0; ; step++ {
+	turnSeq := len(a.History) - 1
+	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -214,31 +213,18 @@ func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event)) (er
 			return e
 		}
 		meta := a.lastRequest
-		if meta.Usage == nil {
-			usageKnown = false
-		} else {
-			total.Input += meta.Usage.Input
-			total.Output += meta.Usage.Output
-			if total.Cached < 0 || meta.Usage.Cached < 0 {
-				total.Cached = -1
-			} else {
-				total.Cached += meta.Usage.Cached
-			}
-		}
+		meta.RequestSeq = len(a.History) + 1
+		meta.TurnSeq = turnSeq
+		meta.At = time.Now()
 		calls := 0
 		// Commit and display all response items before executing their tool calls.
 		for i, item := range items {
 			a.History = append(a.History, item)
+			a.setItemMeta(len(a.History)-1, meta)
 			for _, r := range RecordsForItem(item) {
 				m := meta
 				if r.Kind == "assistant" {
-					m.Duration, m.At = time.Since(turnStart), time.Now()
-					m.Usage = nil
-					if usageKnown {
-						u := total
-						m.Usage = &u
-					}
-					a.setItemMeta(item, m)
+					m = a.answerMetadata(len(a.History) - 1)
 				}
 				emit(Event{Kind: r.Kind, Text: r.Text, ID: a.itemID(int64(i)), Meta: &m, Final: true})
 			}
@@ -259,8 +245,10 @@ func (a *Agent) RunInput(ctx context.Context, input Input, emit func(Event)) (er
 			result := a.runTool(ctx, call.Name, call.Arguments, emit)
 			output := callOutput(call.CallID, result)
 			a.History = append(a.History, output)
+			m := Metadata{Duration: time.Since(started), At: time.Now()}
+			a.setItemMeta(len(a.History)-1, m)
 			for _, r := range RecordsForItem(output) {
-				emit(Event{Kind: r.Kind, Text: r.Text, Meta: &Metadata{Duration: time.Since(started)}, Final: true})
+				emit(Event{Kind: r.Kind, Text: r.Text, Meta: &m, Final: true})
 			}
 			if e := a.saveHistory(); e != nil {
 				return e
@@ -367,7 +355,7 @@ func (a *Agent) request(ctx context.Context, emit func(Event)) (items []json.Raw
 	payload := map[string]any{
 		"model":        settings.Model,
 		"instructions": prompt,
-		"input":        a.History,
+		"input":        a.requestInput(),
 		"store":        false,
 		"tools": []any{map[string]any{
 			"type": "function", "name": "bash", "description": BashToolDescription,
@@ -484,7 +472,7 @@ func (a *Agent) ContextTokens() int64 {
 	if a.lastRequest.ContextInput != nil {
 		return *a.lastRequest.ContextInput
 	}
-	return estimateTokens(a.History)
+	return estimateTokens(a.requestInput()) + int64(len(a.prompt))/tokenBytes
 }
 
 // FinalText is the assistant text of the latest response: the message items after
@@ -529,9 +517,9 @@ func bashParameters() map[string]any {
 	}
 }
 
-func (a *Agent) setItemMeta(item json.RawMessage, m Metadata) {
+func (a *Agent) setItemMeta(seq int, m Metadata) {
 	if a.itemMeta == nil {
-		a.itemMeta = map[string]*Metadata{}
+		a.itemMeta = map[int]*Metadata{}
 	}
-	a.itemMeta[string(item)] = &m
+	a.itemMeta[seq] = &m
 }

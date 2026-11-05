@@ -292,7 +292,7 @@ func sessionCommand(ctx context.Context, args []string, in io.Reader, out, diagn
 		return nil
 	}
 	if in != nil && !isTerminal(in) {
-		data, err := readStdin(ctx, in, 0)
+		data, err := readStdin(ctx, in)
 		if err != nil {
 			return cancelledOr(ctx, err)
 		}
@@ -320,19 +320,15 @@ func sessionCommand(ctx context.Context, args []string, in io.Reader, out, diagn
 	return runPrint(ctx, a, prompt, out, diagnostics)
 }
 
-// readStdin reads all of in (or at most limit bytes when limit > 0), giving up when ctx ends.
-func readStdin(ctx context.Context, in io.Reader, limit int64) (string, error) {
+// readStdin reads all of in, giving up when ctx ends.
+func readStdin(ctx context.Context, in io.Reader) (string, error) {
 	type result struct {
 		data []byte
 		err  error
 	}
 	done := make(chan result, 1)
 	go func() {
-		var r io.Reader = in
-		if limit > 0 {
-			r = io.LimitReader(in, limit)
-		}
-		data, err := io.ReadAll(r)
+		data, err := io.ReadAll(in)
 		done <- result{data, err}
 	}()
 	select {

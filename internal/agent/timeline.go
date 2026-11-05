@@ -17,8 +17,10 @@ type Metadata struct {
 	Duration     time.Duration
 	Usage        *Usage
 	ContextInput *int64
-	RequestID    string
-	At           time.Time `json:",omitzero"` // when an answer arrived
+	RequestID    string    `json:"-"`
+	RequestSeq   int       `json:",omitempty"` // one-based seq of the request's first item
+	TurnSeq      int       `json:",omitempty"` // seq at the beginning of the turn
+	At           time.Time `json:",omitzero"`  // when an answer arrived
 }
 
 type Record struct {
@@ -157,7 +159,7 @@ func RecordsForItem(item json.RawMessage) []Record {
 		return []Record{{Kind: "output", Text: v.Output}}
 	default:
 		// Provider-managed tool events remain visible even without a specialized UI.
-		if v.Type != "" {
+		if v.Type != "" && v.Type != "instructions" {
 			return []Record{{Kind: "output", Text: string(item)}}
 		}
 	}
@@ -168,11 +170,14 @@ func RecordsForItem(item json.RawMessage) []Record {
 // keep the metadata (time, duration, usage) they were shown with.
 func (a *Agent) Records() []Record {
 	var records []Record
-	for _, item := range a.History {
-		meta := a.itemMeta[string(item)]
+	for seq, item := range a.History {
+		meta := a.itemMeta[seq]
 		for _, r := range RecordsForItem(item) {
-			if r.Kind == "assistant" && meta != nil {
+			if meta != nil {
 				m := *meta
+				if r.Kind == "assistant" {
+					m = a.answerMetadata(seq)
+				}
 				r.Meta = &m
 			}
 			records = append(records, r)

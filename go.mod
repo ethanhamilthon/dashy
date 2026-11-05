@@ -1,6 +1,6 @@
 module dashy
 
-go 1.26.0
+go 1.27.3
 
 require (
 	github.com/atotto/clipboard v0.1.4

@@ -68,8 +68,8 @@ var (
 	mdRenderer *glamour.TermRenderer
 	// mdStable caches the rendered stable prefix of the message being streamed.
 	mdStable struct {
-		key      any
-		src, out string
+		key any
+		out string
 	}
 	urlToken = regexp.MustCompile(`(?i)(?:https?://|www\.)[^\s<>]+`)
 )

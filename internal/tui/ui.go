@@ -41,7 +41,6 @@ type model struct {
 	inputValue               string
 	inputWidth, inputHeight  int
 	sel                      *selection
-	inputSel                 *composerSelection
 	inputDrag                bool
 	inputTop                 int
 	layoutValue              string
@@ -297,13 +296,6 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.viewport, cmd = m.viewport.Update(msg)
 		return m, cmd
-	case composerShortcut:
-		key := tea.KeyMsg{Type: tea.KeyCtrlC}
-		if v.cut {
-			key = tea.KeyMsg{Type: tea.KeyCtrlX}
-		}
-		cmd, _ := m.composerKey(key)
-		return m, cmd
 	case clipboardCopied:
 		if v.err != nil {
 			return m.stop("error", "Copy failed: "+v.err.Error())
@@ -314,9 +306,6 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if next, cmd, handled := m.pickerKey(v); handled {
 			return next, cmd
-		}
-		if cmd, handled := m.composerKey(v); handled {
-			return m, cmd
 		}
 		switch v.String() {
 		case "ctrl+v":
@@ -441,7 +430,7 @@ func (m model) View() string {
 	if m.sel != nil {
 		lines = m.sel.highlight(lines, m.viewport.Width)
 	}
-	return strings.Join(m.composerHighlight(lines), "\n")
+	return strings.Join(lines, "\n")
 }
 
 // sendInput hands a complete input to the controller. Idle input starts a turn;

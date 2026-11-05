@@ -107,8 +107,8 @@ type clipboardCopied struct {
 
 // mouseSelection handles left-button selection in the composer and the timeline. It reports
 // whether the event was consumed; the wheel and other buttons keep scrolling the viewport.
-// A drag that starts in the composer selects its text without copying. A drag that starts
-// elsewhere selects timeline text and copies it on release.
+// A composer press places its cursor; composer drags are ignored.
+// Timeline drags select text and copy it on release.
 func (m *model) mouseSelection(msg tea.MouseMsg) (tea.Cmd, bool) {
 	if msg.Button != tea.MouseButtonLeft {
 		return nil, false
@@ -116,35 +116,20 @@ func (m *model) mouseSelection(msg tea.MouseMsg) (tea.Cmd, bool) {
 	cell := point{msg.X, msg.Y}
 	switch msg.Action {
 	case tea.MouseActionPress:
-		m.sel, m.inputSel, m.inputDrag = nil, nil, false
-		if offset, ok := m.composerOffset(msg.X, msg.Y, false); ok {
-			m.inputSel = &composerSelection{anchor: offset, head: offset, value: m.input.Value()}
+		m.sel, m.inputDrag = nil, false
+		if offset, ok := m.composerOffset(msg.X, msg.Y); ok {
 			m.inputDrag = true
-			return nil, true
+			return m.setCursorOffset(offset), true
 		}
 		m.sel = &selection{start: cell, end: cell}
 	case tea.MouseActionMotion:
-		if m.inputDrag && m.inputSel != nil {
-			if offset, ok := m.composerOffset(msg.X, msg.Y, true); ok {
-				m.inputSel.head = offset
-			}
-		} else if m.sel != nil {
+		if !m.inputDrag && m.sel != nil {
 			m.sel.end = cell
 		}
 	case tea.MouseActionRelease:
 		if m.inputDrag {
 			m.inputDrag = false
-			if m.inputSel == nil {
-				return nil, true
-			}
-			if m.inputSel.anchor == m.inputSel.head {
-				// A click without drag only places the cursor.
-				offset := m.inputSel.head
-				m.inputSel = nil
-				return m.setCursorOffset(offset), true
-			}
-			// The cursor moves to the end of the drag so the next key starts from there.
-			return m.setCursorOffset(m.inputSel.head), true
+			return nil, true
 		}
 		if m.sel == nil {
 			return nil, true

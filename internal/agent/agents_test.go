@@ -143,9 +143,8 @@ func TestCancelledTurnStopsWhileBlockRuns(t *testing.T) {
 	}
 }
 
-// /resume of the current session assembles the prompt again: changed files and
-// blocks take effect once, then the new prompt is frozen for the session.
-func TestSameSessionResumeAssemblesAgain(t *testing.T) {
+// /resume keeps the stored prompt even when instruction files have changed.
+func TestSameSessionResumeKeepsSnapshot(t *testing.T) {
 	var runs string
 	fp := &fakeProvider{reply: func(int, string) string { return textReply("ok") }}
 	a := newTestAgentWith(t, fp, Options{}, func(home, dir string) {
@@ -160,11 +159,11 @@ func TestSameSessionResumeAssemblesAgain(t *testing.T) {
 	turn(t, a, "second")
 	turn(t, a, "third")
 	data, _ := os.ReadFile(runs)
-	if n := strings.Count(string(data), "run"); n != 2 {
-		t.Fatalf("blocks ran %d times, want 2", n)
+	if n := strings.Count(string(data), "run"); n != 1 {
+		t.Fatalf("blocks ran %d times, want 1", n)
 	}
 	bodies := fp.requests()
-	if !strings.Contains(bodies[0], "block1") || !strings.Contains(bodies[1], "block2") || !strings.Contains(bodies[2], "block2") || strings.Contains(bodies[2], "block1") {
-		t.Fatal("request prompts do not follow reassembly and freezing")
+	if !strings.Contains(bodies[0], "block1") || !strings.Contains(bodies[1], "block1") || !strings.Contains(bodies[2], "block1") || strings.Contains(bodies[2], "block2") {
+		t.Fatal("request prompts do not keep the snapshot")
 	}
 }

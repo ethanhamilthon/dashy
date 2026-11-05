@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"dashy/internal/shell"
 )
@@ -14,6 +15,7 @@ import (
 type Input struct {
 	Text   string
 	Images []shell.Image
+	sentAt time.Time
 	Notice bool // from dashy itself (task result, view image): queued in order with composer input, never recalled
 }
 
@@ -30,11 +32,17 @@ func (input Input) Display() string {
 
 func (a *Agent) addInput(input Input, emit func(Event)) {
 	a.commitInput(input)
-	emit(inputEvent(input))
+	e := inputEvent(input)
+	e.Meta = a.itemMeta[len(a.History)-1]
+	emit(e)
 }
 
 // commitInput appends the input to API history without displaying it.
 func (a *Agent) commitInput(input Input) {
+	if input.sentAt.IsZero() {
+		input.sentAt = time.Now()
+	}
+	defer func() { a.setItemMeta(len(a.History)-1, Metadata{At: input.sentAt}) }()
 	a.slots.commit(len(input.Images))
 	text := input.Display()
 	if len(input.Images) == 0 {
@@ -116,6 +124,7 @@ func (a *Agent) Queue() *Steering { return a.queue }
 
 // PushNotice queues input from dashy itself, such as a task result, even when the queue is full.
 func (s *Steering) PushNotice(input Input) {
+	input.sentAt = time.Now()
 	s.mu.Lock()
 	s.pending = append(s.pending, input)
 	wake := s.wake
@@ -127,6 +136,7 @@ func (s *Steering) PushNotice(input Input) {
 
 // Push queues input behind everything waiting; false when the queue is full.
 func (s *Steering) Push(input Input) bool {
+	input.sentAt = time.Now()
 	s.mu.Lock()
 	if len(s.pending) >= maxQueued {
 		s.mu.Unlock()

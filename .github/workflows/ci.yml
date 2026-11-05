@@ -8,13 +8,28 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: true
+      - name: Source line budget
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          lines = sum(len(p.read_bytes().splitlines()) for p in Path('.').rglob('*.go')
+                      if not p.name.endswith('_test.go') and '.git' not in p.parts)
+          print(f'Production Go lines: {lines} / 7000')
+          if lines > 7000:
+              print(f'::warning::Source budget exceeded by {lines - 7000} lines; enforcement awaits the size refactor')
+          if lines > 8895:
+              raise SystemExit('Production source grew beyond the existing debt ceiling (8895 lines)')
+          PY
       - name: Format, vet and race tests
         run: make test
       - name: Build

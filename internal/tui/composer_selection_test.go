@@ -44,17 +44,6 @@ func update(m model, msg tea.Msg) model {
 	return next.(model)
 }
 
-// selectBrave selects "brave" in "hello brave world".
-func selectBrave(t *testing.T) model {
-	t.Helper()
-	m := composerModel(t, "hello brave world", 40, 20)
-	dragComposer(&m, 0, 6, 0, 11)
-	if got := m.selectedComposerText(); got != "brave" {
-		t.Fatalf("selected %q, want brave", got)
-	}
-	return m
-}
-
 func TestComposerLayoutWrapsLikeTextarea(t *testing.T) {
 	cases := []struct {
 		value string
@@ -93,56 +82,6 @@ func TestComposerLayoutWrapsLikeTextarea(t *testing.T) {
 				t.Fatalf("%q width %d: row %d starts at %d after %d (newline=%v)", c.value, c.width, i, rows[i].start, prevEnd, newline)
 			}
 		}
-	}
-}
-
-func TestComposerDragSelectsWithoutCopy(t *testing.T) {
-	m := composerModel(t, "hello brave world", 40, 20)
-	dragComposer(&m, 0, 6, 0, 11)
-	if m.sel != nil {
-		t.Fatal("composer drag created a timeline selection")
-	}
-	lo, hi, ok := m.activeComposerSelection()
-	if !ok || lo != 6 || hi != 11 {
-		t.Fatalf("selection = %d..%d %v, want 6..11", lo, hi, ok)
-	}
-	if got := m.input.Value(); got != "hello brave world" {
-		t.Fatalf("drag changed the text: %q", got)
-	}
-}
-
-func TestComposerTypingReplacesSelection(t *testing.T) {
-	m := selectBrave(t)
-	m = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("X")})
-	if got := m.input.Value(); got != "hello X world" {
-		t.Fatalf("rune = %q", got)
-	}
-	m = selectBrave(t)
-	m = update(m, tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}})
-	if got := m.input.Value(); got != "hello   world" {
-		t.Fatalf("space = %q", got)
-	}
-	m = selectBrave(t)
-	m = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("pasted\ntext"), Paste: true})
-	if got := m.input.Value(); got != "hello pasted\ntext world" {
-		t.Fatalf("bracketed paste = %q", got)
-	}
-	m = selectBrave(t)
-	m = update(m, tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
-	if got := m.input.Value(); got != "hello \n world" {
-		t.Fatalf("alt+enter = %q", got)
-	}
-}
-
-func TestComposerCtrlXCutsSelection(t *testing.T) {
-	m := selectBrave(t)
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlX})
-	m = next.(model)
-	if cmd == nil {
-		t.Fatal("cut did not copy the selection")
-	}
-	if got := m.input.Value(); got != "hello  world" {
-		t.Fatalf("cut value = %q", got)
 	}
 }
 

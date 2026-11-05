@@ -151,10 +151,6 @@ func (m *model) acceptClipboard(result clipboardResult) tea.Cmd {
 	if result.image != "" { // the agent looks at a pasted image with dashy view
 		result.text = result.image + " "
 	}
-	// Clipboard text replaces an active composer selection.
-	if _, _, ok := m.activeComposerSelection(); ok {
-		return m.replaceComposerSelection(result.text)
-	}
 	m.input.InsertString(result.text)
 	return nil
 }

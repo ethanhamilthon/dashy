@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -90,25 +91,30 @@ func (a *Agent) Close() {
 func (a *Agent) NewSession() error      { return a.changeSession("") }
 func (a *Agent) Resume(id string) error { return a.changeSession(id) }
 
-// Reload re-reads settings and DASHY.md files; the prompt is assembled again before the next request.
+// Reload re-reads settings and appends a fresh instruction snapshot.
 func (a *Agent) Reload() error {
 	if err := a.loadConfig(a.Shell.Dir); err != nil {
 		return err
 	}
+	previous, frozen := a.prompt, a.promptFrozen
 	a.promptFrozen, a.promptSource = false, "reload"
+	if _, err := a.instructions(context.Background()); err != nil {
+		a.prompt, a.promptFrozen = previous, frozen
+		return err
+	}
 	return nil
 }
 
 // changeSession switches to a new or saved session and re-reads settings and
-// DASHY.md files. Resuming the current session keeps its lock and history but
-// selects settings and DASHY.md files again, and assembles the prompt again.
+// DASHY.md files. Resuming keeps the stored instruction snapshot.
 func (a *Agent) changeSession(id string) error {
 	if id != "" && id == a.SessionID() {
 		if err := a.loadConfig(a.Shell.Dir); err != nil {
 			return err
 		}
-		a.promptFrozen, a.promptSource = false, "resume"
-		return nil
+		a.promptSource = "resume"
+		_, err := a.instructions(context.Background())
+		return err
 	}
 	next := &Agent{opts: a.opts, home: a.home, db: a.db, project: a.project, Shell: a.Shell,
 		promptSource: "new", slots: &imageSlots{}, queue: &Steering{wake: a.queue.wake}}

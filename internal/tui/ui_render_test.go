@@ -77,9 +77,12 @@ func TestMetadataAndBottomBar(t *testing.T) {
 	}
 	// A finished answer ends with when it arrived and how long it took; a streaming one does not.
 	at := time.Now()
-	answer := entry{Kind: "assistant", Text: "hi", Meta: &agent.Metadata{Duration: 4200 * time.Millisecond, At: at}}
+	answer := entry{Kind: "assistant", Text: "hi", Meta: &agent.Metadata{Duration: 4200 * time.Millisecond, At: at, Usage: meta.Usage}}
 	rows := strings.Split(ansi.Strip(renderEntry(answer, 60, -1)), "\n")
-	if last := strings.TrimSpace(rows[len(rows)-1]); last != at.Format("15:04")+" · 4.2s" {
+	if strings.Contains(rows[0], "↑") {
+		t.Fatal("answer header contains usage")
+	}
+	if last := strings.TrimSpace(rows[len(rows)-1]); last != at.Format("15:04")+" · 4.2s · ↑12 ↓3 · cache 58%" {
 		t.Fatalf("footer %q", last)
 	}
 	answer.Preview = true

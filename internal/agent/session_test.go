@@ -57,7 +57,7 @@ func TestResumeKeepsTitleHistoryAndEstimatesContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer again.Close()
-	if again.CustomTitle() != "Kept" || len(again.History) != 2 || again.ContextTokens() <= 0 {
+	if again.CustomTitle() != "Kept" || len(again.History) != 3 || again.ContextTokens() <= 0 {
 		t.Fatalf("resumed: title %q, %d items, ctx %d", again.CustomTitle(), len(again.History), again.ContextTokens())
 	}
 }
@@ -163,7 +163,7 @@ func TestSessionRowsHoldHistoryItemsAndTitle(t *testing.T) {
 		t.Fatal(err)
 	}
 	items := storedItems(t, a)
-	if len(items) != 2 || len(items) != len(a.History) || items[0] != string(a.History[0]) {
+	if len(items) != 3 || len(items) != len(a.History) || items[0] != string(a.History[0]) {
 		t.Fatalf("stored items %v", items)
 	}
 	var title string

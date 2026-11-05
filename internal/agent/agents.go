@@ -160,13 +160,18 @@ func (a *Agent) runBlock(turn context.Context, script, mode, source string) (str
 }
 
 // instructions returns the system prompt. It is assembled lazily, right before the
-// first request of a session (or after /new, /resume), and then frozen.
+// first request of a new session, then stored and reused until /reload.
 func (a *Agent) instructions(ctx context.Context) (string, error) {
 	if a.promptFrozen {
 		return a.prompt, nil
 	}
 	prompt, err := a.assemblePrompt(ctx)
 	if err != nil {
+		return "", err
+	}
+	a.History = append(a.History, raw(map[string]string{"type": "instructions", "text": prompt}))
+	if err := a.saveHistory(); err != nil {
+		a.History = a.History[:len(a.History)-1]
 		return "", err
 	}
 	a.prompt, a.promptFrozen = prompt, true

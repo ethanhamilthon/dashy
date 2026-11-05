@@ -151,6 +151,12 @@ type streamEvent struct {
 // provider may keep the connection open after its terminal event.
 var errStreamDone = errors.New("stream done")
 
+const (
+	maxStreamEvent  = 8 << 20
+	maxStreamBytes  = 64 << 20
+	maxStreamEvents = 100000
+)
+
 // stream posts a streamed /responses request and calls fn for every event until
 // the stream ends, fn fails or returns errStreamDone, or ctx is done.
 func (c *client) stream(ctx context.Context, body map[string]any, fn func(streamEvent) error) error {
@@ -160,16 +166,29 @@ func (c *client) stream(ctx context.Context, body map[string]any, fn func(stream
 		return err
 	}
 	defer resp.Body.Close()
-	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 64<<10), 256<<20)
+	budget := &io.LimitedReader{R: resp.Body, N: maxStreamBytes + 1}
+	scanner := bufio.NewScanner(budget)
+	scanner.Buffer(make([]byte, 64<<10), maxStreamEvent)
 	var data strings.Builder
+	events := 0
 	for scanner.Scan() {
+		if budget.N == 0 {
+			return errors.New("provider stream: response byte limit exceeded")
+		}
 		line := scanner.Text()
 		if line != "" {
 			if rest, ok := strings.CutPrefix(line, "data:"); ok {
+				if data.Len()+len(rest) > maxStreamEvent {
+					return errors.New("provider stream: event byte limit exceeded")
+				}
 				data.WriteString(strings.TrimPrefix(rest, " "))
 			}
 			continue
+		}
+		// Count empty events too so comment/heartbeat floods have a budget.
+		events++
+		if events > maxStreamEvents {
+			return errors.New("provider stream: event count limit exceeded")
 		}
 		// A blank line ends one server-sent event.
 		if data.Len() == 0 || data.String() == "[DONE]" {
@@ -187,8 +206,11 @@ func (c *client) stream(ctx context.Context, body map[string]any, fn func(stream
 			return err
 		}
 	}
+	if budget.N == 0 {
+		return errors.New("provider stream: response byte limit exceeded")
+	}
 	if err := scanner.Err(); err != nil {
-		return err
+		return fmt.Errorf("provider stream: %w", err)
 	}
 	if ctx.Err() != nil {
 		return ctx.Err()

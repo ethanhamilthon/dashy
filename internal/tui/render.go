@@ -106,7 +106,9 @@ func renderEntryMode(e entry, width, limit int, markdown bool) string {
 	if e.Preview && e.Kind == "code" {
 		label += " · preview"
 	}
-	label += formatMetadata(e.Meta, e.Kind)
+	if e.Kind != "assistant" {
+		label += formatMetadata(e.Meta, e.Kind)
+	}
 	if body == "" && e.Kind == "code" {
 		return paint(ansi.Truncate("  "+label, max(1, width), "…"), width, lipgloss.NoColor{}, fg)
 	}
@@ -137,7 +139,7 @@ func answerFooter(e entry) string {
 	if at.YearDay() != now.YearDay() || at.Year() != now.Year() {
 		clock = at.Format("Jan 2 15:04")
 	}
-	return clock + " · " + formatDuration(e.Meta.Duration)
+	return clock + " · " + formatDuration(e.Meta.Duration) + " · " + strings.TrimSpace(formatMetadata(e.Meta, "assistant"))
 }
 func bodyColor(kind string) lipgloss.TerminalColor {
 	switch kind {

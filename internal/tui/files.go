@@ -1,11 +1,8 @@
 package tui
 
 import (
-	"bytes"
 	"context"
-	"io/fs"
-	"os"
-	"os/exec"
+	"dashy/internal/filelist"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -149,76 +146,9 @@ func parseFileToken(runes []rune, at, cursor int) (fileToken, bool) {
 	return fileToken{start: at, end: tokenEnd, query: query}, true
 }
 
-type pathCollector struct {
-	paths []string
-	seen  map[string]bool
-}
-
-func (c *pathCollector) add(p string) bool {
-	if p == "" || c.seen[p] || hasControl(p) || isIgnored(p) || strings.Count(p, "/") > fileMaxDepth {
-		return false
-	}
-	c.seen[p] = true
-	c.paths = append(c.paths, p)
-	return len(c.paths) >= fileMaxIndexed
-}
-
 func scanProjectFiles(ctx context.Context, root string) ([]string, error) {
-	c := pathCollector{seen: make(map[string]bool)}
-	cmd := exec.CommandContext(ctx, "git", "ls-files", "-z", "-c", "--others", "--exclude-standard")
-	cmd.Dir = root
-	// A successful empty listing is the answer too: the walk would show ignored files.
-	if out, err := cmd.Output(); err == nil {
-		for _, item := range bytes.Split(out, []byte{0}) {
-			p := string(item)
-			for d := filepath.Dir(p); d != "." && d != "/" && d != "" && d != p; d = filepath.Dir(d) {
-				if c.add(d + "/") {
-					break
-				}
-			}
-			if c.add(p) {
-				break
-			}
-		}
-		slices.Sort(c.paths)
-		return c.paths, nil
-	}
-	var walk func(rel string, depth int)
-	walk = func(rel string, depth int) {
-		if ctx.Err() != nil || depth > fileMaxDepth {
-			return
-		}
-		entries, err := os.ReadDir(filepath.Join(root, rel))
-		if err != nil {
-			return
-		}
-		for _, e := range entries {
-			if ctx.Err() != nil || len(c.paths) >= fileMaxIndexed {
-				return
-			}
-			name := e.Name()
-			if hasControl(name) || name == ".git" || name == ".dashy" || name == "node_modules" {
-				continue
-			}
-			entryRel := strings.TrimPrefix(rel+"/"+name, "/")
-			if e.Type()&fs.ModeSymlink != 0 {
-				if fi, err := os.Stat(filepath.Join(root, entryRel)); err == nil && fi.IsDir() {
-					continue
-				}
-			}
-			if e.IsDir() {
-				if c.add(entryRel + "/") {
-					return
-				}
-				walk(entryRel, depth+1)
-			} else if c.add(entryRel) {
-				return
-			}
-		}
-	}
-	walk("", 0)
-	slices.Sort(c.paths)
-	return c.paths, nil
+	paths, _, err := filelist.List(ctx, root, filelist.Options{Directories: true, LinkFiles: true, Hidden: true, Max: fileMaxIndexed, Depth: fileMaxDepth, Ignore: func(p string) bool { return hasControl(p) || isIgnored(p) }})
+	return paths, err
 }
 
 func filterFileCompletions(indexed []string, query string) []string {

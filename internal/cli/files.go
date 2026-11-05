@@ -2,13 +2,14 @@ package cli
 
 import (
 	"bytes"
+	"context"
+	"dashy/internal/filelist"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -104,16 +105,47 @@ func writeCommand(args []string, in io.Reader, out io.Writer) error {
 	return nil
 }
 
-// writeFile keeps the mode of an existing file and creates missing directories.
+// writeFile syncs a replacement in the same directory before atomically renaming it.
 func writeFile(path string, data []byte) error {
+	if info, err := os.Lstat(path); err == nil && info.Mode()&fs.ModeSymlink != 0 {
+		path, err = filepath.EvalSymlinks(path)
+		if err != nil {
+			return err
+		}
+	}
 	mode := fs.FileMode(0644)
 	if info, err := os.Stat(path); err == nil {
+		if !info.Mode().IsRegular() {
+			return errNotRegular
+		}
 		mode = info.Mode().Perm()
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	return os.WriteFile(path, data, mode)
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	file, err := os.CreateTemp(dir, ".dashy-write-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(file.Name())
+	defer file.Close()
+	if _, err = file.Write(data); err != nil {
+		return err
+	}
+	if err = errors.Join(file.Chmod(mode), file.Sync(), file.Close()); err != nil {
+		return err
+	}
+	if err = os.Rename(file.Name(), path); err != nil {
+		return err
+	}
+	directory, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	return errors.Join(directory.Sync(), directory.Close())
 }
 
 // patchCommand applies SEARCH/REPLACE blocks from stdin; each search text must occur exactly once.
@@ -147,7 +179,8 @@ func patchCommand(args []string, in io.Reader, out io.Writer) error {
 }
 
 // grepCommand searches files for a Go regexp: dashy grep [-i] [-l] [-g GLOB] PATTERN [PATH...];
-// with --files it lists the files instead. Directories are searched recursively without ignored (git) and hidden files.
+// with --files it lists the files instead. Git controls exclusions in repositories;
+// the filesystem fallback skips hidden entries and node_modules.
 func grepCommand(args []string, out, diagnostics io.Writer) error {
 	var ignoreCase, names, list bool
 	var glob string
@@ -233,28 +266,14 @@ func searchFiles(paths []string) (files, failures []string, err error) {
 			files = append(files, root)
 			continue
 		}
-		if listed, err := exec.Command("git", append([]string{"-C", root}, strings.Fields("ls-files -z -c --others --exclude-standard")...)...).Output(); err == nil {
-			for _, f := range strings.Split(strings.TrimSuffix(string(listed), "\x00"), "\x00") {
-				if f != "" {
-					files = append(files, filepath.Join(root, f))
-				}
-			}
-			continue
+		listed, failed, err := filelist.List(context.Background(), root, filelist.Options{})
+		if err != nil {
+			return nil, nil, err
 		}
-		_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-			switch {
-			case err != nil:
-				failures = append(failures, fmt.Sprintf("%s: %v", p, err))
-				return nil
-			case p != root && (strings.HasPrefix(d.Name(), ".") || d.Name() == "node_modules"):
-				if d.IsDir() {
-					return filepath.SkipDir
-				}
-			case d.Type().IsRegular():
-				files = append(files, p)
-			}
-			return nil
-		})
+		for _, p := range listed {
+			files = append(files, filepath.Join(root, p))
+		}
+		failures = append(failures, failed...)
 	}
 	return files, failures, nil
 }

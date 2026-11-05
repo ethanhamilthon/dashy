@@ -2,7 +2,6 @@ package control
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -352,15 +351,6 @@ func TestResumedSessionHasItsTitle(t *testing.T) {
 	if sessions, _ := h.ctl.Sessions(); len(sessions) != 1 || sessions[0].Title != "Kept" {
 		t.Fatalf("resume list: %+v", sessions)
 	}
-}
-
-func tinyPNG(t *testing.T) []byte {
-	t.Helper()
-	data, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return data
 }
 
 // Settings changes go through the controller: each is applied, validated and rejected

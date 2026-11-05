@@ -20,8 +20,7 @@ func normalizeTerminalKey(msg tea.Msg) tea.Msg {
 			case action == 'v':
 				return tea.KeyMsg{Type: tea.KeyCtrlV}
 			case super:
-				// Cmd/Meta+C and Cmd/Meta+X only act on a composer selection.
-				return composerShortcut{cut: action == 'x'}
+				return nil
 			case action == 'x':
 				return tea.KeyMsg{Type: tea.KeyCtrlX}
 			default:

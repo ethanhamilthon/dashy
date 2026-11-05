@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
@@ -48,6 +49,10 @@ func (a *Agent) openSession(id string) error {
 		a.release()
 		return err
 	}
+	if _, err := a.instructions(context.Background()); err != nil {
+		a.release()
+		return err
+	}
 	return nil
 }
 
@@ -77,9 +82,12 @@ func (a *Agent) readSession() error {
 			return err
 		}
 		a.History = append(a.History, json.RawMessage(item))
+		if prompt, ok := instructionSnapshot(item); ok {
+			a.prompt, a.promptFrozen = prompt, true
+		}
 		var m Metadata
 		if meta != "" && json.Unmarshal([]byte(meta), &m) == nil {
-			a.setItemMeta(item, m)
+			a.setItemMeta(len(a.History)-1, m)
 		}
 	}
 	a.saved = len(a.History)
@@ -109,7 +117,7 @@ func (a *Agent) Save() error {
 	}
 	for i := start; i < len(a.History); i++ {
 		meta := ""
-		if m := a.itemMeta[string(a.History[i])]; m != nil {
+		if m := a.itemMeta[i]; m != nil {
 			data, _ := json.Marshal(m)
 			meta = string(data)
 		}

@@ -34,7 +34,9 @@ The system prompt is built from two DASHY.md files before the first request of a
 1. `$DASHY_HOME/DASHY.md` (default `~/.dashy/DASHY.md`). The TUI loads it unless `--no-global`; `dashy -p` skips it unless `--global`.
 2. `./DASHY.md`, or the file given with `--config FILE` (which replaces `./DASHY.md`).
 
-A fenced block with the info string `dashy` runs with `bash -c` in the project directory, and its output replaces the block. Blocks time out after 30 seconds and are capped at 64 KiB of output.
+A fenced block with the info string `dashy` runs with `bash -c` in the project directory, and its output replaces the block. Blocks time out after 30 seconds and are capped at 64 KiB of output. Opening an untrusted project's `DASHY.md` can execute arbitrary code with your permissions: review its blocks before starting Dashy.
+
+The assembled prompt is saved with the session. `/resume` reuses that snapshot; `/reload` refreshes it from the current instruction files and blocks.
 
 ````markdown
 # Project notes
