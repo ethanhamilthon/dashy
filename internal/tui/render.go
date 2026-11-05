@@ -152,8 +152,8 @@ func renderRail(text string, width int) string {
 	lines := strings.Split(text, "\n")
 	rail := lipgloss.NewStyle().Foreground(inputBlue).Background(inputBackground).Render("▌")
 	for i, line := range lines {
-		row := ansi.Truncate(rail+" "+line, max(1, width), "")
-		lines[i] = paint(row, max(1, width), inputBackground, foreground)
+		body := paint(" "+line, max(1, width-1), inputBackground, foreground)
+		lines[i] = ansi.Truncate(rail+body, max(1, width), "")
 	}
 	return strings.Join(lines, "\n")
 }

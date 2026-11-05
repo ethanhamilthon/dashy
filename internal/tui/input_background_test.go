@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -32,6 +33,24 @@ func TestUserInputBackground(t *testing.T) {
 			}
 			if !strings.Contains(row, "48;2;32;32;32") {
 				t.Errorf("%s: missing input background: %q", name, row)
+			}
+			// Check every visible span, not just the presence of a background code.
+			background, end := false, 0
+			for _, match := range regexp.MustCompile(`\x1b\[[0-9;]*m`).FindAllStringIndex(row, -1) {
+				if ansi.StringWidth(row[end:match[0]]) > 0 && !background {
+					t.Fatalf("%s: visible text without background: %q", name, row[end:match[0]])
+				}
+				code := row[match[0]:match[1]]
+				if code == "\x1b[m" || code == "\x1b[0m" || strings.Contains(code, "49") {
+					background = false
+				}
+				if strings.Contains(code, "48;2;32;32;32") {
+					background = true
+				}
+				end = match[1]
+			}
+			if ansi.StringWidth(row[end:]) > 0 && !background {
+				t.Fatalf("%s: trailing text without background", name)
 			}
 		}
 	}
