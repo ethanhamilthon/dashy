@@ -77,15 +77,7 @@ func (s *server) replay(ctx context.Context, session *session) error {
 			if json.Unmarshal([]byte(item.Output), &result) != nil {
 				result.Output = item.Output
 			}
-			status := "completed"
-			if result.Error {
-				status = "failed"
-			}
-			output := clean(result.Output)
-			if len(output) > 64<<10 {
-				output = output[:64<<10] + "\n[ACP output truncated]"
-			}
-			if err := publish(map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": id, "status": status, "content": []any{map[string]any{"type": "content", "content": map[string]string{"type": "text", "text": output}}}, "rawOutput": map[string]any{"exitCode": result.ExitCode, "error": result.Error}}); err != nil {
+			if err := publish(toolResult(id, clean(result.Output), result)); err != nil {
 				return err
 			}
 		default:

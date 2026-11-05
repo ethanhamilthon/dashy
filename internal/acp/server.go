@@ -325,12 +325,22 @@ func (s *server) tool(session *session, e agent.ExecutionEvent) {
 		update["rawInput"] = map[string]string{"command": clean(e.Command)}
 	}
 	if e.Status == "completed" || e.Status == "failed" {
-		output := clean(e.Result.Output)
-		if len(output) > 64<<10 {
-			output = output[:64<<10] + "\n[ACP output truncated]"
-		}
-		update["content"] = []any{map[string]any{"type": "content", "content": map[string]string{"type": "text", "text": output}}}
-		update["rawOutput"] = map[string]any{"exitCode": e.Result.ExitCode, "error": e.Result.Error, "durationMs": e.Duration.Milliseconds()}
+		update = toolResult(e.ID, clean(e.Result.Output), e.Result)
+		update["rawOutput"].(map[string]any)["durationMs"] = e.Duration.Milliseconds()
 	}
 	s.update(session, update)
+}
+
+// toolResult is the final tool_call_update of a command, live or replayed.
+func toolResult(id, output string, result shell.Result) map[string]any {
+	status := "completed"
+	if result.Error {
+		status = "failed"
+	}
+	if len(output) > 64<<10 {
+		output = output[:64<<10] + "\n[ACP output truncated]"
+	}
+	return map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": id, "status": status,
+		"content":   []any{map[string]any{"type": "content", "content": map[string]string{"type": "text", "text": output}}},
+		"rawOutput": map[string]any{"exitCode": result.ExitCode, "error": result.Error}}
 }
