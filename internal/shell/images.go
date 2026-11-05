@@ -53,6 +53,14 @@ func CaptureImageCopy(path, directory string) (Image, error) {
 	if err != nil {
 		return Image{}, err
 	}
+	if path, err = filepath.Abs(path); err != nil {
+		return Image{}, err
+	}
+	return CaptureImageData(data, path, directory)
+}
+
+// CaptureImageData is CaptureImageCopy for image bytes; path names them when directory is empty.
+func CaptureImageData(data []byte, path, directory string) (Image, error) {
 	if len(data) > MaxImageInputBytes {
 		return Image{}, fmt.Errorf("view image exceeds %d MiB", MaxImageInputBytes>>20)
 	}
@@ -64,10 +72,6 @@ func CaptureImageCopy(path, directory string) (Image, error) {
 		return Image{}, fmt.Errorf("view image exceeds 20 megapixels")
 	}
 	preview, mime, err := imagePreview(data, cfg, format)
-	if err != nil {
-		return Image{}, err
-	}
-	path, err = filepath.Abs(path)
 	if err != nil {
 		return Image{}, err
 	}

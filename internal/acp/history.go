@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"dashy/internal/agent"
 	"dashy/internal/shell"
@@ -93,6 +94,11 @@ func (s *server) replay(ctx context.Context, session *session) error {
 				switch record.Kind {
 				case "user":
 					kind = "user_message_chunk"
+					// Attachment originals are model context only; the images follow as blocks.
+					record.Text, _, _ = strings.Cut(record.Text, "\nOriginal image (for crops): ")
+					if err := s.replayImages(raw, publish); err != nil {
+						return err
+					}
 				case "assistant":
 					kind = "agent_message_chunk"
 				case "reasoning":
@@ -104,6 +110,27 @@ func (s *server) replay(ctx context.Context, session *session) error {
 					return err
 				}
 			}
+		}
+	}
+	return nil
+}
+
+// replayImages publishes the images of a user history item as ACP image blocks.
+func (s *server) replayImages(raw json.RawMessage, publish func(any) error) error {
+	var message struct {
+		Content []struct {
+			Type     string `json:"type"`
+			ImageURL string `json:"image_url"`
+		} `json:"content"`
+	}
+	_ = json.Unmarshal(raw, &message) // plain text content has no images
+	for _, part := range message.Content {
+		mime, data, ok := strings.Cut(strings.TrimPrefix(part.ImageURL, "data:"), ";base64,")
+		if part.Type != "input_image" || !ok {
+			continue
+		}
+		if err := publish(map[string]any{"sessionUpdate": "user_message_chunk", "content": map[string]string{"type": "image", "mimeType": mime, "data": data}}); err != nil {
+			return err
 		}
 	}
 	return nil

@@ -16,7 +16,8 @@
   the transcript without rerunning tools. Context occupancy is reported through
   `usage_update`, with a 1,000,000-token display fallback for unknown model limits.
 - `session/resume` (no replay), `session/list` and `session/close` are implemented.
-- MCP is out of scope by agreement. Richer input and client filesystem/terminal
+- PNG/JPEG image prompts are implemented and replayed.
+- MCP is out of scope by agreement. Audio/resources and client filesystem/terminal
   integration remain follow-up milestones and are not advertised.
 
 The original roadmap below is retained for follow-up work. Explicit scope updates

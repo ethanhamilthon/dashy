@@ -15,10 +15,10 @@ contain an editor integration or depend on a particular editor. The old one-shot
 | Cancellation | `session/cancel` notification; `$/cancel_request` for individual requests |
 | Authentication | Existing Dashy provider settings / environment; no interactive ACP auth methods |
 | Execution policy | No approvals, matching the trusted local TUI policy |
-| Input | Text only; all blocks validated before mutating history |
+| Input | Text and PNG/JPEG images (`promptCapabilities.image`); all blocks validated before mutating history |
 | Updates | Committed agent text, structured tools, terminal tool results, configuration changes, context usage |
 | Configuration | Session-local model/provider and reasoning effort selectors |
-| Unsupported | ACP v2, MCP, additional roots, images/audio/resources, mode configuration, client filesystem/terminals |
+| Unsupported | ACP v2, MCP, additional roots, audio/resources/other image formats, mode configuration, client filesystem/terminals |
 
 There is no client-specific runtime code, test fixture, configuration, or dependency
 in the implementation. Interoperability tests use an independent ACP client,
@@ -142,4 +142,9 @@ all owned tasks, saves recoverable history, and releases sessions and sockets.
 `make test` covers fake-provider behavior under `-race`, an independent SDK client,
 isolation, tools, cancellation, redaction, protocol errors, backpressure, fragmented/
 oversized frames, EOF, actual binary signal handling, load/resume, list paging and
-close. Richer input and additional configuration remain follow-up milestones.
+close, and image prompts. Audio/resources and additional configuration remain follow-up milestones.
+
+Image blocks need `image/png` or `image/jpeg` base64 data, at most 4 per prompt and
+20 megapixels each; a prompt may be images only. Like TUI and `dashy view` images,
+the original is kept in `$DASHY_HOME/attachments` for crops and the model receives
+a preview of at most 2048 px / 1 MiB. Replay sends those previews back as image blocks.

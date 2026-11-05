@@ -2,7 +2,9 @@ package acp
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -10,6 +12,7 @@ import (
 	"sync"
 
 	"dashy/internal/agent"
+	"dashy/internal/shell"
 )
 
 type Options struct {
@@ -89,7 +92,7 @@ func (s *server) handle(ctx context.Context, method string, params json.RawMessa
 		// Per v1, return the supported version; clients must disconnect on a mismatch.
 		s.initialized = p.ProtocolVersion == 1
 		s.clientCapabilities = p.ClientCapabilities
-		reply(map[string]any{"protocolVersion": 1, "agentInfo": map[string]string{"name": "dashy", "version": s.opts.Version}, "agentCapabilities": map[string]any{"loadSession": true, "sessionCapabilities": map[string]any{"list": map[string]any{}, "resume": map[string]any{}, "close": map[string]any{}}, "promptCapabilities": map[string]bool{"image": false, "audio": false, "embeddedContext": false}, "mcpCapabilities": map[string]bool{"http": false, "sse": false}}, "authMethods": []any{}}, nil)
+		reply(map[string]any{"protocolVersion": 1, "agentInfo": map[string]string{"name": "dashy", "version": s.opts.Version}, "agentCapabilities": map[string]any{"loadSession": true, "sessionCapabilities": map[string]any{"list": map[string]any{}, "resume": map[string]any{}, "close": map[string]any{}}, "promptCapabilities": map[string]bool{"image": true, "audio": false, "embeddedContext": false}, "mcpCapabilities": map[string]bool{"http": false, "sse": false}}, "authMethods": []any{}}, nil)
 		return
 	}
 	if !s.initialized {
@@ -219,8 +222,9 @@ func (s *server) prompt(ctx context.Context, params json.RawMessage, reply reply
 	var p struct {
 		SessionID string `json:"sessionId"`
 		Prompt    []struct {
-			Type string
-			Text *string
+			Type, Data string
+			Text       *string
+			MimeType   string `json:"mimeType"`
 		} `json:"prompt"`
 	}
 	if !decode(params, &p) || p.SessionID == "" || len(p.Prompt) == 0 {
@@ -228,16 +232,26 @@ func (s *server) prompt(ctx context.Context, params json.RawMessage, reply reply
 		return
 	}
 	var text []string
+	var images [][]byte
 	for _, block := range p.Prompt {
-		if block.Type != "text" || block.Text == nil {
-			reply(nil, problem(-32602, "Only text prompt blocks with text are supported"))
+		switch {
+		case block.Type == "text" && block.Text != nil:
+			text = append(text, *block.Text)
+		case block.Type == "image" && (block.MimeType == "image/png" || block.MimeType == "image/jpeg"):
+			data, err := base64.StdEncoding.DecodeString(block.Data)
+			if err != nil || len(data) == 0 || len(images) == agent.MaxPendingImages {
+				reply(nil, problem(-32602, fmt.Sprintf("Images must be base64 PNG or JPEG data, at most %d per prompt", agent.MaxPendingImages)))
+				return
+			}
+			images = append(images, data)
+		default:
+			reply(nil, problem(-32602, "Only text and PNG/JPEG image prompt blocks are supported"))
 			return
 		}
-		text = append(text, *block.Text)
 	}
-	input := strings.Join(text, "\n")
-	if strings.TrimSpace(input) == "" {
-		reply(nil, problem(-32602, "Prompt must contain text"))
+	input := agent.Input{Text: strings.Join(text, "\n")}
+	if strings.TrimSpace(input.Text) == "" && len(images) == 0 {
+		reply(nil, problem(-32602, "Prompt must contain text or images"))
 		return
 	}
 	session := s.lookup(p.SessionID)
@@ -258,8 +272,21 @@ func (s *server) prompt(ctx context.Context, params json.RawMessage, reply reply
 	session.mu.Unlock()
 	s.job(func() {
 		defer cancel()
+		// Images are validated and stored before the turn, so a bad one leaves history untouched.
+		for _, data := range images {
+			image, err := shell.CaptureImageData(data, "", session.a.AttachmentsDir())
+			if err != nil {
+				session.mu.Lock()
+				session.release()
+				session.cancel = nil
+				session.mu.Unlock()
+				reply(nil, problem(-32602, "Images must be valid PNG or JPEG files up to 20 megapixels"))
+				return
+			}
+			input.Images = append(input.Images, image)
+		}
 		// Only committed text is published: retry rollbacks never duplicate editor output.
-		err := session.a.Run(turn, input, func(e agent.Event) {
+		err := session.a.RunInput(turn, input, func(e agent.Event) {
 			if e.Kind == "assistant" && e.Final && !e.Provisional {
 				s.update(session, map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]string{"type": "text", "text": agent.Redact(session.a.Settings(), e.Text)}})
 			}
