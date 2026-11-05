@@ -56,12 +56,15 @@ func (a *Agent) commitInput(input Input) {
 	a.History = append(a.History, raw(map[string]any{"role": "user", "content": parts}))
 }
 
-// Keep original paths in model context without cluttering the terminal labels.
+// originalImage precedes the path of an attachment original in the model's copy of a
+// user message; RecordsForItem drops it from what people see.
+const originalImage = "\nOriginal image (for crops): "
+
 func imageOriginals(images []shell.Image) string {
 	var text strings.Builder
 	for _, img := range images {
 		if img.Path != "" {
-			text.WriteString("\nOriginal image (for crops): " + strconv.Quote(img.Path))
+			text.WriteString(originalImage + strconv.Quote(img.Path))
 		}
 	}
 	return text.String()

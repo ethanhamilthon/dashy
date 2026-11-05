@@ -94,8 +94,6 @@ func (s *server) replay(ctx context.Context, session *session) error {
 				switch record.Kind {
 				case "user":
 					kind = "user_message_chunk"
-					// Attachment originals are model context only; the images follow as blocks.
-					record.Text, _, _ = strings.Cut(record.Text, "\nOriginal image (for crops): ")
 					if err := s.replayImages(raw, publish); err != nil {
 						return err
 					}

@@ -112,6 +112,9 @@ func RecordsForItem(item json.RawMessage) []Record {
 			kind = "notice"
 		}
 		if text != "" {
+			if kind == "user" {
+				text, _, _ = strings.Cut(text, originalImage)
+			}
 			return []Record{{Kind: kind, Text: text}}
 		}
 	case v.Type == "reasoning":
