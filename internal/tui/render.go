@@ -174,7 +174,7 @@ func (m *model) timelineRows(budget time.Duration) []string {
 	var out strings.Builder
 	out.WriteString(lipgloss.NewStyle().Foreground(cyan).Bold(true).Render("dashy. minimal coding agent."))
 	out.WriteString(lipgloss.NewStyle().Foreground(muted).Render(" v" + strings.TrimPrefix(Version, "v")))
-	out.WriteString("\n" + lipgloss.NewStyle().Foreground(muted).Render("Enter to send · Shift+Enter for newline · / for commands") + "\n")
+	out.WriteString("\n")
 	if hint := m.ctl.Settings().SetupHint(); hint != "" {
 		out.WriteString(lipgloss.NewStyle().Foreground(warnColor).Render(hint) + "\n")
 	}
