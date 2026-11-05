@@ -5,7 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
+	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/charmbracelet/bubbles/cursor"
@@ -56,34 +57,15 @@ func TestFindFileTokenBasics(t *testing.T) {
 }
 
 func TestFilterRanking(t *testing.T) {
-	indexed := []string{
-		"cmd/dashy/main.go",
-		"internal/agent/agent.go",
-		"internal/tui/files.go",
-		"main.go",
-		"dashy.json",
-		"scripts/build_release.sh",
+	indexed := []string{"nested/main.go", "main.go", "domain.go", "src/"}
+	if got := filterFileCompletions(indexed, "main"); !reflect.DeepEqual(got, []string{"main.go", "domain.go"}) {
+		t.Fatalf("ranking: %v", got)
 	}
-
-	res := filterFileCompletions(indexed, "main")
-	if len(res) < 2 || res[0] != "cmd/dashy/main.go" || res[1] != "main.go" {
-		t.Fatalf("query 'main' results = %v", res)
+	if got := filterFileCompletions(indexed, ""); len(got) != 3 {
+		t.Fatalf("only direct children: %v", got)
 	}
-
-	res = filterFileCompletions(indexed, "das")
-	if len(res) < 2 {
-		t.Fatalf("query 'das' results = %v", res)
-	}
-	if res[0] != "dashy.json" {
-		t.Errorf("res[0] = %q, want %q", res[0], "dashy.json")
-	}
-	if res[1] != "cmd/dashy/main.go" {
-		t.Errorf("res[1] = %q, want %q", res[1], "cmd/dashy/main.go")
-	}
-
-	empty := filterFileCompletions(indexed, "")
-	if len(empty) != len(indexed) {
-		t.Fatalf("empty query len = %d, want %d", len(empty), len(indexed))
+	if got := filterFileCompletions([]string{"main.go", "sub/"}, "src/"); !reflect.DeepEqual(got, []string{"src/main.go", "src/sub/"}) {
+		t.Fatalf("directory prefix: %v", got)
 	}
 }
 
@@ -205,8 +187,8 @@ func TestGitTrackedAndUntracked(t *testing.T) {
 	if !foundUntracked {
 		t.Error("untracked.txt not found in git scan")
 	}
-	if foundIgnored {
-		t.Error("ignored.txt leaked into git scan")
+	if !foundIgnored {
+		t.Error("ignored.txt must be available for explicit tagging")
 	}
 }
 
@@ -395,28 +377,11 @@ func TestScanWalkBounded(t *testing.T) {
 		t.Fatalf("scanProjectFiles error: %v", err)
 	}
 
-	for _, p := range paths {
-		if strings.HasPrefix(p, ".git") || strings.HasPrefix(p, ".dashy") || strings.HasPrefix(p, "node_modules") {
-			t.Fatalf("ignored directory leaked into paths: %s", p)
-		}
-		if strings.HasPrefix(p, "link_to_src/") {
-			t.Fatalf("traversed directory symlink: %s", p)
-		}
+	want := []string{".dashy/", ".git/", "link_to_src/", "node_modules/", "root.txt", "src/"}
+	if !reflect.DeepEqual(paths, want) {
+		t.Fatalf("direct children = %v, want %v", paths, want)
 	}
 
-	hasRoot := false
-	hasApp := false
-	for _, p := range paths {
-		if p == "root.txt" {
-			hasRoot = true
-		}
-		if p == "src/pkg/app.go" {
-			hasApp = true
-		}
-	}
-	if !hasRoot || !hasApp {
-		t.Fatalf("expected paths root.txt and src/pkg/app.go in %v", paths)
-	}
 }
 
 func TestQuotedPathWithSpacesAcceptance(t *testing.T) {
@@ -457,7 +422,7 @@ func TestRestoredSteeringDropsFileCompletion(t *testing.T) {
 	}
 }
 
-func TestScanEmptyGitListing(t *testing.T) {
+func TestScanIncludesGitIgnoredChildren(t *testing.T) {
 	dir := t.TempDir()
 	if out, err := exec.Command("git", "-C", dir, "init", "-q").CombinedOutput(); err != nil {
 		t.Skipf("git: %v %s", err, out)
@@ -465,7 +430,7 @@ func TestScanEmptyGitListing(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("*\n"), 0644)
 	os.WriteFile(filepath.Join(dir, "private.txt"), []byte("x"), 0644)
 	paths, err := scanProjectFiles(context.Background(), dir)
-	if err != nil || len(paths) != 0 {
+	if err != nil || !slices.Contains(paths, "private.txt") {
 		t.Fatalf("paths %v %v", paths, err)
 	}
 }

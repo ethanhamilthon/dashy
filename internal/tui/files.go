@@ -2,7 +2,7 @@ package tui
 
 import (
 	"context"
-	"dashy/internal/filelist"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -17,8 +17,6 @@ const (
 	fileIndexCacheTTL = 5 * time.Second
 	fileScanTimeout   = 2 * time.Second
 	fileMaxCandidates = 100
-	fileMaxIndexed    = 20000
-	fileMaxDepth      = 20
 )
 
 type fileDebounceMsg struct{ debounceGen, fileGen int }
@@ -36,15 +34,6 @@ type fileToken struct {
 
 func hasControl(s string) bool {
 	return strings.IndexFunc(s, func(r rune) bool { return r < 32 || r == 127 }) >= 0
-}
-
-func isIgnored(p string) bool {
-	for _, part := range strings.Split(strings.Trim(p, "/"), "/") {
-		if part == ".git" || part == ".dashy" || part == "node_modules" {
-			return true
-		}
-	}
-	return false
 }
 
 func sanitizeLabel(s string) string {
@@ -145,26 +134,68 @@ func parseFileToken(runes []rune, at, cursor int) (fileToken, bool) {
 }
 
 func scanProjectFiles(ctx context.Context, root string) ([]string, error) {
-	paths, _, err := filelist.List(ctx, root, filelist.Options{Directories: true, LinkFiles: true, Hidden: true, Max: fileMaxIndexed, Depth: fileMaxDepth, Ignore: func(p string) bool { return hasControl(p) || isIgnored(p) }})
-	return paths, err
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, e := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if hasControl(e.Name()) {
+			continue
+		}
+		name, isDir := e.Name(), e.IsDir()
+		if e.Type()&os.ModeSymlink != 0 {
+			if info, err := os.Stat(filepath.Join(root, name)); err == nil {
+				isDir = info.IsDir()
+			}
+		}
+		if isDir {
+			name += "/"
+		}
+		paths = append(paths, name)
+	}
+	return paths, nil
+}
+
+func fileQueryParts(query string) (string, string) {
+	if query == "~" {
+		query = "~/"
+	}
+	return filepath.Split(query)
+}
+
+func fileCompletionRoot(cwd, query string) string {
+	dir, _ := fileQueryParts(query)
+	if strings.HasPrefix(dir, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, strings.TrimPrefix(dir, "~/"))
+		}
+	}
+	if filepath.IsAbs(dir) {
+		return filepath.Clean(dir)
+	}
+	return filepath.Join(cwd, dir)
 }
 
 func filterFileCompletions(indexed []string, query string) []string {
-	if query == "" {
-		return indexed[:min(fileMaxCandidates, len(indexed))]
-	}
-	qLower, hasSlash := strings.ToLower(query), strings.Contains(query, "/")
+	prefix, query := fileQueryParts(query)
+	qLower := strings.ToLower(query)
 	var cat0, cat1 []string
 	for _, p := range indexed {
-		pLower := strings.ToLower(p)
-		baseLower := strings.ToLower(filepath.Base(p))
-		if strings.HasSuffix(p, "/") {
-			baseLower += "/"
+		if strings.Contains(strings.TrimSuffix(p, "/"), "/") {
+			continue
 		}
-		if (hasSlash && strings.HasPrefix(pLower, qLower)) || (!hasSlash && strings.HasPrefix(baseLower, qLower)) {
-			cat0 = append(cat0, p)
+		pLower := strings.ToLower(p)
+		if strings.HasPrefix(pLower, qLower) {
+			cat0 = append(cat0, prefix+p)
 		} else if strings.Contains(pLower, qLower) {
-			cat1 = append(cat1, p)
+			cat1 = append(cat1, prefix+p)
 		}
 	}
 	slices.Sort(cat0)
@@ -206,6 +237,7 @@ func (m *model) checkFileCompletion() tea.Cmd {
 	m.fileDismissed = false
 	m.fileGen++
 	m.fileDebounceGen++
+	m.fileCompletions, m.fileSelected = nil, 0
 	m.fileLoading, m.hideCompletion = true, false
 	m.fileTokenStart, m.fileTokenEnd = token.start, token.end
 	dGen, fGen := m.fileDebounceGen, m.fileGen
@@ -227,7 +259,8 @@ func (m *model) handleFileDebounce(msg fileDebounceMsg) (tea.Model, tea.Cmd) {
 		return *m, nil
 	}
 	m.fileTokenStart, m.fileTokenEnd = token.start, token.end
-	if len(m.fileIndexCache) > 0 && m.fileIndexCwd == m.cwd && time.Since(m.fileIndexCacheTime) < fileIndexCacheTTL {
+	root := fileCompletionRoot(m.cwd, token.query)
+	if m.fileIndexCwd == root && time.Since(m.fileIndexCacheTime) < fileIndexCacheTTL {
 		m.fileCompletions, m.fileSelected, m.fileLoading = filterFileCompletions(m.fileIndexCache, token.query), 0, false
 		m.refresh(true)
 		return *m, nil
@@ -237,7 +270,7 @@ func (m *model) handleFileDebounce(msg fileDebounceMsg) (tea.Model, tea.Cmd) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), fileScanTimeout)
 	m.fileScanCancel = cancel
-	root, fGen := m.cwd, m.fileGen
+	fGen := m.fileGen
 	return *m, func() tea.Msg {
 		paths, err := scanProjectFiles(ctx, root)
 		return fileScanMsg{paths: paths, cwd: root, fileGen: fGen, err: err}
@@ -245,11 +278,11 @@ func (m *model) handleFileDebounce(msg fileDebounceMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) handleFileScan(msg fileScanMsg) (tea.Model, tea.Cmd) {
-	if msg.err == nil && len(msg.paths) > 0 {
-		m.fileIndexCache, m.fileIndexCwd, m.fileIndexCacheTime = msg.paths, msg.cwd, time.Now()
-	}
 	if msg.fileGen != m.fileGen {
 		return *m, nil
+	}
+	if msg.err == nil {
+		m.fileIndexCache, m.fileIndexCwd, m.fileIndexCacheTime = msg.paths, msg.cwd, time.Now()
 	}
 	m.fileLoading = false
 	if m.fileDismissed && m.input.Value() == m.fileDismissedValue && m.composerCursorOffset() == m.fileDismissedCursor {
@@ -270,6 +303,10 @@ func (m *model) handleFileScan(msg fileScanMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) acceptFileCompletion() tea.Cmd {
+	return m.completeFile(false)
+}
+
+func (m *model) completeFile(descend bool) tea.Cmd {
 	if len(m.fileCompletions) == 0 {
 		return nil
 	}
@@ -279,22 +316,15 @@ func (m *model) acceptFileCompletion() tea.Cmd {
 	start, end := max(0, min(m.fileTokenStart, len(runes))), max(0, min(m.fileTokenEnd, len(runes)))
 	m.input.SetValue(string(runes[:start]) + rep)
 	cursor := len([]rune(m.input.Value()))
-	if isDir && (strings.HasSuffix(rep, "\"") || strings.HasSuffix(rep, "'")) {
+	if isDir && descend && (strings.HasSuffix(rep, "\"") || strings.HasSuffix(rep, "'")) {
 		cursor = max(0, cursor-1)
 	}
 	m.input.SetValue(m.input.Value() + string(runes[min(end, len(runes)):]))
 	cmd := m.setCursorOffset(cursor)
-	if isDir {
+	m.dismissFileCompletion()
+	if isDir && descend {
 		m.fileDismissed = false
-		m.fileSelected, m.fileLoading, m.hideCompletion, m.fileGen = 0, false, false, m.fileGen+1
-		if token, ok := findFileToken(m.input.Value(), cursor); ok {
-			m.fileTokenStart, m.fileTokenEnd = token.start, token.end
-			if len(m.fileIndexCache) > 0 && m.fileIndexCwd == m.cwd && time.Since(m.fileIndexCacheTime) < fileIndexCacheTTL {
-				m.fileCompletions = filterFileCompletions(m.fileIndexCache, token.query)
-			}
-		}
-	} else {
-		m.dismissFileCompletion()
+		return tea.Batch(cmd, m.checkFileCompletion())
 	}
 	return cmd
 }

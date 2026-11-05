@@ -327,7 +327,7 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "tab":
 			if m.hasFileCompletions() {
-				cmd := m.acceptFileCompletion()
+				cmd := m.completeFile(true)
 				m.refresh(true)
 				return m, cmd
 			}

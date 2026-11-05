@@ -57,6 +57,14 @@ in the TUI: there are no permission prompts or sandbox. Use trusted projects onl
 
 See [ACP compatibility, launch configuration and limitations](docs/ACP.md).
 
+## File mentions
+
+Type `@` to browse the current directory's immediate children, or use paths such as
+`@src/`, `@../`, `@~/` and `@/` to browse elsewhere. Hidden and Git-ignored entries
+are available too. Up/Down selects an entry; Enter inserts it and closes the list
+without sending the message. Tab enters a selected directory; for files it accepts
+and closes the list. Paths containing spaces are quoted automatically.
+
 ## Development
 
 `make test` runs the same checks as CI: gofmt, `go vet` and the tests with the race detector.
