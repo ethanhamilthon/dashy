@@ -10,6 +10,7 @@ import (
 
 	"dashy/internal/agent"
 	"dashy/internal/control"
+
 	tea "github.com/charmbracelet/bubbletea"
 )
 

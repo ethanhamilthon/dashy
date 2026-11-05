@@ -2,8 +2,6 @@
 
 dashy is a minimal AI coding agent with an interactive terminal UI (TUI) and local ACP editor integration (`dashy acp`). The model gets one tool, `bash`; its instructions come from DASHY.md files.
 
-In the TUI, dashy reports its state (idle, working, done, error) to terminals that support OSC 7501.
-
 ## Install
 
 From a checkout of this repository (Go 1.27.3+):

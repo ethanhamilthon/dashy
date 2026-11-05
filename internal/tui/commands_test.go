@@ -79,30 +79,6 @@ func TestToggleWhileBusyChangesSetting(t *testing.T) {
 	}
 }
 
-// The terminal is told about turns and session switches: a finished answer is done,
-// /new returns to idle, a failed turn is error and resuming returns to idle.
-func TestTerminalStatusFollowsTurnsAndSessionSwitches(t *testing.T) {
-	f := newFixture(t, true)
-	f.run(t, "first question")
-	if msg := awaitReport(t, f, "done"); msg != "answer" {
-		t.Fatalf("done message %q", msg)
-	}
-	f.command(t, "/new")
-	if msg := awaitReport(t, f, "idle"); msg != "" {
-		t.Fatalf("idle message after /new %q", msg)
-	}
-	f.fail.Store(true)
-	f.run(t, "second question")
-	awaitReport(t, f, "error")
-	f.fail.Store(false)
-	sessions, _ := f.m.ctl.Sessions()
-	if len(sessions) == 0 {
-		t.Fatal("no session to resume")
-	}
-	f.command(t, "/resume "+sessions[len(sessions)-1].ID)
-	awaitReport(t, f, "idle")
-}
-
 func TestStatusEstimatesContextOfResumedHistory(t *testing.T) {
 	f := newFixture(t, true)
 	f.run(t, strings.Repeat("long text ", 4000))
@@ -112,18 +88,6 @@ func TestStatusEstimatesContextOfResumedHistory(t *testing.T) {
 	if _, right := f.m.status(); !strings.Contains(right, "ctx ~") || strings.Contains(right, "ctx ~0K") {
 		t.Fatalf("status right side = %q", right)
 	}
-}
-
-// The terminal title is the session title: the first line of the first message, then
-// the rename, and the first line again after a rename to nothing.
-func TestTerminalTitleFollowsFirstLineAndRename(t *testing.T) {
-	f := newFixture(t, true)
-	f.run(t, "  first line\nsecond line")
-	awaitTitle(t, f, "first line")
-	f.command(t, "/rename Plan")
-	awaitTitle(t, f, "Plan")
-	f.command(t, "/rename ")
-	awaitTitle(t, f, "first line")
 }
 
 // An open settings picker survives a notification that starts a turn: the toggle still applies.

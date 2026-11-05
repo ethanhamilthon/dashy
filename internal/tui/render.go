@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"dashy/internal/agent"
+
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )

@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -13,7 +12,6 @@ import (
 
 	"dashy/internal/agent"
 	"dashy/internal/control"
-	"dashy/internal/osc7501"
 )
 
 // Version is shown on the start screen; main sets it from the VERSION file.
@@ -24,9 +22,7 @@ var Version = "dev"
 func Run(ctx context.Context, a *agent.Agent, cwd string) error {
 	keyboard := keyboardProtocol{}
 	defer keyboard.close()
-	reporter := osc7501.New(os.Stdout, osc7501.Enabled(os.Stdout))
-	defer reporter.Close()
-	m := newModel(a, cwd, reporter)
+	m := newModel(a, cwd)
 	m.startCmd = m.onboard()
 	program := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithFilter(keyboard.filter))
 	running, stop := context.WithCancel(ctx)
@@ -105,7 +101,6 @@ func tasksRunning(n int, sep string) string {
 
 // handleControl applies one controller event to the interface.
 func (m model) handleControl(e control.Event) (tea.Model, tea.Cmd) {
-	m.reporter.HandleEvent(e)
 	follow := m.viewport.AtBottom()
 	var cmd tea.Cmd
 	switch e.Kind {

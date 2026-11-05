@@ -2,7 +2,6 @@ package tui
 
 import (
 	"bytes"
-	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,32 +16,12 @@ import (
 
 	"dashy/internal/agent"
 	"dashy/internal/control"
-	"dashy/internal/osc7501"
 )
-
-// syncBuffer collects terminal reports written by the reporter.
-type syncBuffer struct {
-	mu sync.Mutex
-	b  bytes.Buffer
-}
-
-func (s *syncBuffer) Write(p []byte) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.b.Write(p)
-}
-
-func (s *syncBuffer) String() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.b.String()
-}
 
 // fixture is a TUI model over a real agent and provider stub.
 type fixture struct {
 	m       model
 	a       *agent.Agent
-	out     *syncBuffer
 	fail    atomic.Bool // answer every request with HTTP 400
 	hold    atomic.Pointer[chan struct{}]
 	reached chan struct{} // one value per streamed request that reached the provider
@@ -53,7 +32,7 @@ type fixture struct {
 // (when set) is closed. home is DASHY_HOME; providers are saved as settings.
 func newFixture(t *testing.T, providers bool) *fixture {
 	t.Helper()
-	f := &fixture{out: &syncBuffer{}, project: t.TempDir(), reached: make(chan struct{}, 64)}
+	f := &fixture{project: t.TempDir(), reached: make(chan struct{}, 64)}
 	home := t.TempDir()
 	t.Setenv("DASHY_HOME", home)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -102,13 +81,11 @@ func newFixture(t *testing.T, providers bool) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reporter := osc7501.New(f.out, true)
-	f.a, f.m = a, newModel(a, f.project, reporter)
+	f.a, f.m = a, newModel(a, f.project)
 	requestSignals.Store(f.m.ctl, f.reached)
 	t.Cleanup(func() {
 		f.m.ctl.Close()
 		a.Close()
-		reporter.Close()
 	})
 	return f
 }
@@ -173,38 +150,6 @@ func (f *fixture) key(k tea.KeyMsg) {
 	if next, _, handled := f.m.pickerKey(k); handled {
 		f.m = next.(model)
 	}
-}
-
-// lastReport returns the state and the decoded msg of the last OSC 7501 report written.
-func lastReport(t *testing.T, out string) (state, msg string) {
-	t.Helper()
-	state, encoded := lastRaw(out)
-	if encoded == "" {
-		return state, ""
-	}
-	data, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return state, string(data)
-}
-
-// lastRaw is the state and the encoded msg of the last OSC 7501 report written.
-func lastRaw(out string) (state, msg string) {
-	i := strings.LastIndex(out, "\x1b]7501;")
-	if i < 0 {
-		return "", ""
-	}
-	body := strings.TrimSuffix(out[i+len("\x1b]7501;"):], "\x1b\\")
-	for _, pair := range strings.Split(body, ":") {
-		if v, ok := strings.CutPrefix(pair, "state="); ok {
-			state = v
-		}
-		if v, ok := strings.CutPrefix(pair, "msg="); ok {
-			msg = v
-		}
-	}
-	return state, msg
 }
 
 // requestSignals maps a test controller to the channel that receives one value per
@@ -322,7 +267,7 @@ func freshAgent(t *testing.T) *agent.Agent {
 func freshModel(t *testing.T) (model, *agent.Agent) {
 	t.Helper()
 	a := freshAgent(t)
-	return newModel(a, a.Shell.Dir, osc7501.New(io.Discard, false)), a
+	return newModel(a, a.Shell.Dir), a
 }
 
 // bareModel is a model over freshAgent in the given working directory.
@@ -331,49 +276,4 @@ func bareModel(t *testing.T, cwd string) model {
 	m, _ := freshModel(t)
 	m.cwd = cwd
 	return m
-}
-
-// awaitReport waits until the terminal has been told the state and returns its msg.
-// Reports are coalesced, so they arrive shortly after the event.
-func awaitReport(t *testing.T, f *fixture, state string) string {
-	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		if got, msg := lastReport(t, f.out.String()); got == state {
-			return msg
-		}
-		if time.Now().After(deadline) {
-			got, _ := lastReport(t, f.out.String())
-			t.Fatalf("terminal state %q, want %q", got, state)
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-}
-
-// lastTitle is the decoded title of the last OSC 7501 report written ("" when none).
-func lastTitle(out string) string {
-	i := strings.LastIndex(out, "\x1b]7501;")
-	if i < 0 {
-		return ""
-	}
-	body := strings.TrimSuffix(out[i+len("\x1b]7501;"):], "\x1b\\")
-	for _, pair := range strings.Split(body, ":") {
-		if v, ok := strings.CutPrefix(pair, "title="); ok {
-			data, _ := base64.StdEncoding.DecodeString(v)
-			return string(data)
-		}
-	}
-	return ""
-}
-
-// awaitTitle waits until the terminal has been told the session title want.
-func awaitTitle(t *testing.T, f *fixture, want string) {
-	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for lastTitle(f.out.String()) != want {
-		if time.Now().After(deadline) {
-			t.Fatalf("terminal title %q, want %q", lastTitle(f.out.String()), want)
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
 }

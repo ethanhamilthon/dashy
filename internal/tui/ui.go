@@ -13,7 +13,6 @@ import (
 
 	"dashy/internal/agent"
 	"dashy/internal/control"
-	"dashy/internal/osc7501"
 )
 
 type entry = agent.Record
@@ -69,7 +68,6 @@ type model struct {
 	fileDismissed            bool
 	fileDismissedValue       string
 	fileDismissedCursor      int
-	reporter                 *osc7501.Reporter
 	flash                    entry // the latest notice or error, shown in the status bar
 	flashAt                  time.Time
 	frameAt                  time.Time // the last refresh
@@ -87,7 +85,7 @@ const (
 
 type redraw struct{}
 
-func newModel(a *agent.Agent, cwd string, reporter *osc7501.Reporter) model {
+func newModel(a *agent.Agent, cwd string) model {
 	input := textarea.New()
 	input.Placeholder = "Ask anything, or type / for commands"
 	input.Prompt = ""
@@ -103,8 +101,7 @@ func newModel(a *agent.Agent, cwd string, reporter *osc7501.Reporter) model {
 	input.FocusedStyle, input.BlurredStyle = style, style
 	events := newEventQueue()
 	ctl := control.New(a, func(e control.Event) { events.Push(e) })
-	m := model{ctl: ctl, events: events, input: input, viewport: pager{Width: 80, Height: 24}, width: 80, height: 24, cwd: cwd, reporter: reporter}
-	reporter.HandleEvent(control.Event{Kind: "session", Title: ctl.Title()})
+	m := model{ctl: ctl, events: events, input: input, viewport: pager{Width: 80, Height: 24}, width: 80, height: 24, cwd: cwd}
 	m.refresh(true)
 	return m
 }

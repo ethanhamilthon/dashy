@@ -1,8 +1,6 @@
 package tui
 
 import (
-	"dashy/internal/osc7501"
-	"io"
 	"strings"
 	"testing"
 
@@ -57,7 +55,7 @@ func TestResumeAutocompleteIsScopedAndExecutesSelectedSession(t *testing.T) {
 	}
 	defer b.Close()
 	foreign := b.SessionID()
-	m := newModel(a, cwd, osc7501.New(io.Discard, false))
+	m := newModel(a, cwd)
 	m.input.SetValue("/resume")
 	matches := m.completions()
 	if len(matches) != 1 {

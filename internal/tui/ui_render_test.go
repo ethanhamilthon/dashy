@@ -1,10 +1,8 @@
 package tui
 
 import (
-	"dashy/internal/osc7501"
 	"encoding/json"
 	"fmt"
-	"io"
 	"strings"
 	"testing"
 	"time"
@@ -94,7 +92,7 @@ func TestMetadataAndBottomBar(t *testing.T) {
 	}
 	a := freshAgent(t)
 	a.History = []json.RawMessage{json.RawMessage(`{"role":"user","content":"` + strings.Repeat("x", 4400) + `"}`)}
-	m := newModel(a, "/a/very/long/项目/path", osc7501.New(io.Discard, false))
+	m := newModel(a, "/a/very/long/项目/path")
 	for _, width := range []int{1, 2, 3, 5, 10, 40, 80} {
 		m.width = width
 		bar := m.bottomBar()
@@ -148,7 +146,7 @@ func TestTimelineLimitsAndHiddenSpacing(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer a.Close()
-	m := newModel(a, "/project", osc7501.New(io.Discard, false))
+	m := newModel(a, "/project")
 	text := "first\nsecond\nthird\nfourth\nfifth\nsixth\nseventh\neighth"
 	for _, kind := range []string{"code", "output", "reasoning", "assistant"} {
 		m.entries = append(m.entries, entry{Kind: kind, Text: text, Meta: &agent.Metadata{}})
@@ -290,7 +288,7 @@ func TestSingleLineNotifications(t *testing.T) {
 	}
 	t.Cleanup(a.Close)
 	a.History = []json.RawMessage{json.RawMessage(`{"role":"user","content":"` + note + `"}`)}
-	m := newModel(a, "/project", osc7501.New(io.Discard, false))
+	m := newModel(a, "/project")
 	restored := m.timeline()
 	if !strings.Contains(ansi.Strip(restored), "! · Configuration updated. Ready.") || strings.Contains(ansi.Strip(restored), "<view>") {
 		t.Fatal("restored notice not formatted")

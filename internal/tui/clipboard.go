@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"dashy/internal/shell"
+
 	tea "github.com/charmbracelet/bubbletea"
 )
 

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	tea "github.com/charmbracelet/bubbletea"
 	"image"
 	"image/png"
 	"io"
@@ -12,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func pngBytes(t *testing.T) []byte {
