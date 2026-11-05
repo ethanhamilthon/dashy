@@ -11,14 +11,14 @@ contain an editor integration or depend on a particular editor. The old one-shot
 | Protocol | ACP **v1**, newline-delimited JSON-RPC 2.0 |
 | Schema | `agentclientprotocol/agent-client-protocol` revision `734309dc6ff8f5a3b93adca62826dd63cff85a26`, `schema/v1/schema.json` |
 | Independent test peer | `github.com/coder/acp-go-sdk` **v0.13.5**, revision `0845a3bb9eddda5bfc22a94dd3598c90cb842451` (tests only) |
-| Request flow | `initialize`, `session/new`, `session/load`, `session/prompt`, `session/set_config_option` |
+| Request flow | `initialize`, `session/new`, `session/load`, `session/resume`, `session/list`, `session/close`, `session/prompt`, `session/set_config_option` |
 | Cancellation | `session/cancel` notification; `$/cancel_request` for individual requests |
 | Authentication | Existing Dashy provider settings / environment; no interactive ACP auth methods |
 | Execution policy | No approvals, matching the trusted local TUI policy |
 | Input | Text only; all blocks validated before mutating history |
 | Updates | Committed agent text, structured tools, terminal tool results, configuration changes, context usage |
 | Configuration | Session-local model/provider and reasoning effort selectors |
-| Unsupported | ACP v2, MCP, additional roots, resume without replay/list/close, images/audio/resources, mode configuration, client filesystem/terminals |
+| Unsupported | ACP v2, MCP, additional roots, images/audio/resources, mode configuration, client filesystem/terminals |
 
 There is no client-specific runtime code, test fixture, configuration, or dependency
 in the implementation. Interoperability tests use an independent ACP client,
@@ -79,6 +79,15 @@ session also replays its history; loading a busy session or a different workspac
 is rejected. Clients should replace their transcript with the replay rather than
 append it to a previously rendered copy.
 
+`sessionCapabilities` also advertises `resume`, `list` and `close`.
+`session/resume` restores the same state as `session/load` (`mcpServers` may be
+omitted) but sends no transcript, only `usage_update`; clients keep their own copy.
+`session/list` returns saved sessions newest first, optionally filtered by absolute
+`cwd`, 50 per page with an opaque `nextCursor`; titles are the custom name or the
+first user line. `session/close` cancels a running turn (its prompt returns
+`cancelled`), waits for the session to become idle, then releases its lock, so it
+can be loaded again and stops counting toward the 16-session limit.
+
 `usage_update` reports context occupancy on session creation/load, configuration
 changes and after each prompt, including interrupted turns. `used` is the latest
 provider-reported input token count, or a history estimate when no count is known.
@@ -132,5 +141,5 @@ all owned tasks, saves recoverable history, and releases sessions and sockets.
 
 `make test` covers fake-provider behavior under `-race`, an independent SDK client,
 isolation, tools, cancellation, redaction, protocol errors, backpressure, fragmented/
-oversized frames, EOF, and actual binary signal handling. Persistence/replay, richer
-input and additional configuration remain follow-up milestones, not advertised features.
+oversized frames, EOF, actual binary signal handling, load/resume, list paging and
+close. Richer input and additional configuration remain follow-up milestones.

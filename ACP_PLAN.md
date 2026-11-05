@@ -15,7 +15,8 @@
 - ACP v1 session loading now restores persisted history and configuration and replays
   the transcript without rerunning tools. Context occupancy is reported through
   `usage_update`, with a 1,000,000-token display fallback for unknown model limits.
-- Resume without replay, listing, richer input, MCP and client filesystem/terminal
+- `session/resume` (no replay), `session/list` and `session/close` are implemented.
+- MCP is out of scope by agreement. Richer input and client filesystem/terminal
   integration remain follow-up milestones and are not advertised.
 
 The original roadmap below is retained for follow-up work. Explicit scope updates

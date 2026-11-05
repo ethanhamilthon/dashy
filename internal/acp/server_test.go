@@ -174,7 +174,7 @@ func TestTextTurnAndUnsupportedMethods(t *testing.T) {
 	if messages != 1 {
 		t.Fatalf("duplicate streamed/final messages: %d", messages)
 	}
-	for _, method := range []string{"session/resume", "session/set_mode", "fs/read_text_file"} {
+	for _, method := range []string{"session/fork", "session/set_mode", "fs/read_text_file"} {
 		w.request(t, 4, method, map[string]string{"sessionId": session})
 		if f := w.response(t, 4); f.Error == nil || f.Error.Code != -32601 {
 			t.Fatal(f)

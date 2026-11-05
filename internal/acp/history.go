@@ -9,17 +9,18 @@ import (
 	"dashy/internal/shell"
 )
 
-func (s *server) sessionReady(ctx context.Context, session *session, load bool, reply replyFunc) {
+func (s *server) sessionReady(ctx context.Context, session *session, method string, reply replyFunc) {
 	// Hold the session busy until replay finishes; prompts must not interleave with it.
+	// session/resume restores the same state but leaves the transcript to the client.
 	var result any
 	var failure *rpcError
 	defer func() {
 		session.mu.Lock()
 		defer session.mu.Unlock()
-		session.busy = false
+		session.release()
 		reply(result, failure)
 	}()
-	if load {
+	if method == "session/load" {
 		if err := s.replay(ctx, session); err != nil {
 			failure = problem(-32800, "History replay cancelled")
 			return
@@ -30,7 +31,7 @@ func (s *server) sessionReady(ctx context.Context, session *session, load bool, 
 		return
 	}
 	response := map[string]any{"configOptions": session.configOptions()}
-	if !load {
+	if method == "session/new" {
 		response["sessionId"] = session.a.SessionID()
 	}
 	result = response

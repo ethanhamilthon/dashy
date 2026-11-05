@@ -80,7 +80,7 @@ func (s *server) setConfig(ctx context.Context, params []byte, reply replyFunc) 
 		return
 	}
 	session.mu.Lock()
-	if session.busy {
+	if session.busy || session.closed {
 		session.mu.Unlock()
 		reply(nil, problem(-32600, "Session is busy; change configuration between turns"))
 		return
@@ -111,13 +111,13 @@ func (s *server) setConfig(ctx context.Context, params []byte, reply replyFunc) 
 		reply(nil, problem(-32602, "Unknown configuration option"))
 		return
 	}
-	session.busy = true
+	session.claim()
 	session.mu.Unlock()
 	s.job(func() {
 		err := session.a.SelectSession(ctx, settings.Provider, settings.Model, settings.Effort)
 		session.mu.Lock()
 		defer session.mu.Unlock()
-		session.busy = false
+		session.release()
 		if err != nil {
 			code := -32603
 			if ctx.Err() != nil {

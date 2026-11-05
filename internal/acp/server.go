@@ -23,8 +23,15 @@ type session struct {
 	cancel    context.CancelFunc
 	busy      bool
 	cancelled bool
+	closed    bool           // session/close removed it; no new work is admitted
+	work      sync.WaitGroup // busy periods; close waits for them before releasing the agent
 	models    map[string]agent.ModelChoice
 }
+
+// claim and release bracket a busy period; both run under session.mu.
+func (session *session) claim()   { session.busy = true; session.work.Add(1) }
+func (session *session) release() { session.busy = false; session.work.Done() }
+
 type server struct {
 	peer               *peer
 	opts               Options
@@ -82,7 +89,7 @@ func (s *server) handle(ctx context.Context, method string, params json.RawMessa
 		// Per v1, return the supported version; clients must disconnect on a mismatch.
 		s.initialized = p.ProtocolVersion == 1
 		s.clientCapabilities = p.ClientCapabilities
-		reply(map[string]any{"protocolVersion": 1, "agentInfo": map[string]string{"name": "dashy", "version": s.opts.Version}, "agentCapabilities": map[string]any{"loadSession": true, "promptCapabilities": map[string]bool{"image": false, "audio": false, "embeddedContext": false}, "mcpCapabilities": map[string]bool{"http": false, "sse": false}}, "authMethods": []any{}}, nil)
+		reply(map[string]any{"protocolVersion": 1, "agentInfo": map[string]string{"name": "dashy", "version": s.opts.Version}, "agentCapabilities": map[string]any{"loadSession": true, "sessionCapabilities": map[string]any{"list": map[string]any{}, "resume": map[string]any{}, "close": map[string]any{}}, "promptCapabilities": map[string]bool{"image": false, "audio": false, "embeddedContext": false}, "mcpCapabilities": map[string]bool{"http": false, "sse": false}}, "authMethods": []any{}}, nil)
 		return
 	}
 	if !s.initialized {
@@ -90,10 +97,12 @@ func (s *server) handle(ctx context.Context, method string, params json.RawMessa
 		return
 	}
 	switch method {
-	case "session/new":
-		s.openSession(ctx, params, reply, false)
-	case "session/load":
-		s.openSession(ctx, params, reply, true)
+	case "session/new", "session/load", "session/resume":
+		s.openSession(ctx, params, reply, method)
+	case "session/list":
+		s.list(params, reply)
+	case "session/close":
+		s.closeSession(params, reply)
 	case "session/prompt":
 		s.prompt(ctx, params, reply)
 	case "session/set_config_option":
@@ -119,7 +128,8 @@ func (s *server) handle(ctx context.Context, method string, params json.RawMessa
 		reply(nil, problem(-32601, "Method not found"))
 	}
 }
-func (s *server) openSession(ctx context.Context, params json.RawMessage, reply replyFunc, load bool) {
+func (s *server) openSession(ctx context.Context, params json.RawMessage, reply replyFunc, method string) {
+	load := method != "session/new"
 	var p struct {
 		SessionID             string            `json:"sessionId"`
 		Cwd                   string            `json:"cwd"`
@@ -127,7 +137,8 @@ func (s *server) openSession(ctx context.Context, params json.RawMessage, reply 
 		AdditionalDirectories []string          `json:"additionalDirectories"`
 	}
 	var required map[string]json.RawMessage
-	if !decode(params, &p) || !decode(params, &required) || !filepath.IsAbs(p.Cwd) || required["mcpServers"] == nil || string(required["mcpServers"]) == "null" {
+	valid := decode(params, &p) && decode(params, &required)
+	if mcp := string(required["mcpServers"]); !valid || !filepath.IsAbs(p.Cwd) || (method != "session/resume" && (mcp == "" || mcp == "null")) {
 		reply(nil, problem(-32602, "Absolute cwd and mcpServers array are required"))
 		return
 	}
@@ -142,14 +153,14 @@ func (s *server) openSession(ctx context.Context, params json.RawMessage, reply 
 	if load {
 		if existing := s.lookup(p.SessionID); existing != nil {
 			existing.mu.Lock()
-			if existing.busy || filepath.Clean(p.Cwd) != existing.a.Shell.Dir {
+			if existing.busy || existing.closed || filepath.Clean(p.Cwd) != existing.a.Shell.Dir {
 				existing.mu.Unlock()
 				reply(nil, problem(-32600, "Session is busy or belongs to a different workspace"))
 				return
 			}
-			existing.busy = true
+			existing.claim()
 			existing.mu.Unlock()
-			s.job(func() { s.sessionReady(ctx, existing, true, reply) })
+			s.job(func() { s.sessionReady(ctx, existing, method, reply) })
 			return
 		}
 	}
@@ -196,11 +207,11 @@ func (s *server) openSession(ctx context.Context, params json.RawMessage, reply 
 			reply(nil, problem(-32800, "Request cancelled"))
 			return
 		}
-		session.busy = true
+		session.claim()
 		s.mu.Lock()
 		s.sessions[a.SessionID()] = session
 		s.mu.Unlock()
-		s.sessionReady(ctx, session, load, reply)
+		s.sessionReady(ctx, session, method, reply)
 	})
 }
 func (s *server) lookup(id string) *session { s.mu.Lock(); defer s.mu.Unlock(); return s.sessions[id] }
@@ -235,13 +246,13 @@ func (s *server) prompt(ctx context.Context, params json.RawMessage, reply reply
 		return
 	}
 	session.mu.Lock()
-	if session.busy {
+	if session.busy || session.closed {
 		session.mu.Unlock()
 		reply(nil, problem(-32600, "A prompt is already running in this session"))
 		return
 	}
 	turn, cancel := context.WithCancel(ctx)
-	session.busy = true
+	session.claim()
 	session.cancelled = false
 	session.cancel = cancel
 	session.mu.Unlock()
@@ -256,7 +267,7 @@ func (s *server) prompt(ctx context.Context, params json.RawMessage, reply reply
 		s.usage(session)
 		session.mu.Lock()
 		stopped, sessionCancelled := turn.Err() != nil, session.cancelled
-		session.busy = false
+		session.release()
 		session.cancel = nil
 		session.mu.Unlock()
 		if sessionCancelled {

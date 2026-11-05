@@ -132,18 +132,39 @@ func (a *Agent) Save() error {
 	return nil
 }
 
-// SessionSummary is the /resume view of a saved session.
+// SessionSummary is the /resume and ACP list view of a saved session.
 type SessionSummary struct {
 	ID      string
 	Title   string
+	Project string
 	Updated time.Time
 }
 
 // Sessions returns saved sessions of this project, most recently updated first.
 // The title is the custom one, else the first line of the first user message.
 func (a *Agent) Sessions() ([]SessionSummary, error) {
-	rows, err := a.db.Query(`SELECT id, CASE title WHEN '' THEN first ELSE title END, updated
-		FROM sessions WHERE project = ? ORDER BY updated DESC, id DESC`, a.project)
+	return listSessions(a.db, a.project, SessionSummary{}, -1)
+}
+
+// ListSessions returns up to limit saved sessions of project (all projects when empty)
+// ordered after the cursor (none when its ID is empty), using the database for cwd.
+func ListSessions(cwd, project string, after SessionSummary, limit int) ([]SessionSummary, error) {
+	home, err := DashyHome(cwd)
+	if err != nil {
+		return nil, err
+	}
+	db, err := openDB(home)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	return listSessions(db, project, after, limit)
+}
+
+func listSessions(db *sql.DB, project string, after SessionSummary, limit int) ([]SessionSummary, error) {
+	rows, err := db.Query(`SELECT id, CASE title WHEN '' THEN first ELSE title END, project, updated
+		FROM sessions WHERE (?1 = '' OR project = ?1) AND (?2 = '' OR (updated, id) < (?3, ?2))
+		ORDER BY updated DESC, id DESC LIMIT ?4`, project, after.ID, after.Updated.UnixNano(), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +173,7 @@ func (a *Agent) Sessions() ([]SessionSummary, error) {
 	for rows.Next() {
 		var s SessionSummary
 		var updated int64
-		if err := rows.Scan(&s.ID, &s.Title, &updated); err != nil {
+		if err := rows.Scan(&s.ID, &s.Title, &s.Project, &updated); err != nil {
 			return nil, err
 		}
 		s.Updated = time.Unix(0, updated)
