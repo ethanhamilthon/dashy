@@ -1,8 +1,7 @@
 # Agent Client Protocol (local preview)
 
 `dashy acp` exposes a client-independent ACP agent over stdin/stdout. It does not
-contain an editor integration or depend on a particular editor. The old one-shot
-`dashy -p` mode and its flags have been removed; TUI and helper commands remain.
+contain an editor integration or depend on a particular editor.
 
 ## Compatibility contract
 

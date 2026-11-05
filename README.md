@@ -51,7 +51,6 @@ git log --oneline -3
 Launch `dashy acp` from an ACP v1 editor. Configure a provider/model using the TUI
 first. Shell commands, instruction blocks and task helpers execute freely, just as
 in the TUI: there are no permission prompts or sandbox. Use trusted projects only.
-The old one-shot/headless `-p` mode has been removed.
 
 See [ACP compatibility, launch configuration and limitations](docs/ACP.md).
 

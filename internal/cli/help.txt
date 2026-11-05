@@ -23,10 +23,9 @@ FLAGS & COMMANDS
   -s ID           Target a running session for tasks/view; defaults to DASHY_ENDPOINT.
   --help, -h      Show this help reference.
   acp             Local ACP v1 preview over newline-delimited JSON-RPC on stdin/stdout.
-                  Configure provider/model in the TUI first. Text prompts only. Commands,
+                  Configure provider/model in the TUI first. Text and PNG/JPEG prompts. Commands,
                   instruction blocks and task helpers run freely, exactly as in the TUI.
                   No permission prompts or sandbox. Use only trusted projects; see docs/ACP.md.
-                  The former -p / one-shot mode has been removed.
   models          Print PROVIDER<TAB>MODEL for configured providers. Errors go to stderr.
   tasks run       Start a background command in a running TUI session. Output goes to a
                   private log. The session receives a <task-result> when it ends.
