@@ -100,7 +100,11 @@ func renderEntryMode(e entry, width, limit int, markdown bool) string {
 	if e.Preview && e.Kind == "code" {
 		label += " · preview"
 	}
-	if e.Kind != "assistant" {
+	if e.Kind == "assistant" {
+		if metadata := answerMetadata(e); metadata != "" {
+			label += " " + metadata
+		}
+	} else {
 		label += formatMetadata(e.Meta, e.Kind)
 	}
 	if body == "" && e.Kind == "code" {
@@ -117,13 +121,10 @@ func renderEntryMode(e entry, width, limit int, markdown bool) string {
 		lines[i] = ansi.Truncate(strings.Repeat(" ", min(2, max(0, width-1)))+line, max(1, width), "…")
 	}
 	out := paint(ansi.Truncate("  "+label, max(1, width), "…"), width, lipgloss.NoColor{}, fg) + "\n" + paint(strings.Join(lines, "\n"), width, lipgloss.NoColor{}, bodyColor(e.Kind))
-	if footer := answerFooter(e); footer != "" {
-		out += "\n" + paint(ansi.Truncate("  "+footer, max(1, width), "…"), width, lipgloss.NoColor{}, muted)
-	}
 	return out
 }
 
-func answerFooter(e entry) string {
+func answerMetadata(e entry) string {
 	if e.Kind != "assistant" || e.Preview || e.Meta == nil || e.Meta.At.IsZero() {
 		return ""
 	}
@@ -226,6 +227,9 @@ func (m *model) timelineRows(budget time.Duration) []string {
 			limit = settings.MaxLines(e.Kind)
 		case "error":
 			limit = settings.MaxLines("output")
+		}
+		if settings.ShowLines == "minimal" && e.Kind != "user" && e.Kind != "assistant" {
+			limit = 0
 		}
 		cached := &m.cache[i]
 		if cached.width == m.width && cached.source == e && cached.maxLines == limit && !cached.draft {
