@@ -26,6 +26,7 @@ type renderedEntry struct {
 }
 type model struct {
 	ctl                      *control.Controller
+	term                     termState
 	events                   *eventQueue
 	input                    textarea.Model
 	viewport                 pager
@@ -261,6 +262,7 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !status.Busy || !v.started.Equal(status.Started) {
 			return m, nil
 		}
+		m.term.tick()
 		m.refresh(follow)
 		return m, workingPulse(status.Started)
 	case tea.WindowSizeMsg:

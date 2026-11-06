@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -22,6 +23,7 @@ func Run(ctx context.Context, a *agent.Agent, cwd, version string) error {
 	m := newModel(a, cwd)
 	m.version = version
 	m.startCmd = m.onboard()
+	termOut = os.Stdout
 	program := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithFilter(keyboard.filter))
 	running, stop := context.WithCancel(ctx)
 	defer stop()
@@ -34,6 +36,7 @@ func Run(ctx context.Context, a *agent.Agent, cwd, version string) error {
 	keyboard.close()
 	stop()
 	if m, ok := final.(model); ok {
+		m.term.reset()
 		m.ctl.Close()
 		if m.menuCancel != nil {
 			m.menuCancel()
@@ -96,6 +99,17 @@ func tasksRunning(n int, sep string) string {
 func (m model) handleControl(e control.Event) (tea.Model, tea.Cmd) {
 	follow := m.viewport.AtBottom()
 	var cmd tea.Cmd
+	switch e.Kind {
+	case "started":
+		m.term.start(e.Title)
+	case "done":
+		m.term.finish(e.Status, e.Title)
+	case "session":
+		m.term.state = "idle"
+		fallthrough
+	default:
+		m.term.rename(e.Title)
+	}
 	switch e.Kind {
 	case "started":
 		m.refresh(true)
