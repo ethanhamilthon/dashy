@@ -2,7 +2,7 @@ dashy - minimal AI coding agent (TUI and ACP editor integration)
 
 USAGE
   dashy [--config FILE|-c FILE] [--resume ID]
-  dashy acp [--config FILE]
+  dashy acp [--config FILE] [--hide-tools]
   dashy models [--provider NAME]
   dashy tasks run [-s ID] COMMAND...
   dashy tasks list|status|stop [-s ID] [TASK]
@@ -19,6 +19,7 @@ FLAGS & COMMANDS
   --config, -c    Use only FILE for instructions (-c is TUI only).
   --resume ID     Resume a saved project session in the TUI.
   --provider NAME Restrict the models listing to one provider.
+  --hide-tools    ACP only: do not send tool calls to the editor, just text.
   -s ID           Target a running session for tasks/view; defaults to DASHY_ENDPOINT.
   --help, -h      Show this help reference.
   acp             Local ACP v1 preview over newline-delimited JSON-RPC on stdin/stdout.

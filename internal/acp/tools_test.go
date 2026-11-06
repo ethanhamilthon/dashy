@@ -184,3 +184,47 @@ func TestDisconnectCancelsAndReleasesSession(t *testing.T) {
 		t.Fatal("session socket leaked")
 	}
 }
+
+func TestHideToolsOmitsLiveAndReplayedToolCalls(t *testing.T) {
+	dir := t.TempDir()
+	settings(t, func(body string) string {
+		if strings.Contains(body, "function_call_output") {
+			return answer("done")
+		}
+		return command("touch ran")
+	})
+	hidden := Options{Version: "test", HideTools: true}
+	w := connectWith(t, hidden)
+	w.initialize(t)
+	session := w.newSession(t, 2, dir)
+	w.prompt(t, 3, session, "run")
+	if f := w.response(t, 3); f.Error != nil {
+		t.Fatal(f.Error)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "ran")); err != nil {
+		t.Fatal("command must still run:", err)
+	}
+	w.conn.Close()
+	<-w.done
+	w2 := connectWith(t, hidden)
+	w2.initialize(t)
+	if f := load(t, w2, 2, session, dir); f.Error != nil {
+		t.Fatal(f.Error)
+	}
+	for _, update := range append(w.updates, w2.updates...) {
+		if strings.Contains(string(update), `"tool_call`) {
+			t.Fatal("tool call sent with HideTools:", string(update))
+		}
+	}
+	if !strings.Contains(string(bytesJoin(w2.updates)), "agent_message_chunk") {
+		t.Fatal("replay lost the assistant text")
+	}
+}
+
+func bytesJoin(raw []json.RawMessage) []byte {
+	var out []byte
+	for _, r := range raw {
+		out = append(out, r...)
+	}
+	return out
+}

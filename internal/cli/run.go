@@ -96,12 +96,13 @@ func Run(ctx context.Context, args []string, in io.Reader, out, diagnostics io.W
 		var opts acp.Options
 		fs := flagSet("acp", func(fs *flag.FlagSet) {
 			fs.StringVar(&opts.Config, "config", "", "project instructions")
+			fs.BoolVar(&opts.HideTools, "hide-tools", false, "omit tool calls")
 		})
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
 		if fs.NArg() > 0 {
-			return errors.New("usage: dashy acp [--config FILE]")
+			return errors.New("usage: dashy acp [--config FILE] [--hide-tools]")
 		}
 		opts.Version = Version
 		return cancelledOr(ctx, acp.Run(ctx, in, out, opts))

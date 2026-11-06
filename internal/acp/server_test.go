@@ -62,11 +62,16 @@ type wire struct {
 
 func connect(t *testing.T) *wire {
 	t.Helper()
+	return connectWith(t, Options{Version: "test"})
+}
+
+func connectWith(t *testing.T, opts Options) *wire {
+	t.Helper()
 	client, server := net.Pipe()
 	w := &wire{conn: client, decoder: json.NewDecoder(client), done: make(chan struct{})}
 	go func() {
 		defer close(w.done)
-		_ = Run(context.Background(), server, server, Options{Version: "test"})
+		_ = Run(context.Background(), server, server, opts)
 	}()
 	t.Cleanup(func() {
 		client.Close()

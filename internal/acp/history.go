@@ -56,6 +56,9 @@ func (s *server) replay(ctx context.Context, session *session) error {
 		if err := json.Unmarshal(raw, &item); err != nil {
 			return err
 		}
+		if s.opts.HideTools && strings.HasPrefix(item.Type, "function_call") {
+			continue
+		}
 		switch item.Type {
 		case "function_call":
 			id := fmt.Sprintf("history:%d:%s", seq, item.CallID)

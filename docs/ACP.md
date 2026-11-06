@@ -39,6 +39,9 @@ uses `DASHY.md` in the session directory, falling back to `$DASHY_HOME/DASHY.md`
 only if the local file is absent. Files are never merged; parent directories are
 not searched. Executable blocks use `DASHY_MODE=acp`; instruction snapshots remain stored.
 
+Use `dashy acp --hide-tools` to omit tool calls (live and on session load) so the
+editor shows only messages; commands still run and stay in the session history.
+
 Clients must send an absolute `cwd` and `mcpServers: []` to `session/new`. Disable
 client-side MCP injection: nonempty MCP declarations and additional roots are
 explicitly rejected. Other unsupported methods return method-not-found.

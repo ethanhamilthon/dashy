@@ -16,8 +16,9 @@ import (
 )
 
 type Options struct {
-	Config  string
-	Version string
+	Config    string
+	Version   string
+	HideTools bool // omit tool calls from live updates and history replay
 }
 type session struct {
 	a         *agent.Agent
@@ -187,7 +188,7 @@ func (s *server) openSession(ctx context.Context, params json.RawMessage, reply 
 			opts.Resume = p.SessionID
 		}
 		opts.Observe = func(e agent.ExecutionEvent) {
-			if e.Kind != "instructions" {
+			if e.Kind != "instructions" && !s.opts.HideTools {
 				s.tool(session, e)
 			}
 		}
